@@ -94,6 +94,7 @@
 	import TradeTable from '$lib/components/strategy/container/TradeTable.svelte';
 	import LifecycleRail from '$lib/components/strategy/container/LifecycleRail.svelte';
 	import ProbationPanel from '$lib/components/probation/ProbationPanel.svelte';
+	import type { ProbationStatus } from '$lib/api/probation';
 	import VerdictCard from '$lib/components/strategy/container/VerdictCard.svelte';
 	import StandingCard from '$lib/components/strategy/container/StandingCard.svelte';
 	import CoinBreakdown from '$lib/components/strategy/container/CoinBreakdown.svelte';
@@ -561,16 +562,28 @@
 		const entered = stageEnteredAt[currentLifecycleStage];
 		return entered !== undefined ? new Date(entered).toISOString() : stageSinceFallback;
 	})();
-	$: paperThresholds = thresholdSection(pipelineThresholds, 'paper_trading');
-	$: paperNeedDays = finiteOrNull(paperThresholds?.min_paper_days);
-	$: paperNeedTrades = finiteOrNull(paperThresholds?.min_closed_trades);
+	// Paper's next step is probation: its entry checks (from the probation panel) say
+	// how many matched paper trades, and for slow strategies days, it needs.
+	let probationStatus: ProbationStatus | null = null;
+	$: if (container?.strategy.id && probationStatus && probationStatus.strategy_id !== container.strategy.id) probationStatus = null;
+	$: probationEntry = probationStatus?.entry ?? null;
+	$: paperNeedDays = probationEntry?.need_days ? probationEntry.need_days : null;
+	$: paperNeedTrades = probationEntry?.need_trades ?? null;
 	$: paperProgress =
 		currentLifecycleStage === 'paper'
 			? {
-					days: paperStageStart && Number.isFinite(Date.parse(paperStageStart)) ? (Date.now() - Date.parse(paperStageStart)) / 86_400_000 : null,
+					days: probationEntry?.paper_days ?? (paperStageStart && Number.isFinite(Date.parse(paperStageStart)) ? (Date.now() - Date.parse(paperStageStart)) / 86_400_000 : null),
 					needDays: paperNeedDays,
-					trades: paperBook?.count ?? 0,
+					trades: probationEntry?.confirmation?.matched ?? 0,
 					needTrades: paperNeedTrades,
+				}
+			: null;
+	$: probationProgress =
+		currentLifecycleStage === 'live_graduated' && probationStatus?.in_probation && probationStatus.record
+			? {
+					sizePct: probationStatus.record.size_pct,
+					liveTrades: probationStatus.live?.live_trades ?? 0,
+					graduateTrades: probationStatus.ladder?.graduate_trades ?? 10,
 				}
 			: null;
 	$: refOosRate = tradesPerMonth(refSlices.outOfSample);
@@ -583,7 +596,7 @@
 					stageStart: paperStageStart,
 					needDays: paperNeedDays,
 					needTrades: paperNeedTrades,
-					closedTrades: paperBook?.count ?? 0,
+					closedTrades: probationEntry?.confirmation?.matched ?? 0,
 					rates: [refOosRate, heldRate],
 				})
 			: null;
@@ -628,6 +641,7 @@
 		heldBackPassed: heldBack?.verdict === 'PASS' ? true : heldBack?.verdict === 'FAIL' ? false : null,
 		paper: paperProgress,
 		liveDays: liveRampInfo ? liveRampInfo.daysLive : null,
+		probation: probationProgress,
 	});
 	$: railGate = (() => {
 		const stage = currentLifecycleStage;
@@ -642,10 +656,27 @@
 			};
 		}
 		if (stage === 'paper') {
+			const failing = probationEntry?.failing ?? [];
 			return {
-				label: 'Next gate · paper → live',
-				headline: gateEta ? `Earliest ${fmtEtaWindow(gateEta)}.` : paperNeedTrades !== null ? `Needs ${paperNeedDays ?? '—'} days and ${paperNeedTrades} closed trades.` : 'Forward evidence on paper.',
-				detail: gateEta ? `${gateEta.remainingTrades} closed trades to go at the backtest's pace.` : '',
+				label: 'Next step · paper → probation',
+				headline: !probationEntry
+					? 'Probation checks loading.'
+					: probationEntry.eligible
+						? 'Every probation check passes.'
+						: `${failing.length} probation ${failing.length === 1 ? 'check' : 'checks'} to go.`,
+				detail: probationEntry?.eligible
+					? 'Start it in the panel below.'
+					: gateEta && gateEta.remainingTrades > 0
+						? `Earliest ${fmtEtaWindow(gateEta)} at the backtest's pace.`
+						: failing[0] ? `${failing[0].label}.` : '',
+				terminal: '',
+			};
+		}
+		if (stage === 'live_graduated' && probationProgress) {
+			return {
+				label: 'Next step · probation → full size',
+				headline: `${probationProgress.liveTrades} of ${probationProgress.graduateTrades} live trades.`,
+				detail: `Trading at ${Math.round(probationProgress.sizePct)}% size; full size needs the graduation checks and GO LIVE.`,
 				terminal: '',
 			};
 		}
@@ -667,9 +698,9 @@
 				: currentLifecycleStage === 'gauntlet'
 					? 'Gauntlet → paper'
 					: currentLifecycleStage === 'paper'
-						? 'Paper → live gate'
+						? 'Paper → probation'
 						: currentLifecycleStage === 'live_graduated'
-							? 'Live'
+							? probationProgress ? 'Probation → full size' : 'Live'
 							: 'Next gate';
 	$: timelineSegments = [
 		{ label: 'In-sample', start: refSlices.inSample?.start ?? null, end: refSlices.inSample?.end ?? null, totalReturn: refSlices.inSample?.totalReturn ?? null },
@@ -1777,11 +1808,13 @@
 		}));
 	}
 
+	const PROBATION_TOOLTIP = 'Live with real money at reduced size (25%, then 50%) until its live trades confirm the backtest. Goes back to paper by itself if live results drift from the backtest.';
+
 	const PIPELINE_STAGES = [
 		{ key: 'quick_screen', label: 'Quick Screen', tooltip: 'Initial filter over a 1yr backtest: positive return, IS Sharpe, max drawdown, plus required validation artifacts.' },
 		{ key: 'gauntlet', label: 'Gauntlet', tooltip: 'Robustness testing: walk-forward, Monte Carlo, parameter jitter, cost stress, and regime split.' },
-		{ key: 'paper', label: 'Paper Trading', tooltip: 'Live paper trading for 14+ days with 10+ closed trades, positive return, and drawdown <15%.' },
-		{ key: 'live_graduated', label: 'Live', tooltip: 'Graduated to real capital. Allocation ramps 25% → 50% → 100% over 5 weeks. Kill switch at 30% drawdown.' },
+		{ key: 'paper', label: 'Paper Trading', tooltip: 'Forward paper trading with no money. Probation starts once enough paper trades match the backtest, paper is at breakeven or better and the edge covers costs.' },
+		{ key: 'live_graduated', label: 'Live', tooltip: 'Real money. A paper strategy gets here through probation at reduced size; full size needs 10 live trades, a live result at breakeven or better and GO LIVE.' },
 	] as const;
 
 	$: gauntletMinScore = pipelineThresholds?.gauntlet?.min_robustness_score ?? null;
@@ -1798,9 +1831,7 @@
 			const configured =
 				s.key === 'quick_screen'
 					? quickScreenStageTooltip(pipelineThresholds)
-					: s.key === 'paper'
-						? paperStageTooltip(pipelineThresholds)
-						: s.key === 'live_graduated'
+					: s.key === 'live_graduated'
 							? liveStageTooltip(pipelineThresholds)
 							: null;
 			return [s.key, configured ?? s.tooltip ?? ''];
@@ -1829,15 +1860,6 @@
 		return `Entry filter on the strategy's own backtest: ${parts.join(', ')}.`;
 	}
 
-	function paperStageTooltip(thresholds: PipelineThresholds | null): string | null {
-		const paper = thresholdSection(thresholds, 'paper_trading');
-		if (!paper) return null;
-		const days = finiteOrNull(paper.min_paper_days);
-		const trades = finiteOrNull(paper.min_closed_trades);
-		if (days === null || trades === null) return null;
-		return `Forward paper trading: at least ${days} days and ${trades} closed trades, return above ${fmtThresholdPct(finiteOrNull(paper.min_total_return_pct))} and drawdown under ${fmtThresholdPct(thresholdFractionPct(paper.max_drawdown_pct))}, then the strict paper → live gate.`;
-	}
-
 	function liveStageTooltip(thresholds: PipelineThresholds | null): string | null {
 		const live = thresholdSection(thresholds, 'live_graduated');
 		if (!live) return null;
@@ -1856,7 +1878,7 @@
 		const killSwitch = thresholdFractionPct(live.decay_kill_switch_pct);
 		const rampText = ramp ? ` Configured allocation ramp ${ramp} — advisory, the live sizer does not enforce it.` : '';
 		const killText = killSwitch !== null ? ` Decay kill switch at ${fmtThresholdPct(killSwitch)} drawdown.` : '';
-		return `Graduated to real capital.${rampText}${killText}`;
+		return `Real money at full size, reached through probation.${rampText}${killText}`;
 	}
 
 	const TERMINAL_STAGES: Record<string, string> = {
@@ -4961,12 +4983,13 @@
 				{/if}
 
 				{#if container && !loading && !error}
-					<LifecycleRail stages={railStages} tooltips={stageTooltips} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
+					<LifecycleRail stages={railStages} tooltips={{ ...stageTooltips, probation: PROBATION_TOOLTIP }} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
 					{#if currentLifecycleStage === 'paper' || currentLifecycleStage === 'live_graduated'}
 						<ProbationPanel
 							strategyId={container.strategy.id}
 							refreshKey={`${currentLifecycleStage}|${container.strategy.state_changed_at ?? ''}`}
 							on:changed={() => loadContainer()}
+							on:status={(event) => (probationStatus = event.detail)}
 						/>
 					{/if}
 				{/if}
@@ -5129,6 +5152,32 @@
 										on:click={() => openStageChange('quick_screen')}
 										class="rounded-md border border-emerald-700/50 bg-emerald-950/30 px-3 py-1.5 text-[12px] text-emerald-200 transition-colors hover:bg-emerald-900/40"
 									>Revive to Quick Screen</button>
+								</div>
+							{:else if currentLifecycleStage === 'paper' || currentLifecycleStage === 'live_graduated'}
+								<!-- One road: paper → probation → live. The probation panel under the
+									 rail holds the checks and the buttons, so this card only points there. -->
+								<p class="m-0 text-[12px] leading-relaxed text-sc-ink2" data-testid="gate-card-probation">
+									{#if currentLifecycleStage === 'paper'}
+										{#if probationEntry?.eligible}
+											Every probation check passes. Start probation in the panel at the top of the page.
+										{:else if probationEntry}
+											Waiting on: {probationEntry.failing.map((c) => c.label.toLowerCase()).join(', ')}. The checks are in the probation panel at the top of the page.
+										{:else}
+											The probation checks are in the panel at the top of the page.
+										{/if}
+									{:else if probationProgress}
+										On probation at {Math.round(probationProgress.sizePct)}% size: {probationProgress.liveTrades} of {probationProgress.graduateTrades} live trades toward full size. The controls are in the probation panel at the top of the page.
+									{:else}
+										Live at full size. Forven watches its live results and drops it back to probation at reduced size if they drift from the backtest.
+									{/if}
+								</p>
+								<div class="mt-2 flex flex-wrap items-center gap-2">
+									<button on:click={() => goto(`/bot-factory/editor?strategy=${strategyId}`)} class="rounded-md border border-sc-line2 bg-sc-panel2 px-3 py-1.5 text-[12px] text-sc-ink hover:bg-sc-raise transition-colors">Deploy as Bot</button>
+									<button
+										data-testid="overview-archive-button"
+										on:click={() => openStageChange('archived')}
+										class="rounded-md border border-red-900/40 bg-red-950/20 px-3 py-1.5 text-[12px] text-red-300 hover:bg-red-900/30 transition-colors"
+									>Archive</button>
 								</div>
 							{:else}
 								<div class="mt-2">

@@ -142,6 +142,7 @@ def test_paper_to_live_graduated_triggers_positive_closure(env, monkeypatch):
         "live_graduated",
         reason="paper survival",
         actor="brain",
+        probation_entry=True,  # paper reaches live only through probation
     )
     # actor='brain' is not in _USER_ACTORS, so the closure-skip rule
     # ("skip if force AND user-actor") does NOT trigger.

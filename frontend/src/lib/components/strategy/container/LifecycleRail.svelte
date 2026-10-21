@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { RailStage } from '$lib/utils/strategyContainer/lifecycle';
 
-	/** Quick screen → gauntlet → paper → live, with the next gate on the right. */
+	/** Quick screen → gauntlet → paper → probation → live, with the next gate on the right. */
 	export let stages: RailStage[] = [];
 	export let gateLabel = 'Next gate';
 	export let gateHeadline = '';
@@ -11,7 +11,7 @@
 	export let tooltips: Record<string, string> = {};
 </script>
 
-<div class="grid overflow-hidden rounded-md border border-sc-line bg-sc-panel md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(240px,1.3fr)]" data-testid="lifecycle-rail">
+<div class="grid overflow-hidden rounded-md border border-sc-line bg-sc-panel md:grid-cols-[repeat(5,minmax(0,1fr))_minmax(220px,1.2fr)]" data-testid="lifecycle-rail">
 	{#each stages as stage (stage.key)}
 		<div class="relative min-w-0 border-b border-sc-line py-2.5 pl-9 pr-3 md:border-b-0 md:border-r" data-testid={`rail-stage-${stage.key}`} data-state={stage.state} title={tooltips[stage.key] || undefined}>
 			<span

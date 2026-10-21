@@ -615,7 +615,7 @@ def test_read_lifecycle_strategy_missing_raises_404(forven_db):
     assert "strategy not found" in str(excinfo.value.detail)
 
 
-def test_transition_stage_keeps_paper_when_live_graduation_gate_fails(forven_db):
+def test_transition_stage_keeps_paper_when_paper_skips_probation(forven_db):
     _insert_strategy(
         "s-paper-gate-blocked",
         stage="paper",
@@ -640,12 +640,9 @@ def test_transition_stage_keeps_paper_when_live_graduation_gate_fails(forven_db)
     assert transition["from"] == "paper"
     assert transition["to"] == "paper"
     assert transition["requested_to"] == "live_graduated"
-    # PR#60 (strict-live robustness battery) now fires BEFORE the paper-duration
-    # check: a paper->live promotion with no usable gauntlet verdict artifacts is
-    # blocked on absent robustness evidence, not on warm-up duration. The contract
-    # this test locks is unchanged — a not-ready promotion is blocked and stays
-    # paper — only the (correct, earlier) reason moved.
-    assert "Live gate" in str(transition["blocked_reason"])
+    # Paper goes live only through probation (or an operator override), so a
+    # brain request for full size is refused before any live-gate check runs.
+    assert "through probation" in str(transition["blocked_reason"])
 
     with get_db() as conn:
         row = conn.execute(
@@ -661,13 +658,13 @@ def test_transition_stage_keeps_paper_when_live_graduation_gate_fails(forven_db)
     assert row["status"] == "paper"
     assert event["from_state"] == "paper"
     assert event["to_state"] == "paper"
-    assert event["reason"].startswith("Gate failure: Live gate")
+    assert event["reason"].startswith("Paper goes live through probation")
     details = json.loads(event["details_json"] or "{}")
-    assert details["motion"] == "gate_failure"
+    assert details["motion"] == "probation_required"
     assert details["requested_stage"] == "live_graduated"
 
 
-def test_brain_promote_strategy_returns_false_when_live_gate_blocks(forven_db):
+def test_brain_promote_strategy_returns_false_when_paper_skips_probation(forven_db):
     _insert_strategy(
         "s-brain-paper-blocked",
         stage="paper",
@@ -686,10 +683,8 @@ def test_brain_promote_strategy_returns_false_when_live_gate_blocks(forven_db):
     success, reason = brain_promote_strategy("s-brain-paper-blocked", "live_graduated")
 
     assert success is False
-    # PR#60 strict-live gate: no gauntlet verdict artifacts -> blocked on absent
-    # robustness evidence (fires before the warm-up checks). The contract is the
-    # block + stay-in-paper below, not the specific gate wording.
-    assert "live gate" in reason.lower()
+    # Paper goes live only through probation: the brain can't skip it.
+    assert "through probation" in reason.lower()
 
     with get_db() as conn:
         row = conn.execute(

@@ -261,7 +261,7 @@ function withStale(evidence: string, stale: boolean): string {
 
 export interface StressLimits {
 	/** Pipeline robustness_thresholds.cost_stress_max_degradation_pct: the strict
-	 *  paper → live gate's cap on the share of Sharpe lost at stressed costs. */
+	 *  guide on the share of Sharpe lost at stressed costs (information only). */
 	costMaxDegradationPct?: number | null;
 }
 
@@ -363,8 +363,8 @@ export function buildStressRows(evidence: ContainerEvidence, limits: StressLimit
 	}
 
 	// Cost stress: the runner passes when the Sharpe at multiplied fees and slippage stays
-	// at or above a floor (verdict_threshold); the strict paper → live gate also caps the
-	// share of Sharpe lost (pipeline cost_stress_max_degradation_pct).
+	// at or above a floor (verdict_threshold). The share of Sharpe lost is shown against a
+	// guide (pipeline cost_stress_max_degradation_pct); it no longer gates live.
 	{
 		const entry = tests.cost_stress;
 		const cost = payload('cost_stress');
@@ -384,11 +384,11 @@ export function buildStressRows(evidence: ContainerEvidence, limits: StressLimit
 			question: `Does it survive ${toNumber(cost.fee_multiplier) ?? 2}× fees and slippage?`,
 			value: stressedSharpe === null ? '—' : `Sharpe ${numText(stressedSharpe)}${degradation === null ? '' : ` (−${pctText(degradation, 1)})`}`,
 			bullet: stressedSharpe === null || minSharpe === null ? null : { min: Math.min(0, stressedSharpe), max: top, value: stressedSharpe, threshold: minSharpe, direction: 'ge' },
-			thresholdText: [minSharpe === null ? null : `stressed Sharpe ≥ ${numText(minSharpe)}`, maxLoss === null ? null : `live gate ≤ ${pctText(maxLoss)} lost`].filter(Boolean).join(' · '),
+			thresholdText: [minSharpe === null ? null : `stressed Sharpe ≥ ${numText(minSharpe)}`, maxLoss === null ? null : `guide ≤ ${pctText(maxLoss)} lost`].filter(Boolean).join(' · '),
 			verdict,
 			tone: toneFor(verdict, false, stale),
 			evidence: withStale(
-				[trades === null ? 'Trade count not recorded' : `${trades} trades, the baseline run's window`, overLiveCap ? `loses more than the live gate's ${pctText(maxLoss ?? 0)} cap` : null].filter(Boolean).join(' · '),
+				[trades === null ? 'Trade count not recorded' : `${trades} trades, the baseline run's window`, overLiveCap ? `loses more than the ${pctText(maxLoss ?? 0)} guide` : null].filter(Boolean).join(' · '),
 				stale,
 			),
 			weak: false,

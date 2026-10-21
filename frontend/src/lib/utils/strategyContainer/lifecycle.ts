@@ -1,5 +1,5 @@
-// The lifecycle rail (quick screen → gauntlet → paper → live) and the forward-evidence
-// ETA for the paper → live gate.
+// The lifecycle rail (quick screen → gauntlet → paper → probation → live) and the
+// forward-evidence ETA for paper.
 
 import type { LifecycleEvent } from '$lib/api';
 import { normalizeLifecycleStage } from '$lib/utils/lifecyclePresentation';
@@ -9,6 +9,7 @@ export const RAIL_STAGES = [
 	{ key: 'quick_screen', label: 'Quick screen' },
 	{ key: 'gauntlet', label: 'Gauntlet' },
 	{ key: 'paper', label: 'Paper' },
+	{ key: 'probation', label: 'Probation' },
 	{ key: 'live_graduated', label: 'Live' },
 ] as const;
 
@@ -22,6 +23,13 @@ export interface RailStage {
 	meta: string;
 	/** 0-1 progress through the stage's time requirement, when one applies. */
 	progress: number | null;
+}
+
+/** A live strategy's probation standing (live at reduced size). */
+export interface ProbationProgress {
+	sizePct: number;
+	liveTrades: number;
+	graduateTrades: number;
 }
 
 export interface PaperProgress {
@@ -54,8 +62,11 @@ export function buildRail(input: {
 	heldBackPassed: boolean | null;
 	paper: PaperProgress | null;
 	liveDays: number | null;
+	/** Set while a live strategy trades on probation; it then sits on the Probation step. */
+	probation?: ProbationProgress | null;
 }): RailStage[] {
-	const stage = normalizeLifecycleStage(input.stage);
+	const stored = normalizeLifecycleStage(input.stage);
+	const stage = stored === 'live_graduated' && input.probation ? 'probation' : stored;
 	const entries = stageEntries(input.events);
 	const order = RAIL_STAGES.map((item) => item.key as string);
 	const terminal = stage === 'archived' || stage === 'rejected';
@@ -91,13 +102,23 @@ export function buildRail(input: {
 			const paper = input.paper;
 			if (state === 'now' && paper) {
 				const days = isNum(paper.days) ? Math.floor(paper.days) : null;
-				meta = [days !== null && isNum(paper.needDays) ? `Day ${days} of ${paper.needDays}` : null, isNum(paper.needTrades) ? `${paper.trades} of ${paper.needTrades} trades` : `${paper.trades} trades`].filter(Boolean).join(' · ');
-				progress = isNum(paper.days) && isNum(paper.needDays) && paper.needDays > 0 ? Math.min(1, paper.days / paper.needDays) : null;
+				const trades = isNum(paper.needTrades) ? `${paper.trades} of ${paper.needTrades} matched trades` : `${paper.trades} matched trades`;
+				const dayText = days !== null && isNum(paper.needDays) && paper.needDays > 0 ? `day ${days} of ${paper.needDays}` : null;
+				meta = [trades, dayText].filter(Boolean).join(' · ');
+				progress = isNum(paper.needTrades) && paper.needTrades > 0 ? Math.min(1, paper.trades / paper.needTrades) : null;
 			} else {
-				meta = state === 'done' ? `Graduated ${fmtDateUtc(nextEntered ?? null)}` : 'Forward test on live data';
+				meta = state === 'done' ? `Left paper ${fmtDateUtc(nextEntered ?? entries.live_graduated ?? null)}` : 'Forward test with no money';
+			}
+		} else if (item.key === 'probation') {
+			const p = input.probation;
+			if (state === 'now' && p) {
+				meta = `${Math.round(p.sizePct)}% size · ${p.liveTrades} of ${p.graduateTrades} live trades`;
+				progress = p.graduateTrades > 0 ? Math.min(1, p.liveTrades / p.graduateTrades) : null;
+			} else {
+				meta = state === 'done' ? 'Done' : 'Live at reduced size';
 			}
 		} else {
-			meta = state === 'now' ? `${isNum(input.liveDays) ? `Day ${Math.floor(input.liveDays)}` : 'Live'} · real money` : 'Strict paper → live gate';
+			meta = state === 'now' ? `${isNum(input.liveDays) ? `Day ${Math.floor(input.liveDays)}` : 'Live'} · full size` : 'Full size';
 		}
 		if (state === 'stopped') {
 			meta = `${stage === 'rejected' ? 'Rejected' : 'Archived'} here${exit ? ` · ${fmtDateUtc(exit.created_at)}` : ''}`;

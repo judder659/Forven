@@ -1498,7 +1498,30 @@ def _max_traded_size_fraction(conn, strategy_id: str) -> float:
     return min(float(fraction), 1.0)
 
 
-def _capacity_member(conn, row: dict) -> dict:
+_PROBATION_REDUCED_STATES = ("active", "paused", "demoting")
+
+
+def _probation_weight(conn, strategy_id: str) -> float:
+    """PROBATION-CAP-1: the share of normal size a strategy in live probation
+    trades at (forven.probation scales its orders), 1.0 at full size.
+
+    Read straight from its table so this module keeps no import of probation.
+    """
+    try:
+        row = conn.execute(
+            "SELECT state, size_pct FROM strategy_probation WHERE strategy_id = ?", (strategy_id,)
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — no table yet: nobody is in probation
+        return 1.0
+    if not row or str(row[0] or "") not in _PROBATION_REDUCED_STATES:
+        return 1.0
+    try:
+        return min(max(float(row[1]) / 100.0, 0.0), 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _capacity_member(conn, row: dict, weight: float | None = None) -> dict:
     try:
         params = json.loads(row.get("params") or "{}")
     except (TypeError, ValueError):
@@ -1509,6 +1532,7 @@ def _capacity_member(conn, row: dict) -> dict:
         "coin": _strategy_coin(row.get("symbol")),
         "sides": strategy_sides(params if isinstance(params, dict) else {}),
         "size_fraction": _max_traded_size_fraction(conn, sid),
+        "weight": _probation_weight(conn, sid) if weight is None else min(max(float(weight), 0.0), 1.0),
     }
 
 
@@ -1539,11 +1563,18 @@ def coin_side_conflicts(members: list[dict]) -> list[dict]:
     return found
 
 
-def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
+def live_capacity_report(
+    conn, candidate_id: str | None = None, candidate_weight: float | None = None
+) -> dict:
     """Coin/side conflicts and worst-case wallet margin for the live cohort.
 
     With ``candidate_id`` the report is for the cohort as it would be once that
-    strategy goes live. Wallet figures are None when a balance is unavailable.
+    strategy goes live; ``candidate_weight`` is the share of normal size it will
+    trade at (live probation's start size), full size when None. Wallet figures
+    are None when a balance is unavailable.
+
+    PROBATION-CAP-1: a strategy in live probation counts at the reduced size its
+    orders actually use, so probation does not hold margin room it never trades.
     """
     placeholders = ",".join("?" for _ in LIVE_COHORT_STAGES)
     rows = [
@@ -1560,7 +1591,12 @@ def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
         ).fetchone()
         if candidate:
             rows.append(dict(candidate))
-    members = [_capacity_member(conn, row) for row in rows]
+    members = [
+        _capacity_member(
+            conn, row, candidate_weight if candidate_id and str(row["id"]) == candidate_id else None
+        )
+        for row in rows
+    ]
 
     margin_pct = _budget_pct_setting(_load_risk_settings(), "live_max_book_margin_pct")
     wallets = _capacity_wallets()
@@ -1583,7 +1619,7 @@ def live_capacity_report(conn, candidate_id: str | None = None) -> dict:
             for m in members:
                 if m["sides"] & sides:
                     key = m["coin"] or f"?{m['strategy_id']}"
-                    per_coin[key] = max(per_coin.get(key, 0.0), slice_usd * m["size_fraction"])
+                    per_coin[key] = max(per_coin.get(key, 0.0), slice_usd * m["size_fraction"] * m["weight"])
             demand = sum(per_coin.values())
         capacity = margin_pct / 100.0 * equity if equity else None
         report_wallets.append({
@@ -1631,9 +1667,13 @@ def live_capacity_scale() -> float:
         return 1.0
 
 
-def go_live_refusal(conn, strategy_id: str) -> str | None:
-    """Why ``strategy_id`` may not go live now, or None when it can."""
-    report = live_capacity_report(conn, candidate_id=strategy_id)
+def go_live_refusal(conn, strategy_id: str, candidate_weight: float | None = None) -> str | None:
+    """Why ``strategy_id`` may not go live now, or None when it can.
+
+    ``candidate_weight``: the share of normal size it will trade at (live
+    probation's start size); full size when None.
+    """
+    report = live_capacity_report(conn, candidate_id=strategy_id, candidate_weight=candidate_weight)
     reasons = []
     for c in report["conflicts"]:
         if strategy_id not in c["strategy_ids"]:

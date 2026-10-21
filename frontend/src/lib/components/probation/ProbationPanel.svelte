@@ -26,7 +26,7 @@
 	/** Changes when the page reloads the strategy (stage moves, trades close). */
 	export let refreshKey = '';
 
-	const dispatch = createEventDispatcher<{ changed: void }>();
+	const dispatch = createEventDispatcher<{ changed: void; status: ProbationStatus }>();
 
 	let status: ProbationStatus | null = null;
 	let loadError: string | null = null;
@@ -51,6 +51,7 @@
 			if (target !== strategyId) return;
 			status = next;
 			loadError = null;
+			dispatch('status', next);
 		} catch (error) {
 			if (target !== strategyId) return;
 			loadError = error instanceof Error ? error.message : 'Could not read probation status';
@@ -62,6 +63,7 @@
 		actionError = null;
 		try {
 			status = await action();
+			dispatch('status', status);
 			after?.();
 			dispatch('changed');
 		} catch (error) {

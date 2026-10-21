@@ -32,7 +32,8 @@ log = logging.getLogger("forven.pipeline_explain")
 _NEXT_STAGE = {
     "quick_screen": "gauntlet",
     "gauntlet": "paper",
-    "paper": "live_graduated",
+    "paper": "probation",
+    "probation": "live_graduated",
     "live_graduated": None,
 }
 
@@ -42,7 +43,8 @@ _STAGE_LABELS = {
     "quick_screen": "Quick screen",
     "gauntlet": "Gauntlet",
     "paper": "Paper trading",
-    "live_graduated": "Live (graduated)",
+    "probation": "Probation",
+    "live_graduated": "Live",
 }
 
 # What fires the next transition, keyed by CURRENT stage.
@@ -53,9 +55,29 @@ _TRANSITION_TRIGGERS = {
         "validation test passes and the gauntlet→paper gate clears"
     ),
     "paper": (
-        "Gated — the strict paper→live gate must pass on forward paper "
-        "evidence; live graduation then runs through the approvals workflow"
+        "Gated — live probation starts once its paper trades confirm the backtest "
+        "and every probation check passes: by the operator on the strategy page, "
+        "or by the probation watchdog when automatic entry is on"
     ),
+    "probation": (
+        "Gated — full size after enough live trades inside the backtest's range: "
+        "graduated by the operator (GO LIVE), or by the watchdog when automatic "
+        "graduation is on; a demotion trigger sends it back to paper"
+    ),
+}
+
+# Probation entry checks (forven.probation.entry_check) -> how the pipeline
+# view reads a failing one: an evidence wait, a capacity conflict or merit.
+_PROBATION_CHECKS = {
+    "paper_confirmation": ("evidence", "insufficient_paper_evidence", ("wait", "Keep paper trading until its trades confirm the backtest")),
+    "held_back": ("evidence", "holdout_pending", ("wait", "Wait for the held-back test")),
+    "engine_fresh": ("evidence", "stale_engine_artifacts", ("wait", "Results predate the current engine — re-validation is queued automatically")),
+    "cooldown": ("evidence", "probation_cooldown", ("wait", "Cooling down after a demotion")),
+    "capacity": ("contention", "probation_full", ("review_slot", "Probation is full — graduate or demote one first")),
+    "live_admission": ("contention", "live_admission", ("review_slot", "Another live strategy holds this coin, or the wallet is full")),
+    "paper_breakeven": ("merit", "paper_losing", ("wait", "Paper is below breakeven — it waits until paper recovers")),
+    "edge_covers_costs": ("merit", "edge_below_costs", ("review_strategy", "The backtest's average trade is too thin for costs")),
+    "execution_verified": ("evidence", "execution_unverified", ("run_validation_suite", "Execution settings need fresh validation before live trading")),
 }
 
 _LIVE_STANDING_NOTE = (
@@ -410,6 +432,76 @@ def _classify_status(
     return "waiting_evidence" if blockers else "unknown"
 
 
+def _probation_ready_cache() -> dict:
+    """The probation watchdog's last checks of every paper strategy, by id."""
+    try:
+        from forven import probation
+
+        cached = probation.ready_cache()
+    except Exception as exc:  # noqa: BLE001 — the explain view never fails on probation
+        log.debug("probation ready list unavailable: %s", exc)
+        return {}
+    return {str(e.get("strategy_id")): e for e in cached.get("strategies") or [] if e.get("strategy_id")}
+
+
+def _probation_entry(strategy_id: str, cache: dict | None) -> dict | None:
+    """Probation entry checks: cached for the fleet view, computed for one strategy
+    (and for a paper strategy the watchdog has not checked yet)."""
+    if cache is not None and strategy_id in cache:
+        return cache[strategy_id]
+    try:
+        from forven import probation
+
+        return probation.entry_check(strategy_id)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("probation entry check failed for %s: %s", strategy_id, exc)
+        return None
+
+
+def _probation_entry_evidence(report: dict) -> dict:
+    from forven import probation
+
+    k = probation.knobs()
+    slow = bool(report.get("slow"))
+    confirmation = report.get("confirmation") or {}
+    return {
+        "eligible": bool(report.get("eligible")),
+        "matched": int(confirmation.get("matched") or 0),
+        "mismatched": int(confirmation.get("mismatched") or 0),
+        "need_trades": int(k["slow_confirm_trades"] if slow else k["confirm_trades"]),
+        "need_days": int(k["slow_confirm_days"]) if slow else 0,
+        "paper_days": report.get("paper_days"),
+        "slow": slow,
+        "failing": [c.get("key") for c in report.get("failing") or []],
+        "checked_at": report.get("checked_at"),
+    }
+
+
+def _probation_live(strategy_id: str, *, detail: bool) -> dict | None:
+    """A live strategy's probation standing, or None when it trades at full size."""
+    try:
+        from forven import probation
+
+        rec = probation.get_record(strategy_id)
+        if not rec or not rec.get("in_probation"):
+            return None
+        k = probation.knobs()
+        out = {
+            "state": rec["state"],
+            "size_pct": rec["size_pct"],
+            "size_locked": rec["size_locked"],
+            "entered_at": rec["entered_at"],
+            "live_trades": len(probation.live_trades(strategy_id, rec.get("entered_at"))),
+            "graduate_trades": int(k["graduate_trades"]),
+        }
+        if detail:
+            out["graduation"] = probation.graduation_check(strategy_id, rec)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.debug("probation status unavailable for %s: %s", strategy_id, exc)
+        return None
+
+
 def _current_workflow_blocker(strategy_id: str) -> dict | None:
     """Read the actual stopping condition, including pre-gauntlet data failures."""
     with get_db() as conn:
@@ -459,9 +551,10 @@ def _current_workflow_blocker(strategy_id: str) -> dict | None:
                     "gauntlet_workflow", actions[status], workflow_status=status, step=row["current_step_key"])
 
 
-def _explain_row(row: dict, now: datetime) -> dict:
+def _explain_row(row: dict, now: datetime, probation_ready: dict | None = None) -> dict:
+    """``probation_ready``: the watchdog's cached probation checks by strategy id
+    (fleet view); None computes them now (single-strategy view)."""
     from forven.policy import (
-        check_paper_live_readiness,
         check_promotion_readiness,
         evaluate_promotion,
     )
@@ -470,6 +563,9 @@ def _explain_row(row: dict, now: datetime) -> dict:
     stage = normalize_stage(str(row.get("stage") or row.get("status") or ""))
     stage_changed_at = str(row.get("stage_changed_at") or "").strip() or None
     next_stage = _NEXT_STAGE.get(stage)
+    # Live probation is a record beside live_graduated (forven.probation), shown
+    # as its own pipeline stage.
+    pipeline_stage = stage
 
     promotable: bool | None = None
     gate_reason: str | None = None
@@ -542,28 +638,49 @@ def _explain_row(row: dict, now: datetime) -> dict:
         blockers.extend(_readiness_blockers(readiness_steps, "promotion_readiness", seen_reasons))
 
     elif stage == "paper":
-        promotable, reason = evaluate_promotion(
-            strategy_id, stage, "live_graduated", record_rejection=False, dry_run=True
-        )
-        gate_reason = str(reason)
-        if not promotable:
-            code, kind, action = _classify_gate_reason(reason)
-            seen_reasons.add(gate_reason)
-            blockers.append(_blocker(gate_reason, code, kind, "paper_live_gate", action))
-        readiness = check_paper_live_readiness(strategy_id)
-        readiness_steps = readiness.get("steps") or []
-        blockers.extend(_readiness_blockers(readiness_steps, "paper_live_readiness", seen_reasons))
-        paper_evidence: dict[str, Any] = {}
-        for step in readiness_steps:
-            extra = step.get("extra")
-            if isinstance(extra, dict) and step.get("name") in ("paper_duration", "paper_trades"):
-                paper_evidence[step["name"]] = extra
+        # PROBATION-ONLY: the next gate from paper is live probation.
+        report = _probation_entry(strategy_id, probation_ready)
+        if report is not None:
+            promotable = bool(report.get("eligible"))
+            failing = report.get("failing") or []
+            gate_reason = (
+                "; ".join(f"{c['label']}: {c['detail']}" for c in failing)
+                or "Every probation check passes"
+            )
+            for check in failing:
+                kind, code, action = _PROBATION_CHECKS.get(
+                    check.get("key"), ("merit", "probation_check", _DEFAULT_MERIT_ACTION)
+                )
+                if check.get("key") == "held_back" and check.get("ok") is False:
+                    kind, code = "merit", "holdout_reject"
+                if check.get("key") == "edge_covers_costs" and "not measured" in str(check.get("detail")):
+                    kind, code = "evidence", "no_metrics_error"
+                reason = f"{check['label']}: {check['detail']}"
+                seen_reasons.add(reason)
+                blockers.append(_blocker(reason, code, kind, "probation_gate", action, check=check.get("key")))
+            evidence["probation"] = _probation_entry_evidence(report)
         last_trade_at = _last_paper_trade_at(strategy_id, stage_changed_at)
         if last_trade_at:
-            paper_evidence["last_trade_at"] = last_trade_at
-            paper_evidence["last_trade_age_days"] = _age_days(last_trade_at, now)
-        if paper_evidence:
-            evidence["paper"] = paper_evidence
+            evidence["paper"] = {
+                "last_trade_at": last_trade_at,
+                "last_trade_age_days": _age_days(last_trade_at, now),
+            }
+
+    elif stage == "live_graduated":
+        probation_view = _probation_live(strategy_id, detail=probation_ready is None)
+        if probation_view is not None:
+            pipeline_stage = "probation"
+            next_stage = "live_graduated"
+            evidence["probation"] = probation_view
+            graduation = probation_view.get("graduation")
+            if graduation is not None:
+                promotable = bool(graduation.get("eligible"))
+                for check in graduation.get("failing") or []:
+                    blockers.append(_blocker(
+                        f"{check['label']}: {check['detail']}", "probation_graduation",
+                        "evidence", "probation_gate", ("wait", "Keep trading in probation"),
+                        check=check.get("key"),
+                    ))
 
     if stage in {"quick_screen", "gauntlet"}:
         workflow_blocker = _current_workflow_blocker(strategy_id)
@@ -581,6 +698,8 @@ def _explain_row(row: dict, now: datetime) -> dict:
         last_rejection["age_days"] = _age_days(last_rejection.get("at"), now)
 
     status = _classify_status(stage, promotable, blockers, pending_approval, in_flight)
+    if pipeline_stage == "probation" and status == "live":
+        status = "probation"
 
     next_action = None
     # APPROVAL-FIRST-1: the live_graduated exclusion here suppressed the review
@@ -592,6 +711,8 @@ def _explain_row(row: dict, now: datetime) -> dict:
             "review_approval",
             f"Review pending approval #{pending_approval['id']} ({pending_approval.get('approval_type') or 'approval'})",
         )
+    elif status == "ready" and stage == "paper":
+        next_action = _action_payload("start_probation", "Ready — start probation on the strategy page")
     elif status == "ready" and next_stage:
         next_action = _action_payload("promote", f"Ready — promote to {_STAGE_LABELS.get(next_stage, next_stage)}")
     elif blockers:
@@ -601,8 +722,8 @@ def _explain_row(row: dict, now: datetime) -> dict:
     if next_stage:
         next_transition = {
             "to_stage": next_stage,
-            "label": f"{_STAGE_LABELS.get(stage, stage)} → {_STAGE_LABELS.get(next_stage, next_stage)}",
-            "trigger": _TRANSITION_TRIGGERS.get(stage),
+            "label": f"{_STAGE_LABELS.get(pipeline_stage, pipeline_stage)} → {_STAGE_LABELS.get(next_stage, next_stage)}",
+            "trigger": _TRANSITION_TRIGGERS.get(pipeline_stage),
         }
     elif stage == "live_graduated":
         next_transition = {"to_stage": None, "label": "Live", "trigger": _LIVE_STANDING_NOTE}
@@ -615,7 +736,8 @@ def _explain_row(row: dict, now: datetime) -> dict:
         "timeframe": row.get("timeframe"),
         "type": row.get("type"),
         "stage": stage,
-        "stage_label": _STAGE_LABELS.get(stage, stage),
+        "pipeline_stage": pipeline_stage,
+        "stage_label": _STAGE_LABELS.get(pipeline_stage, pipeline_stage),
         "stage_changed_at": stage_changed_at,
         "days_in_stage": _age_days(stage_changed_at, now),
         "demotion_count": row.get("demotion_count"),
@@ -686,6 +808,7 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
         ).fetchall()
 
     now = datetime.now(timezone.utc)
+    probation_ready = _probation_ready_cache()
     strategies: list[dict] = []
     errors: list[dict] = []
     truncated = False
@@ -698,7 +821,7 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
             truncated = True
             break
         try:
-            strategies.append(_explain_row(row, now))
+            strategies.append(_explain_row(row, now, probation_ready))
         except Exception as exc:  # one bad strategy must not blank the fleet view
             log.warning("pipeline explain failed for %s: %s", row.get("id"), exc)
             errors.append({"id": row.get("id"), "error": str(exc)})
@@ -711,9 +834,12 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
     )
 
     by_stage: dict[str, int] = {}
+    by_pipeline_stage: dict[str, int] = {}
     by_status: dict[str, int] = {}
     for s in strategies:
         by_stage[str(s.get("stage"))] = by_stage.get(str(s.get("stage")), 0) + 1
+        ps = str(s.get("pipeline_stage") or s.get("stage"))
+        by_pipeline_stage[ps] = by_pipeline_stage.get(ps, 0) + 1
         by_status[str(s.get("status"))] = by_status.get(str(s.get("status")), 0) + 1
 
     from forven import live_evidence, paper_door
@@ -739,7 +865,7 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
             "pipeline_preset": preset,
             "gates": gates,
             "stages": list(requested),
-            "counts": {"by_stage": by_stage, "by_status": by_status},
+            "counts": {"by_stage": by_stage, "by_pipeline_stage": by_pipeline_stage, "by_status": by_status},
             "truncated": truncated,
             "strategies": strategies,
             "errors": errors,

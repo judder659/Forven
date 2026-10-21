@@ -142,7 +142,7 @@ def env(forven_db, monkeypatch):
         "forven.strategies.execution_check.execution_check",
         lambda sid: {"executable": state["executable"], "reason": "settings changed"},
     )
-    monkeypatch.setattr("forven.exchange.risk.go_live_refusal", lambda conn, sid: state["refusal"])
+    monkeypatch.setattr("forven.exchange.risk.go_live_refusal", lambda conn, sid, candidate_weight=None: state["refusal"])
     monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: (list(BACKTEST), {}))
     monkeypatch.setattr(probation, "_notify", lambda *a, **k: None)
     return state
@@ -164,6 +164,20 @@ def test_paper_confirmation_counts_only_the_replays_own_trades(env):
     assert not report["eligible"]
     assert [c["key"] for c in report["failing"]] == ["paper_confirmation"]
     _trade("S1")
+    assert probation.entry_check("S1")["eligible"]
+
+
+def test_a_losing_paper_record_waits(env):
+    _strategy("S1")
+    for _ in range(3):
+        _trade("S1")
+    with get_db() as conn:
+        conn.execute("UPDATE trades SET pnl_pct = -0.5 WHERE strategy_id = 'S1'")
+    report = probation.entry_check("S1")
+    assert [c["key"] for c in report["failing"]] == ["paper_breakeven"]
+    with get_db() as conn:
+        conn.execute("UPDATE trades SET pnl_pct = 0.6 WHERE id = (SELECT id FROM trades WHERE strategy_id = 'S1' LIMIT 1)")
+        conn.execute("UPDATE trades SET pnl_pct = 0.0 WHERE strategy_id = 'S1' AND pnl_pct < 0")
     assert probation.entry_check("S1")["eligible"]
 
 
@@ -374,6 +388,18 @@ def test_full_live_drops_back_to_probation_on_a_trigger(env, monkeypatch):
     assert rec["state"] == "active" and rec["size_pct"] == 25.0
 
 
+def test_full_live_without_probation_is_watched_too(env):
+    _strategy("S2", stage="live_graduated", days_in_stage=3)
+    probation.tick()
+    rec = probation.get_record("S2")
+    assert rec["state"] == "graduated" and rec["entered_by"] == "full_live"
+    for _ in range(8):
+        _trade("S2", execution_type="live", pnl_usd=-3.0, opened_days_ago=0)
+    probation.tick()
+    rec = probation.get_record("S2")
+    assert rec["state"] == "active" and rec["size_pct"] == 25.0
+
+
 def test_scanner_reads_probation_scale_without_importing_the_cycle():
     import ast
     from pathlib import Path
@@ -405,3 +431,46 @@ def test_watchdog_job_is_added_alone_and_survives_reconcile():
     assert rows["forven-probation-watchdog"] == 1
     assert rows["forven-weekly-review"] == 0
     assert scheduler.reconcile_forven_jobs() == {"removed": 0, "added": 0}
+
+
+def test_paper_reaches_live_only_through_probation(forven_db):
+    from forven.brain import transition_stage
+
+    _strategy("S1")
+    out = transition_stage("S1", "live_graduated", reason="agent asked", actor="system")
+    assert out["to"] in ("paper", "paper_trading") and out.get("reason_code") == "probation_required"
+    with get_db() as conn:
+        assert conn.execute("SELECT stage FROM strategies WHERE id = 'S1'").fetchone()["stage"] == "paper"
+
+
+def test_pipeline_view_shows_probation_as_its_own_stage(env):
+    from forven.pipeline_explain import explain_pipeline, explain_strategy
+
+    _strategy("S1")
+    for _ in range(3):
+        _trade("S1")
+    paper = explain_strategy("S1")["strategy"]
+    assert paper["status"] == "ready" and paper["next_transition"]["to_stage"] == "probation"
+    assert paper["next_action"]["key"] == "start_probation"
+    probation.start("S1", actor="api", confirm="PROBATION")
+    live = explain_strategy("S1")["strategy"]
+    assert (live["stage"], live["pipeline_stage"], live["status"]) == ("live_graduated", "probation", "probation")
+    assert live["evidence"]["probation"]["size_pct"] == 25.0
+    assert live["next_transition"]["label"] == "Probation → Live"
+    assert explain_pipeline()["counts"]["by_pipeline_stage"] == {"probation": 1}
+
+
+def test_pending_full_size_go_live_requests_are_closed(forven_db):
+    from forven.migrations import _m_2026_10_close_paper_live_promotion_approvals as close
+
+    with get_db() as conn:
+        for target in ("live_graduated", "paper"):
+            conn.execute(
+                "INSERT INTO approvals (approval_type, target_type, target_id, requested_status, status, actor, "
+                "created_at, updated_at) VALUES ('strategy_promotion_approval', 'strategy', 'S1', ?, "
+                "'pending_approval', 'system', '2026-10-20', '2026-10-20')",
+                (target,),
+            )
+        close(conn)
+        rows = dict(conn.execute("SELECT requested_status, status FROM approvals").fetchall())
+    assert rows == {"live_graduated": "expired", "paper": "pending_approval"}

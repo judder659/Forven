@@ -35,6 +35,7 @@
 	$: targetOption = stageOptions.find((option) => option.key === targetStage) ?? null;
 	$: isCapitalTarget = targetStage === 'paper' || targetStage === 'live_graduated';
 	$: isLiveTarget = targetStage === 'live_graduated';
+	$: skipsProbation = isLiveTarget && currentStage === 'paper';
 	$: goLiveArmed =
 		!isLiveTarget ||
 		(goLiveConfirmText.trim().toUpperCase() === GO_LIVE_PHRASE && (goLiveCeilingUsd ?? 0) > 0);
@@ -53,7 +54,9 @@
 			if (candidate.key === stage) return;
 			options.push({
 				key: candidate.key,
-				label: candidate.label,
+				// Paper reaches live through probation (the panel under the rail);
+				// this is the operator override that skips it.
+				label: stage === 'paper' && candidate.key === 'live_graduated' ? 'Live at full size (skip probation)' : candidate.label,
 				kind: candidateIndex > index ? 'forward' : 'backward',
 			});
 		});
@@ -208,6 +211,11 @@
 							<div class="text-[11px] font-semibold text-emerald-200">
 								Going live trades real capital.
 							</div>
+							{#if skipsProbation}
+								<div class="rounded border border-amber-700/50 bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-100" data-testid="stage-control-skip-probation">
+									This skips probation and trades at full size straight away. The usual road is to start probation at reduced size on the strategy page.
+								</div>
+							{/if}
 							<div class="text-[11px] text-emerald-100/80">
 								Set the initial per-asset notional ceiling — the largest position (USD) this strategy may hold live. Enforced on every order; editable later.
 							</div>

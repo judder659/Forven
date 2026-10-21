@@ -2593,7 +2593,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 
 		expect(target.querySelector('[data-testid="overview-live-ramp"]')?.textContent).toContain('Decay kill switch at 30% drawdown');
 		const titles = Array.from(target.querySelectorAll('[data-testid="lifecycle-rail"] [title]'), (node) => node.getAttribute('title') ?? '');
-		expect(titles.some((title) => title.includes('at least 30 days and 50 closed trades'))).toBe(true);
+		expect(titles.some((title) => title.includes('enough paper trades match the backtest'))).toBe(true);
+		expect(titles.some((title) => title.includes('at least 30 days and 50 closed trades'))).toBe(false);
 		expect(titles.some((title) => title.includes('25% (wk 1–2) → 50% (wk 3–4) → 100% (wk 5+)'))).toBe(true);
 	});
 
@@ -2770,7 +2771,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		app = mount(StrategyDetailPage, { target });
 		await waitForCondition(() => target.querySelector('[data-testid="finding-thin"]') !== null);
 
-		expect(target.querySelector('[data-testid="verdict-label"]')?.textContent).toContain('Promising · not proven');
+		expect(target.querySelector('[data-testid="verdict-label"]')?.textContent).toContain('Mixed backtest');
 		expect(target.querySelector('[data-testid="verdict-headline"]')?.textContent).toContain('Profitable out of sample and on held-back data');
 		expect(target.querySelector('[data-testid="finding-thin"]')?.textContent).toContain('4 of 15 reruns finished');
 		expect(target.querySelector('[data-testid="finding-concentration"]')).not.toBeNull();

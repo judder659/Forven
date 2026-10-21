@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PipelineExplainStrategy } from '$lib/api/lifecycle';
 	import type { ForwardRecord } from '$lib/utils/forge/forward';
-	import { paperProgress, statusLine, statusMetaForStage, TONE_DOT, TONE_TEXT } from '$lib/utils/forge/status';
+	import { entryStatusMeta, paperProgress, statusLine, TONE_DOT, TONE_TEXT } from '$lib/utils/forge/status';
 
 	export let entry: PipelineExplainStrategy | null = null;
 	/** True while the gate explainer has not answered yet. */
@@ -10,7 +10,7 @@
 	export let forward: ForwardRecord | null = null;
 	export let stage = '';
 
-	$: meta = statusMetaForStage(entry?.status ?? (loading ? null : 'unknown'), stage);
+	$: meta = entryStatusMeta(entry, loading ? null : 'unknown');
 	$: line = statusLine(entry);
 	$: progress = paperProgress(entry);
 	$: liveNote = stage === 'live_graduated' && forward?.book === 'live' && entry?.status === 'live' ? forward.stateLabel : '';
@@ -33,7 +33,7 @@
 		{#if progress.length > 0}
 			<div class="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
 				{#each progress as item (item.key)}
-					<span class="inline-flex items-center gap-1.5 text-[10.5px] text-sc-ink3" title={`${item.label}: ${item.current} of ${item.threshold} ${item.unit} needed for the paper→live gate`}>
+					<span class="inline-flex items-center gap-1.5 text-[10.5px] text-sc-ink3" title={`${item.label}: ${item.current} of ${item.threshold} ${item.unit} needed to start probation`}>
 						{item.label}
 						<span class="relative h-[3px] w-10 overflow-hidden rounded-full bg-sc-line2">
 							<i class={`absolute inset-y-0 left-0 ${item.met ? 'bg-[#3cc48f]' : 'bg-sc-ink2'}`} style={`width:${(item.fraction * 100).toFixed(1)}%`}></i>

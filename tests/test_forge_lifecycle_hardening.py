@@ -109,6 +109,7 @@ def test_wip_gate_error_blocks_live_admission(forven_db, monkeypatch):
         "live_graduated",
         reason="test",
         actor="system",
+        probation_entry=True,  # paper reaches live only through probation
     )
 
     assert result["to"] == "paper"

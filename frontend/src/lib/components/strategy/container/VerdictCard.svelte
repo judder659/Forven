@@ -11,7 +11,9 @@
 	const PILL: Record<Verdict['tone'], string> = {
 		ok: 'border-[#3cc48f]/40 bg-[#3cc48f]/10 text-[#3cc48f]',
 		caution: 'border-[#e7b24a]/40 bg-[#e7b24a]/10 text-[#e7b24a]',
-		fail: 'border-[#e5574f]/45 bg-[#e5574f]/10 text-[#e5574f]',
+		// Backtest quality informs; it does not decide promotion, so a weak backtest
+		// reads amber rather than as a failure.
+		fail: 'border-[#f2956f]/40 bg-[#f2956f]/10 text-[#f2956f]',
 		idle: 'border-sc-line2 text-sc-ink2',
 	};
 	const MARK: Record<Finding['tone'], { text: string; cls: string }> = {
@@ -26,6 +28,7 @@
 
 <article class="grid content-start gap-3 rounded-md border border-sc-line bg-sc-panel px-4 py-3.5" data-testid="verdict-card">
 	<div class="flex flex-wrap items-center gap-x-3.5 gap-y-2">
+		<h2 class="m-0 text-[13px] font-semibold text-sc-ink" title="How the backtest and robustness tests read. Information for you: probation's own checks decide whether it can trade live.">Backtest quality</h2>
 		<span class={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] font-semibold ${PILL[verdict.tone]}`} data-testid="verdict-label">
 			<span aria-hidden="true">{pillIcon}</span>{verdict.label}
 		</span>

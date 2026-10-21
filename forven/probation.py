@@ -462,16 +462,15 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
     checks.append(_check("paper_confirmation", "Paper trades match the backtest", ok, detail))
 
     try:
-        evidence = policy.evaluate_live_evidence(strategy_id, cfg)
-        state = evidence.get("decision_if_old_enough") or evidence.get("state")
-        failing = state == "fail"
+        paper = policy._check_paper_return(strategy_id)
+        extra = paper[2] if len(paper) > 2 and isinstance(paper[2], dict) else {}
+        paper_return = float(extra.get("current") or 0.0)
         checks.append(_check(
-            "not_losing", "Not clearly losing", not failing,
-            "forward trades contradict the backtest or are significantly losing" if failing
-            else "forward evidence test is not failing",
+            "paper_breakeven", "Paper at breakeven or better", paper_return >= 0,
+            f"paper result {paper_return:+.2f}% since it entered paper",
         ))
     except Exception as exc:  # noqa: BLE001 — fail closed before real money
-        checks.append(_check("not_losing", "Not clearly losing", False, f"forward evidence unavailable: {exc}"))
+        checks.append(_check("paper_breakeven", "Paper at breakeven or better", False, f"paper result unavailable: {exc}"))
 
     coverage = _mod("forven.paper_pool").cost_coverage(avg_trade)
     want = float(k["min_cost_coverage"])
@@ -514,7 +513,9 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
 
     try:
         with _db().get_db() as conn:
-            refusal = _mod("forven.exchange.risk").go_live_refusal(conn, strategy_id)
+            refusal = _mod("forven.exchange.risk").go_live_refusal(
+                conn, strategy_id, candidate_weight=float(k["start_size_pct"]) / 100.0
+            )
     except Exception as exc:  # noqa: BLE001
         refusal = f"live admission check unavailable: {exc}"
     checks.append(_check(
@@ -557,6 +558,8 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
         "trades_per_month": None if pace is None else round(pace, 2),
         "paper_days": paper_days,
         "confirmation": confirmation,
+        "need_trades": int(k["slow_confirm_trades"] if slow else k["confirm_trades"]),
+        "need_days": int(k["slow_confirm_days"]) if slow else 0,
         "notes": notes,
     }
 
@@ -901,8 +904,13 @@ def overview(cfg: dict | None = None) -> dict[str, Any]:
                    "step_size_pct": k["step_size_pct"], "graduate_trades": k["graduate_trades"]},
         "max_strategies": k["max_strategies"],
         "automation": get_automation(),
-        "ready": _db().kv_get(READY_KV_KEY, None) or {"checked_at": None, "strategies": []},
+        "ready": ready_cache(),
     }
+
+
+def ready_cache() -> dict[str, Any]:
+    """The watchdog's last entry checks of every paper strategy (refreshed hourly)."""
+    return _db().kv_get(READY_KV_KEY, None) or {"checked_at": None, "strategies": []}
 
 
 def stage_badges(strategy_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
@@ -930,6 +938,10 @@ def tick(cfg: dict | None = None) -> dict[str, Any]:
     k = rules.settings(cfg)
     auto = get_automation()
     out: dict[str, Any] = {"demoted": [], "demoting": [], "stepped": [], "graduated": [], "started": [], "ready": []}
+    try:
+        _watch_full_live()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Probation could not adopt full-size live strategies: %s", exc)
     for rec in list_records():
         sid = rec["strategy_id"]
         try:
@@ -941,6 +953,27 @@ def tick(cfg: dict | None = None) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("Probation ready-list refresh failed: %s", exc)
     return out
+
+
+def _watch_full_live() -> None:
+    """Watch every full-size live strategy with the probation triggers.
+
+    A strategy that reached full size without probation (before it existed, or
+    by an operator skipping it) gets a ``graduated`` record from its live start,
+    so a demotion trigger drops it to probation like any graduate.
+    """
+    with _db().get_db() as conn:
+        rows = conn.execute(
+            "SELECT s.id, s.stage_changed_at, p.state FROM strategies s "
+            "LEFT JOIN strategy_probation p ON p.strategy_id = s.id "
+            "WHERE LOWER(TRIM(COALESCE(s.stage, ''))) IN ('live_graduated', 'deployed')"
+        ).fetchall()
+    for row in rows:
+        if row["state"] in rules.IN_PROBATION | {rules.STATE_GRADUATED}:
+            continue
+        _save(str(row["id"]), state=rules.STATE_GRADUATED, size_pct=100.0, size_locked=False,
+              entered_at=row["stage_changed_at"] or _iso(), entered_by="full_live", status_reason=None,
+              history_event={"event": "watching_full_live"})
 
 
 def _tick_one(sid: str, rec: dict, cfg: dict, k: dict, auto: dict, out: dict) -> None:
@@ -1023,8 +1056,14 @@ def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
             "symbol": row["symbol"],
             "timeframe": row["timeframe"],
             "eligible": report["eligible"],
-            "failing": [{"key": c["key"], "label": c["label"], "detail": c["detail"]} for c in report["failing"]],
+            "failing": [
+                {"key": c["key"], "label": c["label"], "detail": c["detail"], "ok": c["ok"]}
+                for c in report["failing"]
+            ],
             "confirmation": report["confirmation"],
+            "slow": report["slow"],
+            "paper_days": report["paper_days"],
+            "checked_at": _iso(),
         }
         if report["eligible"] and auto["auto_entry"]:
             try:
