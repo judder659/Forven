@@ -6713,24 +6713,35 @@ def backtest_strategy(
                 return {"error": f"Backtest worker process failed: {e}", "trades": [], "metrics": {}}
     else:
         log.info("Running backtest %s inline without process isolation", strategy_id)
-        worker_result = _isolated_backtest_worker(
-            strategy_id,
-            original_strategy_type,
-            family_strategy_type,
-            params,
-            df,
-            float(leverage),
-            resolved_fee_bps,
-            resolved_slippage_bps,
-            regime_gate,
-            warmup,
-            resolved_timeframe,
-            resolved_trade_mode,
-            resolved_include_funding,
-            execution_controls,
-            resolved_initial_capital,
-            asset,
-        )
+        # The inline walk holds the GIL on the calling thread. In the backend
+        # (isolation on) only imported strategies land here, so queue them one at
+        # a time rather than letting several starve the API's event loop. With
+        # isolation off (tests, FORVEN_BACKTEST_PROCESS_ISOLATION=0) nothing
+        # changes.
+        from contextlib import nullcontext
+
+        from forven.strategies.concurrency import inline_backtest_slot
+
+        inline_gate = inline_backtest_slot("backtest") if _should_use_process_isolation() else nullcontext()
+        with inline_gate:
+            worker_result = _isolated_backtest_worker(
+                strategy_id,
+                original_strategy_type,
+                family_strategy_type,
+                params,
+                df,
+                float(leverage),
+                resolved_fee_bps,
+                resolved_slippage_bps,
+                regime_gate,
+                warmup,
+                resolved_timeframe,
+                resolved_trade_mode,
+                resolved_include_funding,
+                execution_controls,
+                resolved_initial_capital,
+                asset,
+            )
 
     check_work_budget()
     if "error" in worker_result:

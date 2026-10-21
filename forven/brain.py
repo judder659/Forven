@@ -113,7 +113,7 @@ _USER_ACTORS = {"api", "manual", "user", "ui", "pipeline_sweep", "gauntlet_sweep
 #     must not wait on a dethrone approval. It never touches live strategies.
 # NOTE: none of these may retire a CANONICAL strategy — the canonical guard in
 # transition_stage only honours decay_tracker or forced _USER_ACTORS.
-_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement"}
+_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement", "probation"}
 _OPERATOR_OWNED_STAGES = {"paper", "live_graduated"}
 _TERMINAL_DETHRONE_STAGES = {"archived", "rejected", "backtest_failed"}
 
@@ -1516,8 +1516,14 @@ def transition_stage(
     force: bool = False,
     skip_approval_gate: bool = False,
     evidence: dict | None = None,
+    probation_entry: bool = False,
 ) -> dict[str, str | None]:
-    """Move a strategy between lifecycle stages in one atomic update path."""
+    """Move a strategy between lifecycle stages in one atomic update path.
+
+    ``probation_entry`` (forven.probation only): a paper -> live_graduated move
+    into live probation. Its own entry check replaces the full live gate and the
+    go-live approval; every other admission check still runs.
+    """
     result = _transition_stage_impl(
         strategy_id,
         target_stage,
@@ -1527,6 +1533,7 @@ def transition_stage(
         force=force,
         skip_approval_gate=skip_approval_gate,
         evidence=evidence,
+        probation_entry=probation_entry,
     )
     # Emitted here, after the write transaction closed: emit_notification opens
     # its own connection and would contend with the held WAL writer lock.
@@ -1575,8 +1582,10 @@ def _transition_stage_impl(
     force: bool = False,
     skip_approval_gate: bool = False,
     evidence: dict | None = None,
+    probation_entry: bool = False,
 ) -> dict[str, str | None]:
     normalized_target = _normalize_stage(target_stage)
+    probation_entry = bool(probation_entry) and normalized_target == "live_graduated"
     if not normalized_target:
         raise ValueError(f"Invalid stage: {target_stage}")
     force_activity_message: str | None = None
@@ -1987,7 +1996,7 @@ def _transition_stage_impl(
                     )
 
         # Enforce strict promotion gates unless manually overridden.
-        if normalized_target in ("paper", "live_graduated") and not force:
+        if normalized_target in ("paper", "live_graduated") and not force and not probation_entry:
             passed, gate_reason = evaluate_promotion(strategy_id, current_stage, normalized_target)
             if not passed:
                 log.warning("Gate REJECTED %s -> %s: %s", strategy_id, normalized_target, gate_reason)
@@ -2018,6 +2027,7 @@ def _transition_stage_impl(
             _requires_operator_promotion_approval(current_stage, normalized_target)
             and not force
             and not skip_approval_gate
+            and not probation_entry
         ):
             approval_id, reused = _queue_promotion_approval(
                 conn,

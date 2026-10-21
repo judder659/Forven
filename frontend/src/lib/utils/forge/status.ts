@@ -95,6 +95,27 @@ export const STATUS_META: Record<ForgeStatusKey, StatusMeta> = {
 	},
 };
 
+/**
+ * A paper strategy "blocked on merit" missed only the full live gate's strict
+ * robustness battery (walk-forward, Monte-Carlo, cost stress, regimes). It keeps
+ * paper trading, and live probation does not use that battery, so the card
+ * says what is blocked instead of reading as a failure.
+ */
+export const PAPER_LIVE_GATE_META: StatusMeta = {
+	key: 'blocked_merit',
+	label: 'Full live blocked',
+	short: 'live blocked',
+	tone: 'caution',
+	rank: 1,
+	help: 'Still paper trading. A backtest robustness check blocks promotion to full live size; live probation does not use this check, so it can still qualify for probation.',
+};
+
+export function statusMetaForStage(status: string | null | undefined, stage: string | null | undefined): StatusMeta {
+	const meta = statusMeta(status);
+	const s = String(stage ?? '').trim().toLowerCase();
+	return meta.key === 'blocked_merit' && (s === 'paper' || s === 'paper_trading') ? PAPER_LIVE_GATE_META : meta;
+}
+
 export function statusMeta(status: string | null | undefined): StatusMeta {
 	const key = String(status ?? '').trim().toLowerCase() as ForgeStatusKey;
 	return STATUS_META[key] ?? STATUS_META.unknown;

@@ -190,3 +190,97 @@ def backtest_subprocess_slot(purpose: str = "backtest"):
         with _cond:
             _active = max(0, _active - 1)
             _cond.notify_all()
+
+
+# ---------------------------------------------------------------------------
+# Inline backtests (imported strategies)
+# ---------------------------------------------------------------------------
+# Imported (sandbox-only) strategies skip the isolated backtest subprocess: their
+# signal generation already runs in the locked-down sandbox worker. Everything
+# else in that backtest (regime masks, the execution kernel walk, metrics) runs
+# on the CALLING thread, i.e. inside the API process. That work is pure Python
+# and holds the GIL, so threads add no throughput, and several at once starve
+# the event loop (the dashboard freezes for seconds at a time) and the scanner.
+# This gate runs them one at a time per process by default. Signal generation
+# is already serialized behind the single sandbox worker, so the queue costs
+# almost nothing.
+
+DEFAULT_INLINE_BACKTEST_CONCURRENCY = 1
+_INLINE_MAX = 4
+
+_inline_cond = threading.Condition()
+_inline_active = 0
+_inline_local = threading.local()
+
+
+def inline_backtest_concurrency() -> int:
+    """Max concurrent inline backtests for THIS process (>=1, <=4).
+
+    FORVEN_INLINE_BACKTEST_CONCURRENCY overrides the default of 1. Pure env read,
+    so it is safe to call under the condition lock.
+    """
+    env = str(os.getenv("FORVEN_INLINE_BACKTEST_CONCURRENCY", "") or "").strip()
+    if env:
+        try:
+            return max(1, min(int(env), _INLINE_MAX))
+        except ValueError:
+            pass
+    return DEFAULT_INLINE_BACKTEST_CONCURRENCY
+
+
+def active_inline_backtest_slots() -> int:
+    """Currently-held inline slots (observability/tests)."""
+    with _inline_cond:
+        return _inline_active
+
+
+@contextmanager
+def inline_backtest_slot(purpose: str = "backtest"):
+    """Hold one inline-backtest slot; re-entrant on the same thread.
+
+    Queues like `backtest_subprocess_slot`: the caller's work deadline applies,
+    and after `_MAX_SLOT_WAIT_SECONDS` it raises a runtime timeout (an
+    infrastructure block, never a strategy verdict).
+    """
+    global _inline_active
+    depth = getattr(_inline_local, "depth", 0)
+    if depth:
+        # A nested backtest on a thread that already holds a slot must not wait
+        # on itself.
+        _inline_local.depth = depth + 1
+        try:
+            yield
+        finally:
+            _inline_local.depth -= 1
+        return
+
+    start = time.monotonic()
+    logged_wait = False
+    while True:
+        check_work_budget()
+        with _inline_cond:
+            limit = inline_backtest_concurrency()
+            if _inline_active < limit:
+                _inline_active += 1
+                break
+            waited = time.monotonic() - start
+            if waited >= _MAX_SLOT_WAIT_SECONDS:
+                raise TimeoutError(
+                    f"Inline backtest queue full after {waited:.0f}s "
+                    f"(purpose={purpose}, active={_inline_active}, limit={limit})"
+                )
+            if waited >= 30.0 and not logged_wait:
+                log.info(
+                    "Inline backtests: %s queued behind %d active (limit=%d)",
+                    purpose, _inline_active, limit,
+                )
+                logged_wait = True
+            _inline_cond.wait(timeout=remaining_time(min(_SLOT_POLL_SECONDS, _MAX_SLOT_WAIT_SECONDS - waited)))
+    _inline_local.depth = 1
+    try:
+        yield
+    finally:
+        _inline_local.depth = 0
+        with _inline_cond:
+            _inline_active = max(0, _inline_active - 1)
+            _inline_cond.notify_all()

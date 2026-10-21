@@ -1448,6 +1448,25 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_messages_thread
     ON assistant_messages(thread_id, seq);
+
+-- Live probation (forven.probation): a live_graduated strategy trading at a
+-- fraction of normal size while its live record builds. One row per strategy;
+-- it outlives the probation (graduated/demoted) for the cooldown and history.
+CREATE TABLE IF NOT EXISTS strategy_probation (
+    strategy_id     TEXT PRIMARY KEY,
+    state           TEXT NOT NULL,
+    size_pct        REAL NOT NULL,
+    size_locked     INTEGER NOT NULL DEFAULT 0,
+    entered_at      TEXT,
+    entered_by      TEXT,
+    bypassed_json   TEXT,
+    history_json    TEXT,
+    demotion_count  INTEGER NOT NULL DEFAULT 0,
+    last_demoted_at TEXT,
+    status_reason   TEXT,
+    last_check_json TEXT,
+    updated_at      TEXT
+);
 """
 
 # Indexes that depend on columns added by migrations — run AFTER _run_migrations.

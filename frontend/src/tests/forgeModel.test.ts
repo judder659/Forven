@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { archivedFromStage, classifyArchive, primaryClause, tallyCauses } from '$lib/utils/forge/causes';
 import { graveyardTotal, stageTotals, summarizeFlows } from '$lib/utils/forge/flow';
-import { cleanReason, paperProgress, statusLine, statusMeta } from '$lib/utils/forge/status';
+import { cleanReason, paperProgress, statusLine, statusMeta, statusMetaForStage } from '$lib/utils/forge/status';
 import { buildAttention, taskLabel } from '$lib/utils/forge/attention';
 import { buildActivity, hourlyMoves } from '$lib/utils/forge/activity';
 import { forgeHeadline } from '$lib/utils/forge/headline';
@@ -151,6 +151,13 @@ describe('forge status', () => {
 		expect(statusMeta('awaiting_operator').label).toBe('Needs your review');
 		expect(statusMeta('awaiting_operator').rank).toBeLessThan(statusMeta('waiting_evidence').rank);
 		expect(statusMeta('something_new').key).toBe('unknown');
+	});
+
+	it('says a paper strategy blocked on merit is only blocked from full live', () => {
+		expect(statusMetaForStage('blocked_merit', 'paper').label).toBe('Full live blocked');
+		expect(statusMetaForStage('blocked_merit', 'paper').tone).toBe('caution');
+		expect(statusMetaForStage('blocked_merit', 'gauntlet').label).toBe('Blocked on merit');
+		expect(statusMetaForStage('ready', 'paper').label).toBe('Ready to promote');
 	});
 
 	it('leads with the pending approval when one is waiting', () => {

@@ -11,6 +11,7 @@ import SystemModeCard from './blocks/SystemModeCard.svelte';
 import ThroughputDialBlock from './blocks/ThroughputDialBlock.svelte';
 import WalletsBlock from './blocks/WalletsBlock.svelte';
 import NotificationChannelsCard from './NotificationChannelsCard.svelte';
+import ProbationAutomation from './ProbationAutomation.svelte';
 import UpdatePanel from './UpdatePanel.svelte';
 import SettingsDangerZone from './sections/SettingsDangerZone.svelte';
 
@@ -25,6 +26,7 @@ const withSettings = (settings: Record<string, unknown>) => ({ settings });
 
 export const CUSTOM_BLOCKS: Record<string, CustomBlock> = {
   'automation-mode': { component: SystemModeCard },
+  'automation-probation': { component: ProbationAutomation },
   'trading-real-money': { component: RealMoneyStatus, props: withSettings },
   'hl-wallets': { component: WalletsBlock, props: withSettings },
   'lab-pipeline-preset': { component: PipelineStanceBlock, props: withSettings },

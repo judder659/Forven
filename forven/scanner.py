@@ -43,6 +43,7 @@ from forven.exchange.risk import (
     release,
     sync_from_trades,
 )
+from forven import probation_rules as _probation_rules
 from forven.strategies import sizing as _sizing
 from forven.strategies.execution_contract import EXECUTION_RUNTIME_REVISION as EXECUTION_RUNTIME_REVISION
 from forven.strategies.execution_kernel import cost_breakdown_usd as _kernel_cost_breakdown_usd
@@ -5268,6 +5269,41 @@ def manage_positions(
                 ),
                 6,
             )
+            # PROBATION-1 (legacy live path): same probation size, pause and
+            # exchange-minimum rule as the kernel path.
+            _probation_meta_legacy = None
+            if execution_type == "live":
+                from forven import probation as _probation
+
+                _probation_block = _probation.blocks_new_entries(strat_id)
+                if _probation_block:
+                    actions.append(f"SKIPPED {strat['asset']} live — {_probation_block}")
+                    return actions
+                _p_scale, _probation_meta_legacy = _probation.order_scale(strat_id)
+                if _probation_meta_legacy is not None:
+                    _full_size = size
+                    _size_fraction = _size_fraction * _p_scale
+                    size = round(
+                        _sizing.position_units(
+                            equity=float(sizing_equity), size_fraction=_size_fraction,
+                            leverage=_leverage, entry_price=float(price),
+                        ),
+                        6,
+                    )
+                    _floored, _too_small = _probation_rules.min_order_units(
+                        units=float(size), full_units=float(_full_size), price=float(price),
+                        min_notional_usd=_MIN_LIVE_ORDER_NOTIONAL_USD,
+                        stop_price=stop_loss,
+                        risk_cap_usd=float(sizing_equity) * float(strategy_risk_pct) if strategy_risk_pct else None,
+                    )
+                    if _floored is None:
+                        _probation.record_skip(strat_id, strat["asset"], str(_too_small))
+                        actions.append(f"SKIPPED {strat['asset']} live — {_too_small}")
+                        return actions
+                    if _floored > float(size):
+                        _probation_meta_legacy = {**_probation_meta_legacy, "raised_to_minimum_usd": round(_floored * float(price), 4)}
+                        size = round(_floored, 6)
+                        _size_fraction = max(0.0, min(1.0, (size * float(price)) / (float(sizing_equity) * float(_leverage))))
             # SLICE-1: same optional tighter cap as the kernel path — clamp to the
             # go-live ceiling rather than refusing, and re-derive the fraction from
             # what was actually placed so the recorded risk basis stays honest.
@@ -5305,6 +5341,8 @@ def manage_positions(
             }
             if _ceiling_clamp_legacy:
                 sizing_meta["go_live_ceiling_clamp"] = _ceiling_clamp_legacy
+            if _probation_meta_legacy is not None:
+                sizing_meta["probation"] = _probation_meta_legacy
             if _controls.get("sizing_mode") == "fixed" and _controls.get("fixed_size"):
                 # FIXED-DOLLAR-1: state the dollar target explicitly so "fixed" on
                 # the position card can't be read as a fixed fraction (the fraction
@@ -7488,6 +7526,18 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
             "[%s] portfolio allocator scaled live size_fraction x%.3f -> %.6f",
             strat_id, portfolio_multiplier, size_fraction,
         )
+    # PROBATION-1: a strategy in live probation trades at its probation size
+    # (forven.probation). The full-size units are kept so the exchange-minimum
+    # rule below can raise a too-small order, never past full size.
+    from forven import probation as _probation
+
+    _probation_block = _probation.blocks_new_entries(strat_id)
+    if _probation_block:
+        return f"SKIPPED {asset} live — {_probation_block}"
+    probation_scale, probation_meta = _probation.order_scale(strat_id)
+    full_units = _sizing.position_units(equity=float(sizing_equity), size_fraction=size_fraction, leverage=leverage, entry_price=ref_price)
+    if probation_meta is not None:
+        size_fraction = size_fraction * probation_scale
     requested_fraction = float(pos.get("requested_size_fraction", pos.get("size_fraction")) or 0.0)
     units = _sizing.position_units(equity=float(sizing_equity), size_fraction=size_fraction, leverage=leverage, entry_price=ref_price)
     # SLICE-1: the slice is the default allocation; an operator-typed go-live
@@ -7622,6 +7672,26 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
             _add_risk = abs(float(ref_price) - float(stop_price)) * float(units)
         else:
             _add_risk = _add_notional * 0.03
+    # PROBATION-1: the exchange refuses orders under its minimum value. A
+    # probation-sized order below it is raised to the minimum when that stays
+    # within the full-size order and the per-trade risk cap, else skipped (and
+    # shown on the strategy) instead of being sent to be refused.
+    if probation_meta is not None:
+        _floored, _too_small = _probation_rules.min_order_units(
+            units=float(units), full_units=float(full_units), price=float(ref_price),
+            min_notional_usd=_MIN_LIVE_ORDER_NOTIONAL_USD, stop_price=stop_price,
+            risk_cap_usd=_risk_budget_usd,
+        )
+        if _floored is None:
+            log.warning("[%s] SKIPPED %s live open — %s", strat_id, asset, _too_small)
+            _probation.record_skip(strat_id, asset, str(_too_small))
+            return f"SKIPPED {asset} live — {_too_small}"
+        if _floored > float(units):
+            probation_meta = {**probation_meta, "raised_to_minimum_usd": round(_floored * float(ref_price), 4),
+                              "probation_units": float(units)}
+            units = _floored
+            _add_notional = float(units) * float(ref_price)
+            _add_risk = (abs(float(ref_price) - float(stop_price)) * float(units)) if stop_price else _add_notional * 0.03
     # BOOK-BUDGET-1: the order draws on ONE wallet — pass the routed book and its
     # balance (sizing_equity was narrowed to exactly that above) so admission is
     # also checked against the wallet's own capacity, not just the aggregate.
@@ -7687,6 +7757,8 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         # fill (kernel_size_fraction above is the SCALED value actually deployed).
         "portfolio_risk_multiplier": round(portfolio_multiplier, 4),
     }
+    if probation_meta is not None:
+        signal_data["probation"] = probation_meta
     if _live_clamp_meta:
         signal_data["live_risk_clamp"] = _live_clamp_meta
     # SLICE-1: record the base this order was sized against. `kernel_equity_at_entry`
