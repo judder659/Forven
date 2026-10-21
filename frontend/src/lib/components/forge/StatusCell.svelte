@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { PipelineExplainStrategy } from '$lib/api/lifecycle';
 	import type { ForwardRecord } from '$lib/utils/forge/forward';
-	import { paperProgress, statusLine, statusMeta, TONE_DOT, TONE_TEXT } from '$lib/utils/forge/status';
+	import { paperProgress, statusLine, statusMetaForStage, TONE_DOT, TONE_TEXT } from '$lib/utils/forge/status';
 
 	export let entry: PipelineExplainStrategy | null = null;
 	/** True while the gate explainer has not answered yet. */
@@ -10,7 +10,7 @@
 	export let forward: ForwardRecord | null = null;
 	export let stage = '';
 
-	$: meta = statusMeta(entry?.status ?? (loading ? null : 'unknown'));
+	$: meta = statusMetaForStage(entry?.status ?? (loading ? null : 'unknown'), stage);
 	$: line = statusLine(entry);
 	$: progress = paperProgress(entry);
 	$: liveNote = stage === 'live_graduated' && forward?.book === 'live' && entry?.status === 'live' ? forward.stateLabel : '';
