@@ -154,6 +154,7 @@ const SPECS: Record<string, Spec> = {
   'pipeline.paper_pool.retire_max_t_stat': [null, null, 'any'],
   'pipeline.paper_pool.retire_max_drawdown_pct': [0, 100, 'any'],
   'pipeline.paper_pool.retire_idle_days': [0, null, 1],
+  'pipeline.paper_pool.auto_port_max': [0, 15, 1],
 
   // ---- lab: safety floors (fractions 0-1 where the description says so) ----
   'pipeline.safety_floors.min_trades': [0, null, 1],

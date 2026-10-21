@@ -2987,6 +2987,10 @@ def paper_pool_tick(config: dict | None = None) -> dict:
         out["multi_coin_frozen"] = paper_multi_coin_tick(config)
     except Exception as exc:  # noqa: BLE001
         log.warning("Paper multi-coin tick failed: %s", exc)
+    try:
+        out["auto_ports"] = paper_port_tick(config)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Paper auto-port tick failed: %s", exc)
     # Once per install: report (never act on) how live strategies fare against
     # the new live gate. Re-run on demand with `forven-agent live-recheck`.
     if not kv_get(LIVE_RECHECK_KEY):
@@ -3071,6 +3075,126 @@ def paper_multi_coin_tick(config: dict | None = None) -> list[dict]:
         )
         created.append({"strategy_id": strategy_id, "coins": coins})
     return created
+
+
+PORT_SOURCE = "paper_port"
+
+
+def _port_symbol(home_symbol: str, coin: str) -> str:
+    """The port's symbol in the parent's format: ``ETH/USDT`` for a ``BTC/USDT`` parent, else ``ETH``."""
+    symbol = str(home_symbol or "").strip().upper()
+    if "/" in symbol:
+        quote = symbol.split("/", 1)[1].split(":", 1)[0] or "USDT"
+        return f"{coin}/{quote}"
+    return coin
+
+
+def paper_port_tick(config: dict | None = None) -> list[dict]:
+    """Port each paper entrant's frozen rule to the coins its breadth test rates as working.
+
+    A paper strategy whose current breadth result reads ``general`` or
+    ``mixed`` gets up to ``paper_pool.auto_port_max`` single-coin siblings: the
+    same code, params and timeframe on each coin where the rule traded and made
+    money in the test (``paper_pool.port_coins``), best Sharpe first. Each
+    sibling starts at quick_screen and earns its own way through the normal
+    pipeline; nothing is admitted to paper directly. Ports per strategy are
+    also held within its family's free paper slots (``max_per_family``). A
+    strategy is ported once (KV ``forven:paper_ports:<id>``), and ports are
+    never ported again. A strategy with a multi-coin container (or a
+    ``general`` result, which earns one) is skipped while multi-coin paper is
+    on: the container already trades those coins under its own id. Off in the
+    Strict paper preset. Returns the ports made.
+    """
+    from forven import multi_coin, paper_pool
+    from forven.db import create_strategy_container
+    from forven.policy import _paper_pool_family, load_pipeline_config, strategy_breadth
+
+    config = config if config is not None else load_pipeline_config()
+    knobs = paper_pool.settings(config)
+    multi_coin_on = multi_coin.settings(config)["multi_coin_enabled"]
+    door = config.get("paper_door") if isinstance(config, dict) else None
+    if not knobs["auto_port_max"] or (
+        isinstance(door, dict) and str(door.get("mode") or "").strip().lower() == "strict"
+    ):
+        return []
+    with get_db() as conn:
+        paper = conn.execute(
+            "SELECT * FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading') "
+            "ORDER BY COALESCE(stage_changed_at, created_at) ASC"
+        ).fetchall()
+    family_counts: dict[str, int] = {}
+    for row in paper:
+        family = _paper_pool_family(row)
+        family_counts[family] = family_counts.get(family, 0) + 1
+    made: list[dict] = []
+    for row in paper:
+        strategy_id = str(row["id"])
+        key = f"{paper_pool.PORT_KV_PREFIX}{strategy_id}"
+        if str(row["source"] or "") == PORT_SOURCE or kv_get(key):
+            continue
+        state = strategy_breadth(strategy_id)
+        if state.get("status") != "done" or state.get("stale"):
+            continue  # not judged yet: try again on a later tick
+        if multi_coin_on and (
+            kv_get(multi_coin.kv_key(strategy_id))
+            or str((state.get("summary") or {}).get("verdict") or "") in multi_coin.ELIGIBLE_VERDICTS
+        ):
+            continue  # a multi-coin container already trades its other coins
+        limit = knobs["auto_port_max"]
+        family = _paper_pool_family(row)
+        if knobs["max_per_family"] and family:
+            limit = min(limit, max(0, knobs["max_per_family"] - family_counts.get(family, 0)))
+        coins = paper_pool.port_coins(state, limit)
+        if not coins and paper_pool.port_coins(state, knobs["auto_port_max"]):
+            continue  # its family has no free paper slots now: try again later
+        try:
+            params = json.loads(row["params"] or "{}")
+        except (TypeError, ValueError):
+            params = {}
+        params = params if isinstance(params, dict) else {}
+        ports: list[dict] = []
+        for coin in coins:
+            try:
+                with get_db() as conn:
+                    port_id, _display, _base = create_strategy_container(
+                        conn=conn,
+                        name=f"{row['name']} port {coin}",
+                        type_=str(row["type"] or ""),
+                        symbol=_port_symbol(row["symbol"], coin),
+                        timeframe=str(row["timeframe"] or "1h"),
+                        params={**params, "_asset": coin},
+                        stage="quick_screen",
+                        source=PORT_SOURCE,
+                        source_ref=row["source_ref"],
+                        hypothesis_id=row["hypothesis_id"],
+                        parent_strategy_id=strategy_id,
+                        sandbox_only=bool(row["sandbox_only"]),
+                    )
+                    conn.execute(
+                        "UPDATE strategies SET runtime_type = ? WHERE id = ?",
+                        (row["runtime_type"] or row["type"], port_id),
+                    )
+            except Exception as exc:  # noqa: BLE001 - one coin's failure skips that coin
+                log.warning("Auto-port of %s to %s failed: %s", strategy_id, coin, exc)
+                continue
+            ports.append({"coin": coin, "strategy_id": port_id})
+        family_counts[family] = family_counts.get(family, 0) + len(ports)
+        summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+        kv_set(key, {
+            "ports": ports,
+            "breadth_verdict": summary.get("verdict"),
+            "ported_at": datetime.now(timezone.utc).isoformat(),
+        })
+        if ports:
+            log_activity(
+                "info",
+                "pipeline",
+                f"{strategy_id} ported to {len(ports)} coin(s) its breadth test rates as working "
+                f"({', '.join(p['coin'] for p in ports)}); each starts at quick_screen",
+                {"strategy_id": strategy_id, "ports": ports},
+            )
+            made.append({"strategy_id": strategy_id, "ports": ports})
+    return made
 
 
 def paper_readmit_candidates(*, days: int = 30, limit: int = 100) -> list[dict]:

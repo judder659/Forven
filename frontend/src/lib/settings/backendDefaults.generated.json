@@ -143,6 +143,7 @@
     "paper_door.min_trades": 20,
     "paper_door.mode": "research",
     "paper_max_concurrent_positions": 0,
+    "paper_pool.auto_port_max": 5,
     "paper_pool.max_per_family": 10,
     "paper_pool.max_per_market": 0,
     "paper_pool.max_strategies": 40,

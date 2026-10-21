@@ -1473,6 +1473,19 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     usedBy: ['forven.paper_pool'],
     order: 12,
   },
+  {
+    id: 'pipeline.paper_pool.auto_port_max',
+    label: 'Auto-ports per paper strategy',
+    unit: 'coins',
+    default: 5,
+    type: 'number',
+    area: 'lab',
+    subsection: 'lab-pipeline-paper-pool',
+    backendSection: 'pipeline',
+    backendPath: 'paper_pool.auto_port_max',
+    description: 'When a paper strategy\'s breadth test finds coins where its rule works, submit the same rule on up to this many of them as new strategies, each through the normal pipeline (0 = off).',
+    usedBy: ['forven.evolution'],
+  },
   // -------------------- LAB: LIVE GATE EVIDENCE (2026-10 gate plan) --------------------
   {
     id: 'pipeline.paper_trading.live_gate_mode',

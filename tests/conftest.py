@@ -95,7 +95,7 @@ def _pre_gate_plan_rules_in_tests(request, monkeypatch):
         if isinstance(defaults.get("paper_trading"), dict):
             monkeypatch.setitem(defaults["paper_trading"], "live_gate_mode", "fixed")
         if isinstance(defaults.get("paper_pool"), dict):
-            for key in ("max_strategies", "max_per_market", "max_per_family"):
+            for key in ("max_strategies", "max_per_market", "max_per_family", "auto_port_max"):
                 monkeypatch.setitem(defaults["paper_pool"], key, 0)
     yield
 

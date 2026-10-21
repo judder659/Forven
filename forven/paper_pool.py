@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
     "retire_max_drawdown_pct": 0.15,
     "retire_idle_days": 60,
     "retire_on_sequential_fail": True,
+    # Auto-ports: when a paper strategy's breadth test finds coins where the
+    # frozen rule works, the same rule is submitted on up to this many of them as
+    # single-coin siblings, each through the normal pipeline (0 = off).
+    "auto_port_max": 5,
 }
 
 RETIREMENT_ACTOR = "paper_retirement"
@@ -133,6 +137,7 @@ def settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
         "retire_on_sequential_fail": bool(
             block.get("retire_on_sequential_fail", DEFAULTS["retire_on_sequential_fail"])
         ),
+        "auto_port_max": max(0, min(15, _int(block.get("auto_port_max"), DEFAULTS["auto_port_max"]))),
     }
 
 
@@ -510,3 +515,48 @@ def readmit_candidates(conn, *, days: int = 30, limit: int = 100) -> list[dict[s
             if len(out) >= int(limit):
                 break
     return out
+
+
+# Breadth readings that show the rule working on several other coins: general
+# (most other coins made money) or mixed (some did). home_only and too_few do not.
+PORT_VERDICTS = frozenset({"general", "mixed"})
+PORT_ACTOR = "paper_auto_port"
+PORT_KV_PREFIX = "forven:paper_ports:"
+
+
+def port_coins(breadth_state: Mapping[str, Any] | None, max_ports: int) -> list[str]:
+    """Coins to port a paper strategy's frozen rule to, best Sharpe first.
+
+    Needs a finished, current breadth result reading ``general`` or ``mixed``.
+    A coin qualifies when the rule traded there and made money in the test; the
+    home coin never does (the strategy already trades it).
+    """
+    state = breadth_state if isinstance(breadth_state, Mapping) else {}
+    if state.get("status") != "done" or state.get("stale") or max_ports <= 0:
+        return []
+    summary = state.get("summary") if isinstance(state.get("summary"), Mapping) else {}
+    if str(summary.get("verdict") or "") not in PORT_VERDICTS:
+        return []
+    home = str(state.get("home") or summary.get("home") or "").strip().upper()
+    winners: list[tuple[float, str]] = []
+    for row in state.get("rows") or []:
+        if not isinstance(row, Mapping) or row.get("error"):
+            continue
+        asset = str(row.get("asset") or "").strip().upper()
+        if not asset or asset == home:
+            continue
+        try:
+            trades = int(row.get("trades") or 0)
+            ret = float(row.get("return_pct"))
+        except (TypeError, ValueError):
+            continue
+        if trades <= 0 or not math.isfinite(ret) or ret <= 0:
+            continue
+        try:
+            sharpe = float(row.get("sharpe"))
+            sharpe = sharpe if math.isfinite(sharpe) else -math.inf
+        except (TypeError, ValueError):
+            sharpe = -math.inf
+        winners.append((sharpe, asset))
+    winners.sort(key=lambda item: (-item[0], item[1]))
+    return [asset for _sharpe, asset in winners][: int(max_ports)]

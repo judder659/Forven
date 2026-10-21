@@ -328,6 +328,9 @@ DEFAULT_PIPELINE_CONFIG = {
         # Retire when the sequential evidence test fails (forward significantly
         # worse than the backtest, or significantly losing).
         "retire_on_sequential_fail": True,
+        # Submit a paper strategy's frozen rule on up to this many coins its
+        # breadth test rates as working, as single-coin siblings (0 = off).
+        "auto_port_max": 5,
     },
     "dethrone": {
         # Paper soak protection (2026-07-06 operator request): a paper strategy
