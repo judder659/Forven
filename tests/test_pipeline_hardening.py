@@ -456,20 +456,12 @@ def test_transition_stage_blocks_unforced_rejected_to_paper_without_backtests(fo
     assert row["status"] == "rejected"
 
 
-def test_transition_stage_queues_operator_approval_for_automated_paper_archive(forven_db):
+def test_transition_stage_leaves_automated_paper_archive_to_the_paper_pool(forven_db):
     _insert_strategy(
         "s-paper-archive-approval",
         stage="paper",
         owner="risk-manager",
-        metrics={
-            "fitness": 55.0,
-            "total_trades": 40,
-            "sharpe": 1.4,
-            "profit_factor": 1.3,
-            "max_drawdown_pct": 0.09,
-            "total_return_pct": 9.0,
-        },
-        # Past the paper dethrone-soak window so the recommendation may file.
+        metrics={"fitness": 55.0, "total_trades": 40, "sharpe": 1.4},
         stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
     )
 
@@ -483,30 +475,47 @@ def test_transition_stage_queues_operator_approval_for_automated_paper_archive(f
     assert transition["from"] == "paper"
     assert transition["to"] == "paper"
     assert transition["requested_to"] == "archived"
-    assert "approval" in str(transition["blocked_reason"]).lower()
-    approval_id = int(str(transition["approval_id"]))
+    assert transition["reason_code"] == "paper_retirement_rules_decide"
+    assert "approval_id" not in transition
 
     with get_db() as conn:
         row = conn.execute(
-            "SELECT stage, status FROM strategies WHERE id = ?",
-            ("s-paper-archive-approval",),
+            "SELECT stage FROM strategies WHERE id = ?", ("s-paper-archive-approval",)
         ).fetchone()
-        approval = conn.execute(
-            """
-            SELECT id, approval_type, status, target_id, requested_status
-            FROM approvals
-            WHERE id = ?
-            """,
-            (approval_id,),
-        ).fetchone()
+        approvals = conn.execute(
+            "SELECT COUNT(*) AS c FROM approvals WHERE target_id = ?", ("s-paper-archive-approval",)
+        ).fetchone()["c"]
 
     assert row["stage"] == "paper"
-    assert row["status"] == "paper"
-    assert approval is not None
+    assert int(approvals) == 0
+
+
+def test_transition_stage_queues_operator_approval_for_automated_live_demotion(forven_db):
+    _insert_strategy(
+        "s-live-demote-approval",
+        stage="live_graduated",
+        owner="risk-manager",
+        metrics={"fitness": 55.0, "total_trades": 40, "sharpe": 1.4},
+    )
+
+    transition = transition_stage(
+        strategy_id="s-live-demote-approval",
+        target_stage="paper",
+        reason="Brain wants it demoted",
+        actor="brain",
+    )
+
+    assert transition["to"] == "live_graduated"
+    assert transition["requested_to"] == "paper"
+    approval_id = int(str(transition["approval_id"]))
+    with get_db() as conn:
+        approval = conn.execute(
+            "SELECT approval_type, status, requested_status FROM approvals WHERE id = ?",
+            (approval_id,),
+        ).fetchone()
     assert approval["approval_type"] == "strategy_dethrone_recommendation"
     assert approval["status"] == "pending_approval"
-    assert approval["target_id"] == "s-paper-archive-approval"
-    assert approval["requested_status"] == "archived"
+    assert approval["requested_status"] == "paper"
 
 
 def test_transition_stage_force_archives_without_unbound_transition_locals(forven_db):
@@ -548,10 +557,10 @@ def test_transition_stage_force_archives_without_unbound_transition_locals(forve
     assert "pipeline hygiene" in str(event["reason"] or "").lower()
 
 
-def test_transition_stage_reuses_existing_dethrone_approval_for_automated_paper_demotion(forven_db):
+def test_transition_stage_reuses_existing_dethrone_approval_for_automated_live_demotion(forven_db):
     _insert_strategy(
         "s-paper-existing-approval",
-        stage="paper",
+        stage="live_graduated",
         owner="risk-manager",
         metrics={"fitness": 52.0, "total_trades": 25},
         stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
@@ -560,17 +569,17 @@ def test_transition_stage_reuses_existing_dethrone_approval_for_automated_paper_
         "strategy_dethrone_recommendation",
         target_type="strategy",
         target_id="s-paper-existing-approval",
-        requested_status="gauntlet",
+        requested_status="paper",
         payload={
             "strategy_id": "s-paper-existing-approval",
             "recommended_action": "dethrone",
-            "recommended_target_stage": "gauntlet",
+            "recommended_target_stage": "paper",
         },
     )
 
     transition = transition_stage(
         strategy_id="s-paper-existing-approval",
-        target_stage="gauntlet",
+        target_stage="paper",
         reason="Execution failure routing",
         actor="scanner",
     )
@@ -590,12 +599,11 @@ def test_transition_stage_reuses_existing_dethrone_approval_for_automated_paper_
             ("s-paper-existing-approval",),
         ).fetchone()["c"]
 
-    assert transition["from"] == "paper"
-    assert transition["to"] == "paper"
-    assert transition["requested_to"] == "gauntlet"
+    assert transition["from"] == "live_graduated"
+    assert transition["to"] == "live_graduated"
+    assert transition["requested_to"] == "paper"
     assert int(str(transition["approval_id"])) == approval_id
-    assert row["stage"] == "paper"
-    assert row["status"] == "paper"
+    assert row["stage"] == "live_graduated"
     assert int(approval_count) == 1
 
 
@@ -3242,70 +3250,6 @@ def test_sweep_respects_cooldown(forven_db):
     assert result2.get("skipped") is True  # cooldown active
 
 
-# ---------------------------------------------------------------------------
-# Challenger-vs-incumbent tournament + dethrone repair (paper-promotion deadlock)
-# ---------------------------------------------------------------------------
-
-
-def test_duplicate_gate_blocks_weaker_challenger(forven_db):
-    """A challenger that does NOT beat the incumbent stays blocked as a duplicate."""
-    kv_set("forven:settings", {"paper_slot_competition_enabled": True})
-    _insert_strategy("incumbent-strong", stage="paper", metrics={"sharpe": 3.0, "total_trades": 40})
-    _insert_strategy("challenger-weak", stage="quick_screen", metrics={"sharpe": 1.0, "total_trades": 40})
-
-    passed, reason = evaluate_promotion("challenger-weak", "quick_screen", "gauntlet")
-
-    assert passed is False
-    assert "duplicate" in reason.lower()
-
-
-def test_duplicate_gate_allows_materially_better_challenger(forven_db):
-    """A challenger that clearly beats the incumbent is NOT blocked as a duplicate."""
-    kv_set("forven:settings", {"paper_slot_competition_enabled": True})
-    _insert_strategy("incumbent-weak", stage="paper", metrics={"sharpe": 1.0, "total_trades": 40})
-    _insert_strategy("challenger-strong", stage="quick_screen", metrics={"sharpe": 3.0, "total_trades": 40})
-
-    passed, reason = evaluate_promotion("challenger-strong", "quick_screen", "gauntlet")
-
-    assert "duplicate" not in reason.lower(), reason
-
-
-def test_materially_better_challenger_queues_dethrone_for_incumbent(forven_db):
-    """Beating the incumbent queues a challenger-driven dethrone recommendation.
-
-    auto_approve_dethrone now defaults ON, which would immediately apply the
-    dethrone; disable it explicitly here so we exercise the queued/awaiting-approval
-    path (the auto-apply path is covered by test_auto_approve_dethrone_frees_the_slot).
-    """
-    kv_set("forven:settings", {"auto_approve_dethrone": False, "paper_slot_competition_enabled": True})
-    _insert_strategy(
-        "incumbent-weak2",
-        stage="paper",
-        metrics={"sharpe": 1.0, "total_trades": 40},
-        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
-    )
-    _insert_strategy("challenger-strong2", stage="quick_screen", metrics={"sharpe": 3.0, "total_trades": 40})
-
-    evaluate_promotion("challenger-strong2", "quick_screen", "gauntlet")
-
-    with get_db() as conn:
-        approval = conn.execute(
-            """
-            SELECT status, target_id, payload FROM approvals
-            WHERE approval_type = 'strategy_dethrone_recommendation'
-              AND target_id = ?
-            ORDER BY id DESC LIMIT 1
-            """,
-            ("incumbent-weak2",),
-        ).fetchone()
-
-    assert approval is not None
-    assert approval["status"] == "pending_approval"
-    payload = json.loads(approval["payload"]) if approval["payload"] else {}
-    assert payload.get("trigger") == "superior_challenger"
-    assert payload.get("challenger_id") == "challenger-strong2"
-
-
 def test_insufficient_evidence_clear_preserves_challenger_dethrone(forven_db):
     """The insufficient-evidence auto-clear must NOT wipe a challenger-driven dethrone."""
     _insert_strategy("incumbent-protected", stage="paper", metrics={"fitness": 60.0})
@@ -3338,43 +3282,6 @@ def test_insufficient_evidence_clear_preserves_challenger_dethrone(forven_db):
 
     assert approval["status"] == "pending_approval"
     assert approval["decision"] is None
-
-
-def test_paper_gate_blocks_challenger_while_incumbent_holds_slot(forven_db):
-    """A challenger cannot promote to paper while the incumbent still occupies the
-    same symbol/timeframe slot, preserving the one-strategy-per-slot invariant
-    (only when slot-competition is enabled)."""
-    kv_set("forven:settings", {"paper_slot_competition_enabled": True})
-    _insert_strategy("incumbent-holds", stage="paper", metrics={"sharpe": 1.0, "total_trades": 40})
-    _insert_strategy("challenger-waiting", stage="gauntlet", metrics={"sharpe": 3.0, "total_trades": 40})
-
-    passed, reason = evaluate_promotion("challenger-waiting", "gauntlet", "paper")
-
-    assert passed is False
-    assert "slot" in reason.lower() or "occupie" in reason.lower() or "incumbent" in reason.lower()
-
-
-def test_auto_approve_dethrone_frees_the_slot(forven_db):
-    """With auto_approve_dethrone enabled, a superior challenger's dethrone is applied,
-    demoting the incumbent out of paper so the slot opens."""
-    kv_set("forven:settings", {"auto_approve_dethrone": True, "paper_slot_competition_enabled": True})
-    _insert_strategy(
-        "incumbent-evicted",
-        stage="paper",
-        metrics={"sharpe": 1.0, "total_trades": 40},
-        stage_changed_at=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat(),
-    )
-    _insert_strategy("challenger-evictor", stage="quick_screen", metrics={"sharpe": 3.0, "total_trades": 40})
-
-    evaluate_promotion("challenger-evictor", "quick_screen", "gauntlet")
-
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT stage FROM strategies WHERE id = ?", ("incumbent-evicted",)
-        ).fetchone()
-
-    assert row["stage"] != "paper"
-    assert row["stage"] == "gauntlet"
 
 
 def _stale_gauntlet_metrics() -> dict:

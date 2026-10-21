@@ -106,7 +106,7 @@
 		risk,
 		fleet,
 		schedulerJobs,
-		pendingApprovals: $navIndicators['/approval']?.count ?? 0,
+		pendingApprovals: $navIndicators['/agents']?.count ?? 0,
 		now,
 	});
 
@@ -193,7 +193,7 @@
 						</p>
 						<div class="mt-3 flex gap-3 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em]">
 							<a href="/paper-trades" class="text-sc-ink2 hover:text-sc-ink">Paper trades →</a>
-							<a href="/approval" class="text-sc-ink2 hover:text-sc-ink">Approvals →</a>
+							<a href="/agents#decisions" class="text-sc-ink2 hover:text-sc-ink">Waiting for you →</a>
 						</div>
 					</div>
 					<AttentionPanel items={attention} />

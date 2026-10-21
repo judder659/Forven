@@ -21,24 +21,24 @@ describe('sidebar badges', () => {
 	});
 
 	it('takes the first facts as the baseline: nothing that already existed is new', () => {
-		setNavIndicators({ '/approval': count(['1', '2', '3']) });
-		expect(get(navBadges)['/approval']).toMatchObject({ kind: 'count', count: 3, fresh: false });
+		setNavIndicators({ '/agents': count(['1', '2', '3']) });
+		expect(get(navBadges)['/agents']).toMatchObject({ kind: 'count', count: 3, fresh: false });
 	});
 
 	it('keeps the real count after a visit and brightens only for new items', () => {
-		setNavIndicators({ '/approval': count(['1', '2']) });
-		markNavSeen('/approval');
-		expect(get(navBadges)['/approval']).toMatchObject({ count: 2, fresh: false });
+		setNavIndicators({ '/agents': count(['1', '2']) });
+		markNavSeen('/agents');
+		expect(get(navBadges)['/agents']).toMatchObject({ count: 2, fresh: false });
 
-		setNavIndicators({ '/approval': count(['1', '2', '3']) });
-		expect(get(navBadges)['/approval']).toMatchObject({ count: 3, fresh: true });
+		setNavIndicators({ '/agents': count(['1', '2', '3']) });
+		expect(get(navBadges)['/agents']).toMatchObject({ count: 3, fresh: true });
 
-		markNavSeen('/approval');
-		expect(get(navBadges)['/approval']).toMatchObject({ count: 3, fresh: false });
+		markNavSeen('/agents');
+		expect(get(navBadges)['/agents']).toMatchObject({ count: 3, fresh: false });
 
 		// Deciding approvals is what clears the badge.
-		setNavIndicators({ '/approval': count([]) });
-		expect(get(navBadges)['/approval']).toBeNull();
+		setNavIndicators({ '/agents': count([]) });
+		expect(get(navBadges)['/agents']).toBeNull();
 	});
 
 	it('counts only unseen issues on Diagnostics, and clears on a visit', () => {
@@ -79,9 +79,9 @@ describe('sidebar badges', () => {
 	});
 
 	it('persists what was seen', () => {
-		setNavIndicators({ '/approval': count(['1']) });
-		setNavIndicators({ '/approval': count(['1', '2']) });
-		markNavSeen('/approval');
-		expect(JSON.parse(localStorage.getItem('forven.nav.seen_v2') ?? '{}')['/approval']).toEqual(['1', '2']);
+		setNavIndicators({ '/agents': count(['1']) });
+		setNavIndicators({ '/agents': count(['1', '2']) });
+		markNavSeen('/agents');
+		expect(JSON.parse(localStorage.getItem('forven.nav.seen_v2') ?? '{}')['/agents']).toEqual(['1', '2']);
 	});
 });

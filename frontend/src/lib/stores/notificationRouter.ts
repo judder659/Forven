@@ -147,7 +147,7 @@ function handleApprovalCreated(data: Record<string, unknown>): void {
 		message: 'Approval needed',
 		detail: reason || approvalType || 'An operator decision is waiting',
 		type: 'warning',
-		href: '/approval',
+		href: '/agents#decisions',
 		duration: APPROVAL_TOAST_MS,
 	});
 }

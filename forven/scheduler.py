@@ -88,7 +88,6 @@ _DEFAULT_JOB_IDS = {
     # and equity record. Listed here as well as in seed_forven_jobs — SEED-DRIFT-1
     # above is exactly this omission, and it has silently deleted seeded jobs twice.
     "forven-db-backup",
-    "forven-capital-slot-dedupe",
     # 2026-10 gate plan: paper-pool retirement + queue admission (forven.paper_pool).
     "forven-paper-pool-tick",
     "forven-gauntlet-step-loop",
@@ -1764,24 +1763,11 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             log.info("Scheduled DB backup written: %s", target)
             return "ok", None
 
-        # Capital-slot de-duplication — archive redundant incumbents so each
-        # symbol/timeframe capital slot holds only the single best-Sharpe
-        # strategy. Strategies promoted before the slot/duplicate gate existed can
-        # pile multiple incumbents onto one slot, forcing a challenger to beat ALL
-        # of them and freezing the slot (the documented 2026-05-06 ETH/USDT-1h
-        # deadlock). Idempotent: a slot with one occupant is a no-op, so this is
-        # safe to run on a schedule.
+        # The capital-slot dedupe sweep was removed with slot competition
+        # (2026-10); reconcile_forven_jobs reaps its row, and a row still present
+        # runs as a logged no-op.
         if kind == "capital_slot_dedupe":
-            from forven.policy import dedupe_capital_slots
-            result = await _run_sync_job(
-                dedupe_capital_slots, actor="pipeline_sweep", timeout_seconds=120.0
-            )
-            archived = result.get("archived", []) if isinstance(result, dict) else []
-            if archived:
-                log.info(
-                    "capital_slot_dedupe: archived %d redundant slot occupant(s)",
-                    len(archived),
-                )
+            log.info("Scheduler job %s (capital_slot_dedupe) is retired; skipping", job_id)
             return "ok", None
 
         # Paper pool (2026-10 gate plan): retire paper strategies whose forward
@@ -3219,21 +3205,6 @@ def seed_forven_jobs():
         command="db-backup",
         timezone_str="America/Halifax",
         payload={"kind": "db_backup"},
-    )
-
-    # 4c5. Capital-Slot De-duplication — every 6h, drain multi-incumbent capital
-    # slots down to the single best-Sharpe strategy. The slot/duplicate gate only
-    # blocks NEW duplicates; strategies promoted before that gate can pile onto a
-    # slot and freeze it against all challengers. dedupe_capital_slots is
-    # idempotent and a no-op when every slot has one occupant.
-    add_job(
-        job_id="forven-capital-slot-dedupe",
-        name="Capital-Slot De-duplication",
-        schedule_type="interval",
-        schedule_expr="21600000",  # 6h in ms
-        command="capital-slot-dedupe",
-        timezone_str="UTC",
-        payload={"kind": "capital_slot_dedupe"},
     )
 
     # 4c6. Paper pool — hourly: retire clearly-losing/idle paper strategies and

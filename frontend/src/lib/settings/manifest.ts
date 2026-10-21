@@ -2969,7 +2969,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     description:
       'Daily scan of paper strategies for live-readiness: soak, forward-positive paper PnL, the strict paper→live checklist, and a measured-cost gate (real fill skew must sit inside the modeled cost budget the strategy was validated at). Eligible candidates queue an APPROVAL with a proposed arm size — nothing goes live without the typed GO-LIVE flow.',
     usedBy: ['forven.live_graduation', 'forven.scheduler'],
-    deepLinkTo: '/approval',
+    deepLinkTo: '/agents#decisions',
     order: 1,
   },
   {
@@ -3847,6 +3847,54 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
       'On: every strategy an agent writes waits for you before it enters the pipeline. Off (the default): agent strategies go straight to the quick screen.',
     usedBy: ['forven.control_plane.approvals', 'forven.strategy_lifecycle'],
     order: 1,
+  },
+  {
+    id: 'pipeline.promotion_mode',
+    label: 'Gauntlet winners enter paper',
+    default: 'auto',
+    type: 'select',
+    options: [
+      { value: 'auto', label: 'Automatically' },
+      { value: 'manual', label: 'After I approve each one' },
+    ],
+    area: 'automation',
+    subsection: 'automation-mode',
+    backendSection: 'pipeline',
+    backendPath: 'promotion_mode',
+    description:
+      'Automatically (the default): a strategy that passes the gauntlet starts paper trading, or waits in the paper queue when the pool is full. After I approve: each one waits under "Waiting for your decision" on the Agents page. Paper risks no capital.',
+    usedBy: ['forven.brain'],
+    order: 1,
+  },
+  {
+    id: 'bot-operations.auto_approve_promotions',
+    label: 'Approve agent task requests and paper promotions automatically',
+    default: false,
+    type: 'toggle',
+    area: 'automation',
+    subsection: 'automation-agents',
+    backendSection: 'bot-operations',
+    backendPath: 'auto_approve_promotions',
+    description:
+      'On: work the Brain assigns to agents, and gauntlet-to-paper promotions, start without waiting for you. Off: they wait under "Waiting for your decision" on the Agents page. Going live always needs your typed GO LIVE.',
+    usedBy: ['forven.brain'],
+    advanced: true,
+    order: 3,
+  },
+  {
+    id: 'bot-operations.auto_approve_code_edits',
+    label: 'Approve other agent tasks automatically',
+    default: false,
+    type: 'toggle',
+    area: 'automation',
+    subsection: 'automation-agents',
+    backendSection: 'bot-operations',
+    backendPath: 'auto_approve_code_edits',
+    description:
+      'On: agent tasks that are not promotions start without waiting for you. Code-change suggestions are only logged either way; agents never edit Forven itself.',
+    usedBy: ['forven.brain'],
+    advanced: true,
+    order: 4,
   },
   {
     id: 'bot-operations.brain_queue_max_pending',

@@ -26,7 +26,7 @@
 <div class="card">
 	<div class="row">
 		{#if taskDisplayId}
-			<a class="task-link" href={'/tasks/' + encodeURIComponent(taskDisplayId) + '?returnTo=' + encodeURIComponent('/approval')}>{taskDisplayId}</a>
+			<a class="task-link" href={'/tasks/' + encodeURIComponent(taskDisplayId) + '?returnTo=' + encodeURIComponent('/agents')}>{taskDisplayId}</a>
 		{:else}
 			<span class="task-link task-link--dead">No task reference</span>
 		{/if}

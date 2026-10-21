@@ -14,13 +14,11 @@ log = logging.getLogger("forven.lab_features")
 # Initial value 50; ramp to 60 after 2-week stable window.
 GAUNTLET_MAX = 50
 
-# Per-stage WIP caps enforced at transition time. Paper/live caps are intentionally
-# bounded because those stages consume operator attention. Paper is still a local
-# forward-test lane, so keep enough room for unattended rotation instead of
-# stalling every gauntlet winner behind the first ten paper sessions.
+# Per-stage WIP caps enforced at transition time. Live is bounded because it
+# consumes operator attention. Paper has none here: the paper pool
+# (paper_pool.max_strategies) admits and queues paper strategies.
 STAGE_WIP_CAPS = {
     "gauntlet": GAUNTLET_MAX,
-    "paper": 20,
     "live_graduated": 5,
 }
 

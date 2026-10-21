@@ -194,13 +194,6 @@ PAGES: list[dict] = [
         "actions": ["Review what the Brain saw/decided/spawned", "Edit working notes"],
     },
     {
-        "route": "/approval",
-        "name": "Approvals",
-        "kind": "approvals",
-        "summary": "Human-gate queue for sensitive actions: approve/deny/revise/handoff, bulk-approve, per-type context.",
-        "actions": ["Approve, deny, or revise pending gated actions", "Bulk-approve"],
-    },
-    {
         "route": "/diagnostics",
         "name": "Diagnostics",
         "kind": "diagnostics",
@@ -396,12 +389,12 @@ HOWTOS: dict[str, dict] = {
         "routes": ["/routines"],
     },
     "approvals": {
-        "title": "Handle approvals (human gates)",
+        "title": "Answer agent requests (human gates)",
         "steps": [
-            "Pending gated actions queue at /approval — approve, deny, revise, or hand off; bulk-approve is available.",
-            "Tune how much gating each action type needs at /settings/approvals: smart / off / manual.",
+            "Requests only you can answer (demote a live strategy, add a routine, update a skill) wait under \"Waiting for your decision\" on the Agents page (/agents), with Approve/Deny buttons and details.",
+            "What runs by itself and what waits for you is set in Settings → Automation (/settings#automation).",
         ],
-        "routes": ["/approval", "/settings/approvals"],
+        "routes": ["/agents", "/settings"],
     },
     "agents-and-models": {
         "title": "Configure agents, models, and API keys",

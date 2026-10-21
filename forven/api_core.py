@@ -1956,10 +1956,6 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             updates["auto_approve_promotions"] = _coerce_bool(payload.get("auto_approve_promotions"), updates.get("auto_approve_promotions", False))
         if "allow_auto_live_promotion" in payload:
             updates["allow_auto_live_promotion"] = _coerce_bool(payload.get("allow_auto_live_promotion"), updates.get("allow_auto_live_promotion", False))
-        if "auto_approve_dethrone" in payload:
-            updates["auto_approve_dethrone"] = _coerce_bool(payload.get("auto_approve_dethrone"), updates.get("auto_approve_dethrone", True))
-        if "paper_slot_competition_enabled" in payload:
-            updates["paper_slot_competition_enabled"] = _coerce_bool(payload.get("paper_slot_competition_enabled"), updates.get("paper_slot_competition_enabled", False))
         if "brain_queue_max_pending" in payload:
             updates["brain_queue_max_pending"] = _coerce_optional_int(payload.get("brain_queue_max_pending"), updates.get("brain_queue_max_pending", 15))
         if "maintenance_start_hour" in payload:

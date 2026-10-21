@@ -264,9 +264,9 @@ NOTIFICATION_CATEGORIES: tuple[NotificationCategory, ...] = (
 NAV_BADGES: tuple[NavBadge, ...] = (
     NavBadge(
         "approvals",
-        "/approval",
-        "Approvals",
-        "Approvals waiting for your decision.",
+        "/agents",
+        "Agents",
+        "Agent requests waiting for your decision.",
         default=True,
         mode="total",
     ),

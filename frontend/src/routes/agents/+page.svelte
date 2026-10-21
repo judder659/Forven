@@ -38,6 +38,7 @@
 	import AgentDrawer from '$lib/components/agents/AgentDrawer.svelte';
 	import AgentRoster from '$lib/components/agents/AgentRoster.svelte';
 	import NeedsYouPanel from '$lib/components/agents/NeedsYouPanel.svelte';
+	import DecisionsPanel from '$lib/components/approvals/DecisionsPanel.svelte';
 	import RunsView from '$lib/components/agents/RunsView.svelte';
 	import SchedulesView from '$lib/components/agents/SchedulesView.svelte';
 	import YieldPanel from '$lib/components/agents/YieldPanel.svelte';
@@ -270,13 +271,16 @@
 	$: agents = fleet?.agents ?? [];
 	$: names = Object.fromEntries(agents.map((agent) => [agent.id, agent.name]));
 	$: attention = fleet ? buildAttention(fleet, providers, now) : [];
+	// Pending approvals (DecisionsPanel) count toward "Needs you".
+	let decisionCount = 0;
+	$: decisionFocus = Number($page.url.searchParams.get('decision')) || null;
 	$: yieldSummaries = yieldData ? summarizeYield(yieldData) : [];
 	$: headline = fleet
 		? fleetHeadline({
 				fleet,
 				yieldTop: yieldSummaries[0] ?? null,
 				producerName: yieldSummaries[0] ? (names[yieldSummaries[0].agentId] ?? yieldSummaries[0].agentId) : null,
-				attention: providersLoaded ? attention.length : null,
+				attention: providersLoaded ? attention.length + decisionCount : null,
 			})
 		: [];
 	$: judged = agents.reduce((sum, agent) => sum + agent.window.ok + agent.window.failed + agent.window.blocked, 0);
@@ -519,7 +523,7 @@
 					</div>
 					<button type="button" class="bg-sc-panel px-3.5 py-2.5 text-left transition-colors hover:bg-sc-hover" on:click={showNeedsYou}>
 						<span class="block text-[11px] text-sc-ink3">Needs you</span>
-						<span class={`mt-0.5 block font-plex-mono text-[18px] ${attention.length > 0 ? 'text-[#e7b24a]' : 'text-sc-ink'}`}>{fleet ? attention.length : '—'}</span>
+						<span class={`mt-0.5 block font-plex-mono text-[18px] ${attention.length + decisionCount > 0 ? 'text-[#e7b24a]' : 'text-sc-ink'}`}>{fleet ? attention.length + decisionCount : '—'}</span>
 						<span class="block text-[11px] text-sc-ink3">{fleet ? `${plural(fleet.totals.blocked, 'blocked run')} · ${fleet.totals.failed_open} failed` : ''}</span>
 					</button>
 				</div>
@@ -535,6 +539,8 @@
 					on:open={(event) => openAgent(event.detail)}
 					on:toggle={(event) => askToggle(event.detail)}
 				/>
+
+				<DecisionsPanel focusId={decisionFocus} on:count={(event) => (decisionCount = event.detail)} />
 
 				<div class="grid gap-3 lg:h-[420px] lg:grid-cols-3" bind:this={needsYouSection}>
 					<NeedsYouPanel items={attention} loading={fleetLoading} error={fleetError} busy={attentionBusy} on:action={onAttention} />

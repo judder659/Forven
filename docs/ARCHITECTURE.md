@@ -47,7 +47,6 @@ The active route tree includes:
 - `/`
 - `/agents`
 - `/ai-dropzone`
-- `/approval`
 - `/data`
 - `/lab`
 - `/lab/strategy/[id]`

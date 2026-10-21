@@ -65,10 +65,9 @@ The left sidebar is the fastest map of the product.
 | `/ai-dropzone` | AI idea intake | Submit or refine prompt-driven strategy ideas |
 | `/risk` | Risk oversight | Kill switch state, risk limits, and supervisory controls |
 | `/trades` | Trade review | Open positions, recent trades, and execution summaries |
-| `/agents` | Agent hub | Agent status, routing, tasks, and model policy |
+| `/agents` | Agent hub | Agent status, routing, tasks, model policy, and agent requests waiting for your decision |
 | `/memory` | Memory workspace | Search and inspect Chroma/workspace memory items |
 | `/tasks` | Task queue | Agent tasks, audits, and pipeline task visibility |
-| `/approval` | Human gates | Review approvals and sensitive action handoffs |
 | `/ops` | Runtime operations | Soak report, notifications, scheduler, logs, and repairs |
 | `/settings` | Global configuration | Credentials, provider auth, API keys, pipeline settings, and resets |
 
@@ -79,7 +78,7 @@ The left sidebar is the fastest map of the product.
 3. Open `/data` to make sure datasets and ingestion endpoints are healthy.
 4. Open `/lab` or `/ai-dropzone` to create or inspect strategy ideas.
 5. Open `/runs` to review backtest and job history.
-6. Open `/risk`, `/approval`, and `/ops` before moving a strategy beyond paper workflows.
+6. Open `/risk` and `/ops` before moving a strategy beyond paper workflows.
 
 ## 5. Common Workflows
 
@@ -110,7 +109,7 @@ These map to the policy gates managed in `forven/policy.py`.
 
 When something needs operator attention:
 
-- `/approval` surfaces gated actions
+- `/agents` lists agent requests waiting for your decision (Waiting for your decision)
 - `/tasks` shows queued and historical work
 - `/ops` shows system health, notifications, scheduler state, logs, and repair actions
 - `/risk` shows safety controls and drawdown-related state

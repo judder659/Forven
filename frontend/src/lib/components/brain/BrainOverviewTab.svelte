@@ -148,8 +148,8 @@
 				<span class="text-[11px] text-sc-ink3">Active runs</span>
 				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.stats.active_tasks}</strong>
 			</a>
-			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/approval">
-				<span class="text-[11px] text-sc-ink3">Approvals</span>
+			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/agents#decisions">
+				<span class="text-[11px] text-sc-ink3">Waiting for you</span>
 				<strong class="font-plex-mono text-[18px] font-normal text-sc-ink">{overview.stats.pending_approvals}</strong>
 			</a>
 			<a class="flex flex-col gap-0.5 bg-sc-panel px-3.5 py-2.5 transition-colors hover:bg-sc-hover" href="/brain?tab=decisions">

@@ -306,7 +306,7 @@
 			<p class="mt-1 text-xs text-sc-ink3 max-w-2xl">
 				Scheduled instructions the Brain runs autonomously — optionally posting the result to a
 				Discord channel. Operator-authored routines are live immediately; Brain-proposed routines
-				must be approved on the <a href="/approval" class="underline">/approval</a> page first.
+				wait for you under "Waiting for your decision" on the <a href="/agents#decisions" class="underline">Agents</a> page.
 			</p>
 		</div>
 		<button type="button" class="rounded-md text-[12px] border border-sc-line2 px-3 py-1.5 text-sc-ink2 hover:text-sc-ink hover:border-sc-line2 transition-colors" on:click={() => void load()}>Reload</button>

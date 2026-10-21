@@ -237,7 +237,7 @@
 
 											{#if s.pending_approval}
 												<a
-													href="/approval?approval_id={s.pending_approval.id}"
+													href="/agents?decision={s.pending_approval.id}#decisions"
 													class="block text-[10px] text-purple-300 hover:underline"
 													data-testid="explain-approval-{s.id}"
 												>

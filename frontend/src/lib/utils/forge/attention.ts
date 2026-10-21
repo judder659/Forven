@@ -64,8 +64,8 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 				title: nameOf(entry.id),
 				meta: `${entry.id} · ${stageLabel(entry.stage)}`,
 				detail: `${capitalize(approvalTypeLabel(approval.approval_type))}${approval.requested_status ? ` → ${stageLabel(approval.requested_status).toLowerCase()}` : ''}`,
-				actionLabel: `Review #${approval.id}`,
-				href: `/approval?approval_id=${encodeURIComponent(String(approval.id))}`,
+				actionLabel: 'Decide',
+				href: `/agents?decision=${encodeURIComponent(String(approval.id))}#decisions`,
 			});
 			continue;
 		}
