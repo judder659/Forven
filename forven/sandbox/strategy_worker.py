@@ -270,11 +270,14 @@ def _validate_custom_module(workdir: Path) -> dict:
         return {"ok": False, "error": "class validation: " + "; ".join(validation_errors)}
 
     # Discovery never registers an imported/ module by its TYPE_NAME (only namespaced
-    # keys), so certification below would always read "no runtime class registered".
-    # Intake validates the same file from custom/, where it is registered by name;
-    # register it in this one-shot child too, so a graveyard re-entry check of an
-    # agent-registered strategy certifies it the way intake did.
-    if package == "imported":
+    # keys), nor a custom/ module whose name reads as archived (``*_s12345``,
+    # ``*_v2``: custom_catalog), so certification below would read "no runtime
+    # class registered". This one-shot child validates exactly this module, so
+    # register it by name: a graveyard re-entry check of an agent-registered
+    # strategy certifies it the way intake did, and a drop-zone file named the way
+    # STRATEGY_TEMPLATE.md asks ({asset}_{family}_s{XXXXX}.py) is no longer
+    # archived as uncertified (9 agent strategies in 3 days, 2026-10-21).
+    if str(type_name) not in registry._TYPE_MAP:
         registry.register_type(str(type_name), strategy_cls)
 
     probe = strategy_cls("__probe__", {})
