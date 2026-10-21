@@ -4,7 +4,7 @@
 	import { get } from 'svelte/store';
 
 	import { getSettings, getForvenDashboard } from '$lib/api';
-	import { SETTINGS_AREAS, type SettingsAreaId } from '$lib/settings/manifest';
+	import { SETTINGS_AREAS, SETTINGS_MANIFEST, type SettingsAreaId } from '$lib/settings/manifest';
 	import { clearDirty, dirtyFields } from '$lib/settings/dirty';
 	import { openWizard } from '$lib/stores/setupWizard';
 
@@ -12,14 +12,8 @@
 	import SettingsSearch from '$lib/components/settings/shell/SettingsSearch.svelte';
 
 	import SettingsHome from '$lib/components/settings/sections/SettingsHome.svelte';
-	import SettingsData from '$lib/components/settings/sections/SettingsData.svelte';
-	import SettingsLab from '$lib/components/settings/sections/SettingsLab.svelte';
-	import SettingsTrading from '$lib/components/settings/sections/SettingsTrading.svelte';
-	import SettingsPortfolio from '$lib/components/settings/sections/SettingsPortfolio.svelte';
-	import SettingsHyperliquid from '$lib/components/settings/sections/SettingsHyperliquid.svelte';
-	import SettingsNotifications from '$lib/components/settings/sections/SettingsNotifications.svelte';
-	import SettingsSystem from '$lib/components/settings/sections/SettingsSystem.svelte';
-	import SettingsDangerZone from '$lib/components/settings/sections/SettingsDangerZone.svelte';
+	import SettingsAreaView from '$lib/components/settings/SettingsAreaView.svelte';
+	import ChangedSettingsView from '$lib/components/settings/ChangedSettingsView.svelte';
 
 	const VALID_AREAS: ReadonlySet<string> = new Set(SETTINGS_AREAS.map((a) => a.id));
 
@@ -28,6 +22,9 @@
 	$: portfolioLayerOn = Boolean((settings as Record<string, unknown> | null)?.['portfolio_layer_enabled']);
 
 	let activeArea: SettingsAreaId = 'home';
+	// "#changed": every field that differs from its default, across all areas.
+	let showChanged = false;
+	$: areaMeta = SETTINGS_AREAS.find((a) => a.id === activeArea);
 	let settings: Record<string, unknown> | null = null;
 	let dashboard: Record<string, unknown> | null = null;
 	let loadError: string | null = null;
@@ -45,6 +42,11 @@
 		// everything up to the first '/'.
 		if (!hash || hash.length < 2) return 'home';
 		const raw = hash.startsWith('#') ? hash.slice(1) : hash;
+		// A field link lands in the field's own area, so links written before a
+		// field moved (e.g. #trading/<an automation field>) still find it.
+		const fieldId = parseHashField(hash);
+		const owner = fieldId ? SETTINGS_MANIFEST.find((e) => e.id === fieldId) : undefined;
+		if (owner) return owner.area;
 		const areaPart = raw.split('/')[0];
 		if (VALID_AREAS.has(areaPart)) return areaPart as SettingsAreaId;
 		return 'home';
@@ -67,8 +69,9 @@
 		if (!fieldId) return;
 		let attempts = 0;
 		const tryScroll = () => {
-			const el = document.getElementById(fieldId);
+			const el = document.getElementById(fieldId) ?? document.getElementById(`group-${fieldId}`);
 			if (el) {
+				revealField(el);
 				el.scrollIntoView({ block: 'center', behavior: 'smooth' });
 				(el as HTMLElement).focus?.({ preventScroll: true });
 			} else if (attempts++ < 30) {
@@ -78,12 +81,32 @@
 		tryScroll();
 	}
 
+	// Open whatever folds a deep-linked field: an "Advanced" fold inside its
+	// group, or a whole group that starts collapsed.
+	function revealField(el: HTMLElement): void {
+		for (let node = el.parentElement; node; node = node.parentElement) {
+			if (node instanceof HTMLDetailsElement) node.open = true;
+			if (node.hasAttribute('hidden')) {
+				const toggle = node.parentElement?.querySelector<HTMLButtonElement>('header button[aria-expanded="false"]');
+				toggle?.click();
+				node.removeAttribute('hidden');
+			}
+		}
+	}
+
 	function handleHashChange(): void {
+		showChanged = window.location.hash === '#changed';
 		activeArea = parseHash(window.location.hash);
 		scrollToHashField();
 	}
 
 	function setArea(id: string): void {
+		if (id === 'changed') {
+			showChanged = true;
+			if (typeof window !== 'undefined') window.location.hash = '#changed';
+			return;
+		}
+		showChanged = false;
 		const nextArea = VALID_AREAS.has(id) ? (id as SettingsAreaId) : 'home';
 		activeArea = nextArea;
 		if (typeof window !== 'undefined' && window.location.hash !== `#${nextArea}`) {
@@ -92,6 +115,7 @@
 	}
 
 	onMount(() => {
+		showChanged = window.location.hash === '#changed';
 		activeArea = parseHash(window.location.hash);
 		scrollToHashField();
 		window.addEventListener('hashchange', handleHashChange);
@@ -196,32 +220,37 @@
 		</div>
 	{:else if settings}
 		<div class="flex gap-6">
-			<SettingsSidebar active={activeArea} onChange={setArea} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} />
+			<SettingsSidebar active={showChanged ? 'changed' : activeArea} onChange={setArea} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} />
 			<div class="flex-1 min-w-0">
+				{#if showChanged}
+					<ChangedSettingsView {settings} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} onOpenArea={setArea} />
+				{:else}
+				{#if areaMeta && activeArea !== 'home'}
+					<div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+						<div>
+							<h2 class="text-[17px] font-semibold text-sc-ink">{areaMeta.label}</h2>
+							<p class="text-xs text-sc-ink3">{areaMeta.description}</p>
+						</div>
+						{#if areaMeta.deepLinks.length}
+							<div class="flex gap-3">
+								{#each areaMeta.deepLinks as link (link.href)}
+									<a href={link.href} class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 hover:text-sc-ink">{link.label} →</a>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
 				{#if activeArea === 'home'}
 					<SettingsHome {settings} {dashboard} />
-				{:else if activeArea === 'data'}
-					<SettingsData {settings} />
-				{:else if activeArea === 'lab'}
-					<SettingsLab {settings} />
-				{:else if activeArea === 'trading'}
-					<SettingsTrading {settings} />
-				{:else if activeArea === 'portfolio'}
-					{#if portfolioLayerOn}
-						<SettingsPortfolio {settings} />
-					{:else}
-						<div class="rounded-md border border-sc-line bg-sc-panel p-4 text-xs text-sc-ink2">
-							The portfolio layer is disabled. Enable it under System → Experimental features.
-						</div>
-					{/if}
-				{:else if activeArea === 'hyperliquid'}
-					<SettingsHyperliquid {settings} />
-				{:else if activeArea === 'notifications'}
-					<SettingsNotifications {settings} />
-				{:else if activeArea === 'system'}
-					<SettingsSystem {settings} />
-				{:else if activeArea === 'danger'}
-					<SettingsDangerZone {settings} />
+				{:else if activeArea === 'portfolio' && !portfolioLayerOn}
+					<div class="rounded-md border border-sc-line bg-sc-panel p-4 text-xs text-sc-ink2">
+						The portfolio layer is disabled. Enable it under System → Experimental features.
+					</div>
+				{:else}
+					{#key activeArea}
+						<SettingsAreaView area={activeArea} {settings} />
+					{/key}
+				{/if}
 				{/if}
 			</div>
 		</div>

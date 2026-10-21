@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { fmtEtaRates, fmtEtaWindow, type GateEta } from '$lib/utils/strategyContainer/lifecycle';
 
-	/** The next gate: its live checklist (slotted) and, on paper, when it can pass. */
+	/** The next step: its checklist (slotted) and, on paper, when probation can start. */
 	export let title = 'Next gate';
 	export let eta: GateEta | null = null;
 	export let needDays: number | null = null;
@@ -14,9 +14,9 @@
 		<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">configured thresholds</span>
 	</div>
 	<slot />
-	{#if eta}
+	{#if eta && eta.remainingTrades > 0}
 		<p class="m-0 text-[12px] leading-relaxed text-sc-ink3" data-testid="gate-eta">
-			Needs {needDays ?? '—'} days and {needTrades ?? '—'} closed paper trades ({eta.remainingTrades} to go). At the backtest's {fmtEtaRates(eta)} trades a month the earliest pass is
+			Probation needs {needTrades ?? '—'} paper trades that match the backtest{#if needDays} over at least {needDays} days{/if} ({eta.remainingTrades} to go). At the backtest's {fmtEtaRates(eta)} trades a month the earliest is
 			<b class="font-medium text-sc-ink">{fmtEtaWindow(eta)}</b>.
 		</p>
 	{/if}

@@ -10,16 +10,21 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 from pathlib import Path
+from uuid import uuid4
 
 import psutil
 
 from forven.bot_factory.broker_client import BOT_TOKEN_ENV, BROKER_HOST_ENV, NO_MASTER_KEY_ENV
+from forven.bot_factory.bot_writes import VIA_API_ENV
 from forven.bot_factory.os_isolation import (
     SandboxStatus,
+    database_lock_enabled,
     ensure_sandbox_ready,
     sandbox_enabled,
     sandbox_env,
+    set_database_closed,
     spawn_sandboxed,
 )
 from forven.config import FORVEN_DB, FORVEN_HOME
@@ -28,6 +33,7 @@ from forven.db import (
     get_running_bots,
     log_activity,
     reconcile_orphaned_bot_trades,
+    set_bot_run_id,
     set_bot_status,
 )
 
@@ -72,8 +78,20 @@ def issue_bot_token(bot_id: str, provider: str) -> str:
     from forven.db import kv_set
 
     token = secrets.token_urlsafe(32)
-    kv_set(_kv_key(bot_id), {"hash": _digest(token), "provider": provider})
+    # db_free: this spawn's code reaches Forven only through the API, so the
+    # database can be closed to it.
+    # live_via_api: Forven places this spawn's live orders, so it holds no
+    # exchange keys and needs no database either.
+    via_api = _bots_use_api()
+    kv_set(
+        _kv_key(bot_id),
+        {"hash": _digest(token), "provider": provider, "db_free": via_api, "live_via_api": via_api},
+    )
     return token
+
+
+def _bots_use_api() -> bool:
+    return str(os.environ.get(VIA_API_ENV, "1")).strip() != "0"
 
 
 def verify_bot_token(bot_id: str, token: str | None) -> str | None:
@@ -154,6 +172,85 @@ def brokered_credential_for_bot(bot_id: str, provider: str) -> dict:
     return payload
 
 
+# ── Model availability ──────────────────────────────────────────────
+# A bot calls its model on every decision, so Start checks the model is
+# callable here first. These live in the manager (not the leaf ai_costs
+# module) because they need forven.ai / model_selection.
+
+
+def resolve_bot_route(model: str | None) -> tuple[str, str]:
+    """(provider, model_id) a bot's model string routes to, falling back to
+    the operator's primary model when the bot has none."""
+    from forven.ai import normalize_provider_and_model
+
+    if not str(model or "").strip():
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+        return normalize_provider_and_model(provider, model_id)
+    return normalize_provider_and_model("auto", model)
+
+
+def default_model_key() -> str | None:
+    """The operator's primary model as a "provider:model" key, or None."""
+    try:
+        from forven.model_routing import get_primary_provider_model
+
+        provider, model_id = get_primary_provider_model()
+    except Exception:
+        return None
+    provider = str(provider or "").strip().lower()
+    model_id = str(model_id or "").strip()
+    if not provider or not model_id:
+        return None
+    return f"{provider}:{model_id}"
+
+
+def check_bot_model(model: str | None) -> dict:
+    """Whether a bot's model can be called on this install.
+
+    Mirrors the gate every provider call passes (model_selection.assert_callable):
+    the provider must be connected and the model enabled or selected somewhere.
+    Returns {ok, provider, model_id, reason, default_model}.
+    """
+    default_key = default_model_key()
+    try:
+        provider, model_id = resolve_bot_route(model)
+    except Exception as exc:
+        return {
+            "ok": False, "provider": None, "model_id": str(model or ""),
+            "reason": f"Model '{model}' can't be resolved to a provider ({exc}).",
+            "default_model": default_key,
+        }
+    try:
+        from forven.model_selection import enforcement_enabled, is_callable, provider_is_connected
+
+        # Before enforcement is armed (tests, scripts) calls aren't gated, so
+        # neither is Start.
+        if not enforcement_enabled() or is_callable(provider, model_id):
+            return {
+                "ok": True, "provider": provider, "model_id": model_id,
+                "reason": None, "default_model": default_key,
+            }
+        if not provider_is_connected(provider):
+            reason = f"Provider '{provider}' isn't connected, so model '{model_id}' can't be called."
+        else:
+            reason = (
+                f"Model '{model_id}' isn't enabled for {provider} (it may have been "
+                "retired or removed from your model list)."
+            )
+    except Exception as exc:
+        logger.debug("Bot model check failed for %s: %s", model, exc)
+        return {
+            "ok": True, "provider": provider, "model_id": model_id,
+            "reason": None, "default_model": default_key,
+        }
+    return {
+        "ok": False, "provider": provider, "model_id": model_id,
+        "reason": reason, "default_model": default_key,
+    }
+
+
 def _is_pid_alive(pid: int) -> bool:
     """Check if a process is alive by PID."""
     if pid <= 0:
@@ -210,6 +307,8 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
     # refuses to load one. Its own provider login is served by the parent's
     # credential broker (below) using this per-spawn token.
     env[NO_MASTER_KEY_ENV] = "1"
+    if not _bots_use_api():
+        env[VIA_API_ENV] = "0"
     if bot_token:
         env[BOT_TOKEN_ENV] = bot_token
     env["FORVEN_PORT"] = os.environ.get("FORVEN_PORT", "8003")
@@ -254,13 +353,12 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
         if openai_key:
             env["OPENAI_API_KEY"] = openai_key
 
-    # A LIVE-armed bot places real exchange orders from its subprocess through
-    # the sanctioned live stack (bot_factory.live_exec). Hyperliquid credentials
-    # normally come from the encrypted KV settings store (reachable via
-    # FORVEN_HOME, already forwarded); when the operator supplies them via
-    # environment instead, forward exactly those vars — and ONLY for live bots,
-    # keeping paper bots exchange-credential-free.
-    if str(bot_config.get("execution_mode") or "paper").strip().lower() == "live":
+    # Forven places a live bot's orders for it (bot_writes.live), so by
+    # default no bot gets exchange keys. Only with FORVEN_BOT_WRITES_VIA_API=0
+    # does a LIVE-armed bot place orders from its own process through the
+    # sanctioned live stack (bot_factory.live_exec); then it gets exactly the
+    # Hyperliquid credentials, from the environment or the Settings store.
+    if str(bot_config.get("execution_mode") or "paper").strip().lower() == "live" and not _bots_use_api():
         for var in (
             "FORVEN_HL_API_SECRET", "HL_API_SECRET",
             "FORVEN_HL_API_KEY", "HL_API_KEY",
@@ -335,14 +433,75 @@ def bot_sandbox_status() -> SandboxStatus | None:
     status = ensure_sandbox_ready(FORVEN_HOME, _sandbox_protected_paths(), FORVEN_DB, _REPO_ROOT)
     global _sandbox_warned
     if status.problems and not _sandbox_warned:
-        _sandbox_warned = True
+        # A busy-database failure is retried at the next start, so only warn
+        # once the result is final. The log line survives a busy activity log.
+        _sandbox_warned = not status.transient
         what = "Bot sandbox is on, with caveats" if status.usable else "Bots are starting without the sandbox"
+        logger.warning("%s: %s", what, "; ".join(status.problems))
         log_activity(
             "warning", "bot_factory",
             f"{what}: {'; '.join(status.problems)}",
             {"usable": status.usable, "problems": status.problems},
         )
     return status
+
+
+def _database_can_close() -> bool:
+    """True when every running bot's code reaches Forven only through the API
+    (for a live bot, its orders too)."""
+    from forven.db import kv_get
+
+    if not _bots_use_api():
+        return False
+    for row in get_running_bots():
+        bot_id = row.get("bot_id")
+        pid = row.get("pid")
+        if not pid or not _is_pid_alive(int(pid)):
+            continue
+        record = kv_get(_kv_key(bot_id))
+        if not isinstance(record, dict) or not record.get("db_free"):
+            return False
+        bot = get_bot(bot_id) or {}
+        if str(bot.get("execution_mode") or "paper").strip().lower() == "live" and not record.get("live_via_api"):
+            return False
+    return True
+
+
+def sync_database_lock(*, live_starting: bool = False) -> bool | None:
+    """Close the database to sandboxed bots when nothing running needs it,
+    or open it again. Returns whether it is now closed (None when the sandbox
+    or the lock is off). Never raises."""
+    try:
+        if not database_lock_enabled():
+            return None
+        status = bot_sandbox_status()
+        if status is None or not status.usable or not status.can_close_database:
+            return None
+        closed = not live_starting and _database_can_close()
+        if not set_database_closed(FORVEN_DB, closed):
+            if closed:
+                set_database_closed(FORVEN_DB, False)
+            return False
+        return closed
+    except Exception:
+        logger.warning("Could not update the bot database lock", exc_info=True)
+        return None
+
+
+def warm_bot_sandbox() -> None:
+    """Prepare and self-check the sandbox in the background at API startup, so
+    the first bot start doesn't pay for it (a slow Start can time out in the
+    UI and be clicked again)."""
+
+    def _run() -> None:
+        try:
+            bot_sandbox_status()
+            sync_database_lock()
+        except Exception:
+            logger.warning("Bot sandbox warm-up failed", exc_info=True)
+
+    if sandbox_enabled():
+        threading.Thread(target=_run, name="bot-sandbox-warmup", daemon=True).start()
 
 
 def _bot_log_path(bot_id: str) -> Path:
@@ -381,6 +540,8 @@ class BotManager:
     def __init__(self):
         self._processes = {}
         self._monitor_task: asyncio.Task | None = None
+        self._start_locks: dict[str, threading.Lock] = {}
+        self._start_locks_guard = threading.Lock()
 
     @classmethod
     def get_instance(cls) -> BotManager:
@@ -389,7 +550,20 @@ class BotManager:
         return cls._instance
 
     def start_bot(self, bot_id: str) -> dict:
-        """Spawn a bot subprocess with isolated credentials."""
+        """Spawn a bot subprocess with isolated credentials.
+
+        Serialised per bot: two Start requests arriving together (a retried
+        click after a slow first start, say) must not both pass the
+        "already running" check and spawn two copies.
+        """
+        with self._start_lock(bot_id):
+            return self._start_bot(bot_id)
+
+    def _start_lock(self, bot_id: str) -> threading.Lock:
+        with self._start_locks_guard:
+            return self._start_locks.setdefault(bot_id, threading.Lock())
+
+    def _start_bot(self, bot_id: str) -> dict:
         bot = get_bot(bot_id)
         if not bot:
             raise ValueError(f"Bot {bot_id} not found")
@@ -431,6 +605,22 @@ class BotManager:
                         "registered — re-arm via go-live (or restore the wallet)."
                     )
 
+        # A model that can't be called here (provider disconnected, model
+        # retired or not enabled) would fail on the first decision; refuse the
+        # start with the fix instead.
+        from forven.bot_factory.rules import needs_ai, validate_rule_params
+
+        problem = validate_rule_params(bot.get("bot_type"), bot.get("rule_params"))
+        if problem:
+            raise ValueError(f"Can't start: {problem}")
+        model_check = check_bot_model(bot.get("model")) if needs_ai(bot) else {"ok": True}
+        if not model_check["ok"]:
+            fix = (
+                f" Pick another model in the editor, or use your default ({model_check['default_model']})."
+                if model_check.get("default_model") else " Pick another model in the editor."
+            )
+            raise ValueError(f"Can't start: {model_check['reason']}{fix}")
+
         status = bot.get("runtime_status") or bot.get("status", "stopped")
         if status == "running":
             # LIFE-7: a hard crash can leave a stale 'running' label. If the
@@ -448,10 +638,16 @@ class BotManager:
         env = _build_isolated_env(bot, issue_bot_token(bot_id, resolve_bot_provider(bot)))
         log_path = _bot_log_path(bot_id)
         _rotate_log_if_large(log_path)
+        # Claim the bot for this run BEFORE spawning: any older process still
+        # alive for it (a wedged copy the monitor couldn't kill, a stray from
+        # a retried Start) sees it no longer owns the bot and stops itself.
+        run_id = uuid4().hex[:8]
+        set_bot_run_id(bot_id, run_id)
         argv = [
             sys.executable, "-m", "forven.bot_factory.runner",
             "--bot-id", bot_id,
             "--parent-pid", str(os.getpid()),
+            "--run-id", run_id,
         ]
 
         # Windows: run the bot at low integrity so it can't read the master key
@@ -459,6 +655,11 @@ class BotManager:
         # unusable here, the bot starts as before (and the activity log says why).
         process = None
         sandboxed = False
+        live_start = str(bot.get("execution_mode") or "paper").strip().lower() == "live"
+        if live_start and not _bots_use_api():
+            # This bot places and records its own live orders, so open the
+            # database first.
+            sync_database_lock(live_starting=True)
         sandbox = bot_sandbox_status()
         if sandbox is not None and sandbox.usable:
             try:
@@ -475,11 +676,13 @@ class BotManager:
         set_bot_status(bot_id, "running", pid=process.pid)
         log_activity(
             "info", "bot_factory",
-            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid})" + (" in the sandbox" if sandboxed else ""),
-            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed},
+            f"Bot '{bot.get('name', bot_id)}' started (PID {process.pid}, run {run_id})"
+            + (" in the sandbox" if sandboxed else ""),
+            {"bot_id": bot_id, "pid": process.pid, "sandboxed": sandboxed, "run_id": run_id},
         )
+        sync_database_lock()
 
-        return {"status": "started", "pid": process.pid, "log_path": str(log_path)}
+        return {"status": "started", "pid": process.pid, "run_id": run_id, "log_path": str(log_path)}
 
     @staticmethod
     def _spawn_unsandboxed(argv: list[str], env: dict[str, str], log_path: Path) -> subprocess.Popen:
@@ -597,6 +800,7 @@ class BotManager:
             "info", "bot_factory", summary,
             {"bot_id": bot_id, "flattened": flattened},
         )
+        sync_database_lock()
         return {"status": "stopped", "flattened": flattened}
 
     def _flatten_live_positions_on_stop(self, bot: dict | None, *, reason: str) -> list[dict]:
@@ -642,6 +846,15 @@ class BotManager:
         """Background loop that checks heartbeats and marks stale bots as error."""
         from datetime import datetime, timezone
 
+        from forven.bot_factory.alerts import BotAlertWatcher
+        from forven.db import get_bot_trade_events_since, list_bots
+        from forven.notifications import emit_notification
+
+        alerts = BotAlertWatcher(
+            list_bots=list_bots,
+            trade_events=get_bot_trade_events_since,
+            emit=emit_notification,
+        )
         cycle = 0
         while True:
             try:
@@ -706,6 +919,13 @@ class BotManager:
 
             except Exception as e:
                 logger.error("Bot monitor error: %s", e)
+
+            # After the status checks above, so a bot just marked dead is
+            # announced this cycle.
+            try:
+                alerts.poll()
+            except Exception as e:
+                logger.warning("Bot alerts failed: %s", e)
 
             await asyncio.sleep(_MONITOR_INTERVAL)
 

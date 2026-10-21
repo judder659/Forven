@@ -63,7 +63,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 			out.push({
 				key: 'oos-loss', tone: 'fail', title: 'Loses money out of sample.',
 				body: `The out-of-sample slice returned ${fmtFraction(oos.totalReturn)} (Sharpe ${fmtNum(oos.sharpe)}).`,
-				short: 'it loses money out of sample', rule: 'out-of-sample return > 0', target: { tab: 'performance' },
+				short: 'it loses money out of sample', rule: 'out-of-sample return > 0', target: { tab: 'runs', anchor: 'run-report' },
 			});
 		} else if (held?.verdict === 'FAIL') {
 			out.push({
@@ -136,7 +136,7 @@ export function buildFindings(input: FindingsInput): Finding[] {
 			key: 'concentration', tone: 'caution', title: 'Profit rides on a few trades.',
 			body: `The ${c.top} best of ${input.tradeCount} out-of-sample trades made ${fmtPct(c.share, 0, false)} of net profit (${fmtUsd(c.topSum, 0, false)} of ${fmtUsd(c.net, 0, false)}).${stops && stops.pnl < 0 ? ` ${stops.count} stop-outs cost ${fmtUsd(Math.abs(stops.pnl), 0, false)}.` : ''} Expect long flat stretches between winners.`,
 			short: `${Math.round(c.share)}% of the profit came from ${c.top} trades`,
-			rule: `top ${c.top} trades > ${CONCENTRATION_SHARE}% of net profit`, target: { tab: 'summary', anchor: 'attribution' },
+			rule: `top ${c.top} trades > ${CONCENTRATION_SHARE}% of net profit`, target: { tab: 'runs', anchor: 'attribution' },
 		});
 	}
 
@@ -168,7 +168,8 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		});
 	}
 
-	// 8. Costs: the runner's floor on the stressed Sharpe, and the live gate's cap on the loss.
+	// 8. Costs: the runner's floor on the stressed Sharpe, and the guide on the share lost
+	// (information only: probation's own cost check is the edge-covers-costs test).
 	const cost = input.stressRows.find((row) => row.key === 'cost_stress');
 	if (cost && cost.verdict.startsWith('PASS')) {
 		const d = cost.detail ?? {};
@@ -176,13 +177,13 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		const overCap = isNum(d.degradationPct) && isNum(d.maxDegradationPct) && d.degradationPct > d.maxDegradationPct;
 		const body = [
 			`At ${multiplier} fees and slippage the Sharpe ${isNum(d.degradationPct) ? `drops ${fmtPct(d.degradationPct, 1, false)}` : 'changes'}${isNum(d.stressedSharpe) ? ` to ${fmtNum(d.stressedSharpe)}` : ''}${isNum(d.minSharpe) ? `; the test needs at least ${fmtNum(d.minSharpe)}` : ''}.`,
-			isNum(d.maxDegradationPct) ? `The paper → live gate also allows at most ${fmtPct(d.maxDegradationPct, 0, false)} of the Sharpe lost${overCap ? ', so it would stop this strategy there.' : '.'}` : null,
+			isNum(d.maxDegradationPct) ? `The guide is at most ${fmtPct(d.maxDegradationPct, 0, false)} of the Sharpe lost${overCap ? ', and this strategy loses more.' : '.'}` : null,
 		].filter(Boolean).join(' ');
 		out.push(
 			overCap
 				? {
-						key: 'costs', tone: 'caution', title: 'Higher costs would stop it at the live gate.', body,
-						short: 'higher costs would stop it at the live gate', rule: 'stressed Sharpe ≥ floor; paper → live: Sharpe lost ≤ cap', target: { tab: 'robustness', anchor: 'rb-cost' },
+						key: 'costs', tone: 'caution', title: 'Higher costs take much of its edge.', body,
+						short: 'higher costs take much of its edge', rule: 'stressed Sharpe ≥ floor; Sharpe lost ≤ guide', target: { tab: 'robustness', anchor: 'rb-cost' },
 					}
 				: {
 						key: 'costs', tone: 'ok', title: 'Survives higher costs.', body,
@@ -191,12 +192,13 @@ export function buildFindings(input: FindingsInput): Finding[] {
 		);
 	}
 
-	// 9. How far the paper → live gate is.
-	if (input.stage === 'paper' && input.gate) {
+	// 9. How far probation is: matched paper trades at the backtest's pace.
+	if (input.stage === 'paper' && input.gate && input.gate.remainingTrades > 0) {
+		const days = isNum(input.paperNeed.days) && input.paperNeed.days > 0 ? ` over at least ${input.paperNeed.days} days` : '';
 		out.push({
-			key: 'gate', tone: 'info', title: 'Paper → live is months away.',
-			body: `The gate needs ${input.paperNeed.days ?? '—'} days and ${input.paperNeed.trades ?? '—'} closed paper trades (${input.gate.remainingTrades} to go). At ${fmtEtaRates(input.gate)} trades a month the earliest is ${fmtEtaWindow(input.gate)}.`,
-			short: '', rule: 'paper_trading.min_closed_trades ÷ the backtest trade rate', target: { tab: 'summary', anchor: 'gate-card' },
+			key: 'gate', tone: 'info', title: 'Probation needs more paper trades.',
+			body: `It needs ${input.paperNeed.trades ?? '—'} paper trades that match the backtest${days} (${input.gate.remainingTrades} to go). At ${fmtEtaRates(input.gate)} trades a month the earliest is ${fmtEtaWindow(input.gate)}.`,
+			short: '', rule: 'probation confirm trades ÷ the backtest trade rate', target: { tab: 'summary', anchor: 'gate-card' },
 		});
 	}
 
@@ -224,7 +226,7 @@ export function summarizeVerdict(findings: Finding[]): Verdict {
 	const cautions = findings.filter((f) => f.tone === 'caution');
 	const positives = findings.filter((f) => f.tone === 'ok');
 	if (fails.length) {
-		return { tone: 'fail', label: 'Not viable', headline: `${capitalize(joinClauses(fails.slice(0, 2).map((f) => f.short)))}.` };
+		return { tone: 'fail', label: 'Weak backtest', headline: `${capitalize(joinClauses(fails.slice(0, 2).map((f) => f.short)))}.` };
 	}
 	if (!positives.length && !cautions.length) {
 		return { tone: 'idle', label: 'Not enough evidence', headline: 'Run a backtest and the robustness suite to judge this strategy.' };
@@ -232,8 +234,8 @@ export function summarizeVerdict(findings: Finding[]): Verdict {
 	const lead = positives[0]?.short;
 	const worries = cautions.slice(0, 2).map((f) => f.short);
 	if (!cautions.length) {
-		return { tone: 'ok', label: 'Viable', headline: `${capitalize(lead ?? 'every check passed')}; every check passed.` };
+		return { tone: 'ok', label: 'Strong backtest', headline: `${capitalize(lead ?? 'every check passed')}; every check passed.` };
 	}
 	const headline = lead ? `${capitalize(lead)}, but ${joinClauses(worries)}.` : `${capitalize(joinClauses(worries))}.`;
-	return { tone: 'caution', label: 'Promising · not proven', headline };
+	return { tone: 'caution', label: 'Mixed backtest', headline };
 }

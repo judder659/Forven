@@ -77,7 +77,6 @@ frontend/                  # SvelteKit frontend
       live-trades/         #   /live-trades
       all-trades/          #   /all-trades
       risk/                #   /risk
-      universe/            #   /universe (portfolio layer only)
       propr/               #   /propr (hidden integration flag only)
       bot-factory/         #   /bot-factory
       agents/              #   /agents (Management)

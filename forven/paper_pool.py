@@ -13,8 +13,9 @@ wide door needs three things so paper stays useful:
   door while the pool is full (or while its family already holds
   ``max_per_family`` paper strategies, or its market ``max_per_market`` when an
   operator sets one) waits in
-  ``paper_queue``, ranked by the evidence the door recorded: deflated Sharpe,
-  composite robustness score and out-of-sample Sharpe. Free slots go to the
+  ``paper_queue``, ranked by trade pace and timeframe first (what the 2026-10
+  forward replay found predictive) and the evidence the door recorded as a
+  tie-breaker (``evidence_score``). Free slots go to the
   highest-ranked waiting strategy first. Waiting is capacity, not merit: it
   never counts towards the repeated-failure auto-archive.
 * **Automatic forward retirement.** A paper strategy leaves (archived with
@@ -154,27 +155,115 @@ def market_of(symbol: object) -> str:
 # works on most coins goes first, one fitted to its home coin goes last.
 BREADTH_RANK_BONUS = {"general": 0.2, "mixed": 0.05, "too_few": 0.0, "home_only": -0.2}
 
+# 2026-10 forward replay (627 strategies re-run on the months after their
+# evidence was made): the gauntlet's scores barely separated forward winners
+# from losers, while trade pace and timeframe did. By backtest trades per month,
+# the slowest fifth (~1/month) made money forward 46% of the time and the
+# busiest fifth (~21/month) 29%; 15m strategies 23%, 1h 38%, 4h 43%. So the
+# queue ranks on pace and timeframe first and keeps the old evidence blend as a
+# tie-breaker.
+PACE_WEIGHT = 0.45
+TIMEFRAME_WEIGHT = 0.35
+EVIDENCE_WEIGHT = 0.2
+# Trades per month at which the pace score is 0.5 (1/month -> ~0.86, 20/month -> ~0.23).
+PACE_HALF_TRADES_PER_MONTH = 6.0
+# Average net trade below this many round-trip costs (i.e. a gross move under
+# twice the cost) is mostly eaten by fees and slippage.
+MIN_COST_COVERAGE = 2.0
+THIN_EDGE_PENALTY = 0.15
+# Default round trip: (4.5 bps fee + 2 bps slippage) on each side.
+DEFAULT_ROUND_TRIP_COST = 2 * (4.5 + 2.0) / 10000.0
+
+_TIMEFRAME_UNITS = {"m": 1, "h": 60, "d": 1440, "w": 10080}
+
+
+def timeframe_minutes(timeframe: object) -> float | None:
+    """Bar length in minutes ("15m" -> 15, "4h" -> 240), None when unreadable."""
+    text = str(timeframe or "").strip().lower()
+    if len(text) < 2 or text[-1] not in _TIMEFRAME_UNITS:
+        return None
+    try:
+        count = float(text[:-1])
+    except ValueError:
+        return None
+    return count * _TIMEFRAME_UNITS[text[-1]] if count > 0 else None
+
+
+def pace_score(trades_per_month: object) -> float:
+    """0-1, higher for strategies that trade less often (missing = 0)."""
+    pace = _float(trades_per_month, -1.0)
+    if pace < 0:
+        return 0.0
+    return 1.0 / (1.0 + pace / PACE_HALF_TRADES_PER_MONTH)
+
+
+def timeframe_score(timeframe: object) -> float:
+    """0-1: 15m and faster 0, 30m 0.4, 1h 0.7, 2h and slower 1 (unknown = 0)."""
+    minutes = timeframe_minutes(timeframe)
+    if minutes is None or minutes <= 15:
+        return 0.0
+    if minutes < 60:
+        return 0.4
+    if minutes < 120:
+        return 0.7
+    return 1.0
+
+
+def cost_coverage(avg_trade: object, round_trip_cost: object = DEFAULT_ROUND_TRIP_COST) -> float | None:
+    """Gross average trade as a multiple of the round-trip cost (None when unmeasured).
+
+    Backtest trade returns are net of costs, so the gross move is the net average
+    plus one round trip.
+    """
+    cost = _float(round_trip_cost, 0.0)
+    if avg_trade is None or cost <= 0:
+        return None
+    net = _float(avg_trade, math.nan)
+    if not math.isfinite(net):
+        return None
+    return (net + cost) / cost
+
 
 def evidence_score(
-    deflated_sharpe: object, robustness_points: object, oos_sharpe: object, breadth_verdict: object = None
+    deflated_sharpe: object,
+    robustness_points: object,
+    oos_sharpe: object,
+    breadth_verdict: object = None,
+    *,
+    trades_per_month: object = None,
+    timeframe: object = None,
+    avg_trade: object = None,
+    round_trip_cost: object = DEFAULT_ROUND_TRIP_COST,
 ) -> float:
     """Rank of a door-passing strategy in the paper queue (higher goes first).
 
-    0.4 x deflated Sharpe (0-1) + 0.3 x robustness score (0-100, scaled to 0-1)
-    + 0.3 x out-of-sample Sharpe squashed to 0-1 by tanh, plus the breadth
-    verdict's BREADTH_RANK_BONUS. A missing component counts as zero, so
-    better-evidenced strategies rank ahead.
+    PACE_WEIGHT x pace_score + TIMEFRAME_WEIGHT x timeframe_score +
+    EVIDENCE_WEIGHT x the recorded evidence (0.4 x deflated Sharpe 0-1, 0.3 x
+    robustness score scaled to 0-1, 0.3 x out-of-sample Sharpe squashed by
+    tanh), plus the breadth verdict's BREADTH_RANK_BONUS, minus
+    THIN_EDGE_PENALTY when the average trade covers less than MIN_COST_COVERAGE
+    round trips. A missing component counts as zero.
     """
     dsr = min(max(_float(deflated_sharpe, 0.0), 0.0), 1.0)
     robustness = min(max(_float(robustness_points, 0.0) / 100.0, 0.0), 1.0)
     oos = max(math.tanh(_float(oos_sharpe, 0.0)), 0.0)
+    evidence = 0.4 * dsr + 0.3 * robustness + 0.3 * oos
     breadth = BREADTH_RANK_BONUS.get(str(breadth_verdict or ""), 0.0)
-    return round(0.4 * dsr + 0.3 * robustness + 0.3 * oos + breadth, 6)
+    coverage = cost_coverage(avg_trade, round_trip_cost)
+    thin = THIN_EDGE_PENALTY if coverage is not None and coverage < MIN_COST_COVERAGE else 0.0
+    score = (
+        PACE_WEIGHT * pace_score(trades_per_month)
+        + TIMEFRAME_WEIGHT * timeframe_score(timeframe)
+        + EVIDENCE_WEIGHT * evidence
+        + breadth
+        - thin
+    )
+    return round(score, 6)
 
 
 def strategy_row(conn, strategy_id: str):
     return conn.execute(
-        "SELECT id, name, type, runtime_type, params, symbol, stage, status, metrics, "
+        "SELECT id, name, type, runtime_type, params, symbol, timeframe, stage, status, metrics, "
         "deflated_sharpe FROM strategies WHERE id = ?",
         (strategy_id,),
     ).fetchone()
@@ -267,7 +356,7 @@ def admission_reason(
         if free <= 0:
             reason = (
                 f"Paper pool full: {len(paper)}/{cap} strategies in paper — waiting for a paper slot "
-                f"(queue position {position} of {waiting}, ranked by recorded evidence)"
+                f"(queue position {position} of {waiting}, ranked by trade pace, timeframe and recorded evidence)"
             )
         elif position > free:
             reason = (

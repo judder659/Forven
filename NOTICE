@@ -10,5 +10,5 @@ AGPL license covers this software's source code; it does NOT grant any right to
 use the "Forven" name or logo. See TRADEMARK.md.
 
 This software is provided AS IS, without warranty of any kind, and is not
-financial advice. It ships in paper-trading mode and supports Hyperliquid
-testnet only. See DISCLAIMER.md.
+financial advice. It ships in paper-trading mode (simulated fills, no real
+money); real-money trading is unsupported and off by default. See DISCLAIMER.md.

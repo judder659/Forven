@@ -2,6 +2,8 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { getProbationBadges, type ProbationBadges } from '$lib/api/probation';
+	import ProbationBadge from '$lib/components/probation/ProbationBadge.svelte';
 	import {
 		getForvenStrategiesQuery,
 		getNowWorking,
@@ -44,10 +46,10 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import { buildExportFilename, copyJsonToClipboard, downloadJson } from '$lib/utils/strategyPortability';
 	import { forvenWsConnected } from '$lib/stores/forvenWebSocket';
-	import { PIPELINE_STAGES, graveyardTotal, stageTotals, summarizeFlows, type PipelineStage } from '$lib/utils/forge/flow';
+	import { RAIL_STAGES, graveyardTotal, stageTotals, summarizeFlows, type RailStage } from '$lib/utils/forge/flow';
 	import { STATUS_META, TONE_DOT, TONE_PILL, stageLabel, statusMeta, type ForgeStatusKey } from '$lib/utils/forge/status';
 	import { CAUSES, CAUSE_ORDER, archivedFromStage, classifyArchive, tallyCauses, type Cause, type CauseKey } from '$lib/utils/forge/causes';
-	import { forwardIndex, liveTotals, paperTotals } from '$lib/utils/forge/forward';
+	import { forwardIndex, liveTotals, paperTotals, type ForwardRecord } from '$lib/utils/forge/forward';
 	import { buildAttention } from '$lib/utils/forge/attention';
 	import { buildActivity, hourlyMoves } from '$lib/utils/forge/activity';
 	import { forgeHeadline } from '$lib/utils/forge/headline';
@@ -573,6 +575,16 @@
 		forwardLoaded = true;
 	}
 
+	let probationBadges: ProbationBadges = {};
+
+	async function loadProbationBadges() {
+		try {
+			probationBadges = await getProbationBadges();
+		} catch {
+			// A list without badges still renders.
+		}
+	}
+
 	async function refreshAll() {
 		// The explainer is the slowest call, so it starts first and nothing waits on it.
 		void loadExplain();
@@ -582,6 +594,7 @@
 			loadHealth(),
 			loadOverview(),
 			loadForward(),
+			loadProbationBadges(),
 		]);
 	}
 
@@ -836,16 +849,21 @@
 		if (entry) return humanizeStrategyType(entry.type) || entry.name || id;
 		return id;
 	};
-	$: stageCounts = PIPELINE_STAGES.reduce(
-		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => normalizeStage(row.stage) === stage).length }),
-		{} as Record<PipelineStage, number>,
+	/** The Forge column a row sits in: a live strategy on probation has its own. */
+	function railStage(row: ManagerRow, index: Map<string, PipelineExplainStrategy> = explainById): string {
+		const stage = normalizeStage(row.stage);
+		return stage === 'live_graduated' && index.get(row.id)?.pipeline_stage === 'probation' ? 'probation' : stage;
+	}
+	$: stageCounts = RAIL_STAGES.reduce(
+		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => railStage(row, explainById) === stage).length }),
+		{} as Record<RailStage, number>,
 	);
 	$: statusByStage = (() => {
-		const out = Object.fromEntries(PIPELINE_STAGES.map((s) => [s, {}])) as Record<PipelineStage, Partial<Record<ForgeStatusKey, number>>>;
+		const out = Object.fromEntries(RAIL_STAGES.map((s) => [s, {}])) as Record<RailStage, Partial<Record<ForgeStatusKey, number>>>;
 		for (const row of activeResults) {
 			const entry = explainById.get(row.id);
 			if (!entry) continue;
-			const stage = normalizeStage(row.stage) as PipelineStage;
+			const stage = railStage(row, explainById) as RailStage;
 			if (!out[stage]) continue;
 			const key = statusMeta(entry.status).key;
 			out[stage][key] = (out[stage][key] ?? 0) + 1;
@@ -886,7 +904,7 @@
 	$: topCause = windowCauses.find((c) => c.key !== 'other') ?? null;
 	$: topCauseScope = windowCovered ? `last ${flowWindow}` : `newest ${trashResults.length.toLocaleString('en-US')} loaded`;
 	$: headline = forgeHeadline({
-		live: stageCounts.live_graduated ?? 0,
+		live: (stageCounts.live_graduated ?? 0) + (stageCounts.probation ?? 0),
 		paper: stageCounts.paper ?? 0,
 		gauntlet: stageCounts.gauntlet ?? 0,
 		quickScreen: stageCounts.quick_screen ?? 0,
@@ -923,9 +941,15 @@
 			case 'blocked': return status === 'blocked_merit' || status === 'slot_contention';
 			case 'waiting': return status === 'waiting_evidence' || status === 'in_flight';
 			case 'ready': return status === 'ready';
-			case 'live': return status === 'live';
+			case 'live': return status === 'live' || status === 'probation';
 		}
 		return true;
+	}
+
+	/** The row's symbol plus, for a multi-coin paper container, every coin it trades. */
+	function rowSymbols(row: ManagerRow, index: Map<string, ForwardRecord> = forwardById): string[] {
+		const container = index.get(row.id)?.multiCoin;
+		return container ? [row.symbol, ...container.symbols.filter((symbol) => symbol !== row.symbol)] : [row.symbol];
 	}
 
 	function matchesSearch(row: ManagerRow, query: string): boolean {
@@ -934,7 +958,7 @@
 			row.name.toLowerCase().includes(query)
 			|| (row.display_name ?? '').toLowerCase().includes(query)
 			|| titleOf(row).toLowerCase().includes(query)
-			|| row.symbol.toLowerCase().includes(query)
+			|| rowSymbols(row).some((symbol) => symbol.toLowerCase().includes(query))
 			|| row.timeframe.toLowerCase().includes(query)
 			|| row.id.toLowerCase().includes(query)
 		);
@@ -952,8 +976,8 @@
 		void forwardById;
 		void attentionIds;
 		const filtered = activeResults.filter((row) => {
-			if (symbolFilter !== 'all' && row.symbol !== symbolFilter) return false;
-			if (stageFilter !== 'all' && normalizeStage(row.stage) !== stageFilter) return false;
+			if (symbolFilter !== 'all' && !rowSymbols(row).includes(symbolFilter)) return false;
+			if (stageFilter !== 'all' && railStage(row, explainById) !== stageFilter) return false;
 			if (!matchesStatus(row, statusFilter)) return false;
 			return matchesSearch(row, query);
 		});
@@ -1031,8 +1055,8 @@
 	$: selectAllIndeterminate = selectedInView > 0 && selectedInView < rowsInView.length;
 	$: graveyardCapped = !graveyardLoadAllOverride && graveyardStrategyLimitMode === 'capped' && trashResults.length >= graveyardStrategyLimit;
 
-	$: symbolOptions = ['all', ...new Set(activeResults.map((row) => row.symbol).sort())];
-	$: stageOptions = ['all', ...PIPELINE_STAGES];
+	$: symbolOptions = ['all', ...new Set(activeResults.flatMap((row) => rowSymbols(row, forwardById)).sort())];
+	$: stageOptions = ['all', ...RAIL_STAGES];
 	$: selectedRail = bucket === 'trash' ? 'graveyard' : stageFilter;
 
 	const STATUS_CHIPS: Array<{ key: StatusFilter; label: string }> = [
@@ -1517,6 +1541,7 @@
 								{@const entry = explainById.get(row.id) ?? null}
 								{@const perMonth = tradesPerMonth(row)}
 								{@const fwd = forwardById.get(row.id) ?? null}
+								{@const multiCoin = fwd?.multiCoin ?? null}
 								{@const stage = normalizeStage(row.stage)}
 								<tr
 									data-strategy-id={row.id}
@@ -1536,9 +1561,19 @@
 												class="block truncate text-[13px] font-medium text-sc-ink hover:underline"
 												title={`${row.name} — open the strategy page`}
 											>{titleOf(row)}</a>
-											<div class="mt-0.5 truncate font-plex-mono text-[10.5px] text-sc-ink3">{row.id} · {row.symbol} · {row.timeframe}</div>
-											{#if row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
+											<div class="mt-0.5 truncate font-plex-mono text-[10.5px] text-sc-ink3">{row.id} · {row.symbol}{#if multiCoin}<span class="text-sc-ink2" title={`Also paper-trades ${multiCoin.coins.slice(1).join(', ')}`}>{` +${multiCoin.coins.length - 1}`}</span>{/if} · {row.timeframe}</div>
+											{#if probationBadges[row.id] || multiCoin || row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
 												<div class="mt-1 flex flex-wrap gap-1">
+													{#if probationBadges[row.id]}
+														<ProbationBadge state={probationBadges[row.id].state} sizePct={probationBadges[row.id].size_pct} compact />
+													{/if}
+													{#if multiCoin}
+														<span
+															class="inline-flex items-center gap-1 rounded border border-[#5ccac4]/40 px-1.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] text-[#5ccac4]"
+															title={`Multi-coin paper: the same rule on ${multiCoin.coins.join(', ')}, each on 1/${multiCoin.coins.length} of the paper book${multiCoin.trading ? '' : ' (switched off in Settings: only the home coin trades now)'}`}
+															data-testid="multi-coin-badge"
+														>{multiCoin.coins.length} coins<span class="font-plex-mono normal-case tracking-normal text-sc-ink3">{multiCoin.coins.join(' · ')}</span></span>
+													{/if}
 													{#if row.hypothesis_id}
 														<span class="rounded border border-sc-line2 px-1.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] text-sc-ink2" title="The idea this strategy tests">Idea {row.hypothesis_display_id || row.hypothesis_id}</span>
 													{/if}
@@ -1560,7 +1595,7 @@
 										</div>
 									</td>
 									<td class="border-b border-sc-line px-2 py-2 align-top">
-										<span class={`inline-block rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] ${stageClass(row.stage)}`}>{stageLabel(stage)}</span>
+										<span class={`inline-block rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] ${stageClass(row.stage)}`}>{stageLabel(entry?.pipeline_stage ?? stage)}</span>
 										<div class="mt-1 font-plex-mono text-[10.5px] text-sc-ink3" title="Days in this stage">{daysLabel(entry?.days_in_stage ?? daysInStage(row))} in stage</div>
 										<div class="font-plex-mono text-[10.5px] text-sc-ink4" title={`Created ${shortDateTime(row.created_at)}`}>{shortDate(row.created_at)}</div>
 									</td>

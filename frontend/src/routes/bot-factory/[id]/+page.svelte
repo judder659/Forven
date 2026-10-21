@@ -1,4 +1,14 @@
 <script lang="ts">
+	function ruleSummary(b: { bot_type?: string | null; rule_params?: Record<string, any> | null }): string {
+		const p = b.rule_params || {};
+		if (b.bot_type === 'grid')
+			return `Grid bot · ${p.pair ?? '?'} · ${p.levels ?? '?'} levels from $${p.lower ?? '?'} to $${p.upper ?? '?'}`;
+		if (b.bot_type === 'dca')
+			return `DCA bot · ${p.pair ?? '?'} · ${p.safety_orders ?? 0} safety orders · take profit ${p.take_profit_pct ?? 2}%`;
+		if (b.bot_type === 'signal')
+			return `Signal follower · copies ${p.strategy_id ?? '?'}${p.ai_approval ? ' · AI approves entries' : ''}`;
+		return '';
+	}
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -13,10 +23,20 @@
 		diffBotVersions,
 		startBot,
 		stopBot,
+		useDefaultModel,
 		goLiveBot,
 		goPaperBot,
 		closeBotPosition,
 		listWallets,
+		getBotDecision,
+		getBotPerformance,
+		getBotChart,
+		applyRecommendedBotSettings,
+		getBotLiveGate,
+		type BotLiveGate,
+		type BotDecisionDetail,
+		type BotPerformance,
+		type BotChart,
 		type BotConfig,
 		type BotTrade,
 		type BotDecision,
@@ -27,6 +47,9 @@
 		type BotVersionDiff,
 	} from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
+	import EquityChart from '$lib/components/EquityChart.svelte';
+	import CandlestickChart from '$lib/components/CandlestickChart.svelte';
+	import BotReplayPanel from '$lib/components/BotReplayPanel.svelte';
 	import { forvenLivePrices } from '$lib/stores/forvenWebSocket';
 	import {
 		createRealtimeRefresh,
@@ -43,7 +66,16 @@
 	let loading = true;
 	let error: string | null = null;
 	let confirmStop = false;
-	let activeView: 'activity' | 'positions' | 'trades' | 'versions' | 'memory' = 'activity';
+	let activeView: 'performance' | 'replay' | 'activity' | 'positions' | 'trades' | 'versions' | 'memory' = 'performance';
+	let botPerf: BotPerformance | null = null;
+	let chart: BotChart | null = null;
+	let chartPair: string | null = null;
+
+	// Decision inspector: what one decision was shown and answered.
+	let inspecting: BotDecisionDetail | null = null;
+	let inspectLoading = false;
+	let inspectError: string | null = null;
+	let applyingRecommended = false;
 	let realtime: RealtimeRefreshController | null = null;
 
 	// Live marks come from the app's own /ws/live feed (daemon prices, keyed by
@@ -151,6 +183,12 @@
 				getBotPositions(currentBotId).catch(() => null),
 				getBotStats(currentBotId).catch(() => null),
 			]);
+			// Cockpit views are extra: the page still works without them.
+			[botPerf, chart] = await Promise.all([
+				getBotPerformance(currentBotId).catch(() => botPerf),
+				getBotChart(currentBotId, chartPair).catch(() => chart),
+			]);
+			if (chart && !chartPair) chartPair = chart.pair;
 			error = null;
 		} catch (e: any) {
 			error = e.message || 'Failed to load bot';
@@ -159,15 +197,111 @@
 		}
 	}
 
+	// Start refusals (a retired model, missing live arming) stay on the page
+	// with their fix, instead of vanishing in a toast.
+	let startError: string | null = null;
+	let fixingModel = false;
+
 	async function handleStart() {
 		if (!botId) return;
+		startError = null;
 		try {
 			await startBot(botId);
 			addToast('Bot started', 'success');
 			await load();
 		} catch (e: any) {
-			addToast(`Start failed: ${e.message}`, 'error');
+			startError = e.message || 'Start failed';
 		}
+	}
+
+	async function handleUseDefaultModel() {
+		if (!botId) return;
+		fixingModel = true;
+		try {
+			bot = await useDefaultModel(botId);
+			startError = null;
+			addToast(`Model switched to ${bot.model}`, 'success');
+		} catch (e: any) {
+			addToast(`Couldn't switch model: ${e.message}`, 'error');
+		} finally {
+			fixingModel = false;
+		}
+	}
+
+	async function selectChartPair(pair: string) {
+		if (!botId) return;
+		chartPair = pair;
+		try {
+			chart = await getBotChart(botId, pair);
+		} catch (e: any) {
+			addToast(`Couldn't load the ${pair} chart: ${e.message}`, 'error');
+		}
+	}
+
+	async function openInspector(decisionId: number) {
+		if (!botId) return;
+		inspectLoading = true;
+		inspectError = null;
+		inspecting = null;
+		try {
+			inspecting = await getBotDecision(botId, decisionId);
+		} catch (e: any) {
+			inspectError = e.message || 'Could not load this decision';
+		} finally {
+			inspectLoading = false;
+		}
+	}
+
+	function closeInspector() {
+		inspecting = null;
+		inspectError = null;
+		inspectLoading = false;
+	}
+
+	async function handleApplyRecommended() {
+		if (!botId) return;
+		applyingRecommended = true;
+		try {
+			bot = await applyRecommendedBotSettings(botId);
+			addToast('Bot now decides once per new candle', 'success');
+		} catch (e: any) {
+			addToast(`Change failed: ${e.message}`, 'error');
+		} finally {
+			applyingRecommended = false;
+		}
+	}
+
+	function fmtSignedPct(v: number | null | undefined, digits = 2): string {
+		if (v == null || !Number.isFinite(v)) return '—';
+		return `${v >= 0 ? '+' : ''}${v.toFixed(digits)}%`;
+	}
+
+	function toneOf(v: number | null | undefined): string {
+		if (v == null) return 'text-sc-ink';
+		return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-sc-ink';
+	}
+
+	$: chartSignals = chart
+		? {
+				entries: chart.entries.map((m) => ({
+					timestamp: m.timestamp,
+					price: m.price,
+					type: 'entry' as const,
+					label: m.direction === 'short' ? 'SHORT' : 'LONG',
+				})),
+				exits: chart.exits.map((m) => ({
+					timestamp: m.timestamp,
+					price: m.price,
+					type: 'exit' as const,
+					label: m.pnl_usd != null ? `EXIT ${m.pnl_usd >= 0 ? '+' : ''}${m.pnl_usd.toFixed(2)}` : 'EXIT',
+				})),
+			}
+		: null;
+
+	function fmtCost(value: number | null | undefined): string {
+		if (value == null) return '—';
+		if (value < 0.01) return `$${value.toFixed(4)}`;
+		return `$${value.toFixed(2)}`;
 	}
 
 	async function handleStop() {
@@ -205,10 +339,13 @@
 	let walletOptionsError: string | null = null;
 	let confirmGoPaper = false;
 	let modeBusy = false;
+	let liveGate: BotLiveGate | null = null;
 
 	async function openGoLiveDrawer() {
 		goLiveOpen = !goLiveOpen;
 		if (!goLiveOpen) return;
+		liveGate = null;
+		if (botId) getBotLiveGate(botId).then((g) => (liveGate = g)).catch(() => (liveGate = null));
 		walletOptionsLoading = true;
 		walletOptionsError = null;
 		try {
@@ -299,6 +436,8 @@
 		if (type === 'pass') return '➖';
 		if (type === 'error') return '⚠️';
 		if (type === 'paused') return '⏸';
+		if (type === 'skipped') return '⏭';
+		if (type === 'blocked') return '⛔';
 		return '•';
 	}
 
@@ -308,6 +447,8 @@
 		if (type === 'pass') return 'text-sc-ink2';
 		if (type === 'error') return 'text-red-400';
 		if (type === 'paused') return 'text-yellow-400';
+		if (type === 'skipped') return 'text-yellow-400';
+		if (type === 'blocked') return 'text-yellow-400';
 		return 'text-sc-ink';
 	}
 
@@ -472,7 +613,19 @@
 						{/if}
 					</div>
 					<div class="mt-1.5 flex items-center gap-3 text-xs text-sc-ink3">
-						<span>{bot.model}</span>
+						{#if bot.bot_type && bot.bot_type !== 'ai'}
+							<span>{ruleSummary(bot)}</span>
+						{:else}
+							<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>
+								{bot.model}{#if bot.model_check && !bot.model_check.ok} (unavailable){/if}
+							</span>
+							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+							<span>{bot.timeframe ?? '1h'} candles · {bot.decision_cadence === 'candle_close' ? 'decides on each new candle' : `decides every ${bot.cooldown_seconds}s`}</span>
+						{/if}
+						{#if bot.run_id && isRunning}
+							<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
+							<span class="font-mono" title="This run's id; every Activity entry it writes carries it">run {bot.run_id}</span>
+						{/if}
 						<span class="inline-block h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
 						<span class="{statusColor(statusLabel)} font-bold uppercase tracking-wider">{statusLabel}</span>
 						{#if bot.started_at && isRunning}
@@ -509,6 +662,30 @@
 			</div>
 		</div>
 
+		{#if startError || (bot.model_check && !bot.model_check.ok && !isRunning)}
+			<div class="mb-6 flex flex-wrap items-center justify-between gap-3 border border-red-900 bg-red-500/5 px-4 py-3 text-xs text-red-400">
+				<span>{startError ?? `${bot.model_check?.reason} Start will refuse it until you pick another model.`}</span>
+				{#if bot.model_check && !bot.model_check.ok && bot.model_check.default_model}
+					<button on:click={handleUseDefaultModel} disabled={fixingModel} class="terminal-button text-[12px]">
+						{fixingModel ? 'Switching…' : `Use ${bot.model_check.default_model}`}
+					</button>
+				{/if}
+			</div>
+		{/if}
+
+		{#if (bot.bot_type ?? 'ai') === 'ai' && bot.decision_cadence !== 'candle_close'}
+			<div class="mb-6 flex flex-wrap items-center justify-between gap-3 border border-sc-line bg-sc-panel px-4 py-3 text-xs text-sc-ink2">
+				<span>
+					This bot asks its model every {bot.cooldown_seconds}s, but its {bot.timeframe ?? '1h'} candles only change once per candle.
+					Deciding once per candle uses far fewer AI calls; stops, targets and drawdown are still checked every minute.
+					{#if isRunning}A bot started before this update needs a restart to pick it up.{/if}
+				</span>
+				<button on:click={handleApplyRecommended} disabled={applyingRecommended} class="terminal-button text-[12px]">
+					{applyingRecommended ? 'Saving…' : 'Decide once per candle'}
+				</button>
+			</div>
+		{/if}
+
 		{#if confirmStop && isLiveMode && liveOpenCount > 0}
 			<div class="mb-6 border border-red-900 bg-red-500/5 px-4 py-3 text-xs text-red-400">
 				Stopping will close {liveOpenCount} open live position{liveOpenCount === 1 ? '' : 's'} on Hyperliquid
@@ -525,6 +702,22 @@
 					gate, liquidity guard, kill switch) on every open. Every live order carries a protective stop from the bot's
 					stop-loss setting{bot.stop_loss_pct == null ? ' — set stop_loss_pct in the editor first' : ` (${bot.stop_loss_pct}%)`}.
 				</p>
+				<div class="mt-3 rounded border border-sc-line bg-sc-panel p-3">
+					<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
+						Live gate {liveGate ? (liveGate.passed ? '· passed' : '· not passed yet') : '· checking…'}
+					</div>
+					{#if liveGate}
+						<ul class="mt-1.5 space-y-1 text-[12px]">
+							{#each liveGate.checks as c}
+								<li class="flex gap-2">
+									<span class={c.ok ? 'text-emerald-400' : 'text-red-400'}>{c.ok ? '✓' : '✗'}</span>
+									<span class="text-sc-ink">{c.label}</span>
+									<span class="text-sc-ink3">{c.detail}</span>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
 				<div class="mt-4 flex flex-wrap items-end gap-3">
 					<div class="flex flex-col gap-1">
 						<label for="go-live-wallet" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">
@@ -563,7 +756,7 @@
 					</div>
 					<button
 						on:click={handleGoLive}
-						disabled={modeBusy || goLiveConfirm.trim().toUpperCase() !== 'GO LIVE' || !goLiveCeiling || goLiveCeiling <= 0 || bot.stop_loss_pct == null}
+						disabled={modeBusy || !liveGate?.passed || goLiveConfirm.trim().toUpperCase() !== 'GO LIVE' || !goLiveCeiling || goLiveCeiling <= 0 || bot.stop_loss_pct == null}
 						class="terminal-button-danger text-[12px]"
 					>
 						{modeBusy ? 'Arming…' : 'Arm Live'}
@@ -624,8 +817,11 @@
 				<div class="mt-1 text-base font-bold {drawdownColor}">{drawdownPct.toFixed(2)}% <span class="text-sc-ink3">/ {bot.max_drawdown_pct}%</span></div>
 			</div>
 			<div class="bg-sc-panel px-4 py-3">
-				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">LLM Today</div>
+				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">AI Today</div>
 				<div class="mt-1 text-base font-bold text-sc-ink">{bot.llm_calls_today ?? 0} <span class="text-sc-ink3">/ {bot.max_llm_calls_per_day}</span></div>
+				<div class="text-[11px] text-sc-ink3" title="Estimated from prompt and reply length">
+					{fmtCost(bot.llm_cost_today ?? 0)}{bot.max_llm_cost_per_day ? ` / $${bot.max_llm_cost_per_day}` : ''} est.
+				</div>
 			</div>
 			<div class="bg-sc-panel px-4 py-3">
 				<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Errors</div>
@@ -657,12 +853,20 @@
 						{stats.total_pnl_usd >= 0 ? '+' : ''}${stats.total_pnl_usd.toFixed(2)}
 					</span>
 				</div>
+				{#if stats.ai_priced_calls}
+					<span class="h-4 w-px bg-sc-raise"></span>
+					<div class="flex items-center gap-1.5" title="Estimated AI spend over {stats.ai_priced_calls} recorded calls">
+						<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">AI cost</span>
+						<span class="font-bold text-sc-ink">{fmtCost(stats.ai_cost_usd)}</span>
+						<span class="text-[11px] text-sc-ink3">est.</span>
+					</div>
+				{/if}
 			</div>
 		{/if}
 
 		<!-- View tabs -->
 		<div class="mb-0 flex gap-0 border-b border-sc-line">
-			{#each [['activity', 'Activity'], ['positions', 'Positions'], ['trades', 'Trades'], ['memory', 'Memory'], ['versions', 'Versions']] as [key, label]}
+			{#each [['performance', 'Performance'], ['replay', 'Replay'], ['activity', 'Activity'], ['positions', 'Positions'], ['trades', 'Trades'], ['memory', 'Memory'], ['versions', 'Versions']] as [key, label]}
 				<button
 					on:click={() => (activeView = key as typeof activeView)}
 					aria-pressed={activeView === key}
@@ -675,7 +879,85 @@
 
 		<!-- View content -->
 		<div class="rounded-md border border-t-0 border-sc-line bg-sc-panel">
-			{#if activeView === 'activity'}
+			{#if activeView === 'performance'}
+				{#if !botPerf}
+					<div class="p-8 text-center text-sm text-sc-ink3">Performance is not available right now.</div>
+				{:else}
+					{@const ps = botPerf.summary}
+					{@const benchCoin = ps.benchmark_symbol.split('/')[0]}
+					<div class="grid grid-cols-2 gap-px border-b border-sc-line bg-sc-raise sm:grid-cols-4 lg:grid-cols-8">
+						<div class="bg-sc-panel px-4 py-3" title="Since {formatTime(ps.start_at)}, including open positions and funding">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Return</div>
+							<div class="mt-1 text-base font-bold {toneOf(ps.return_pct)}">{fmtSignedPct(ps.return_pct)}</div>
+							<div class="text-[11px] text-sc-ink3">{ps.pnl_usd >= 0 ? '+' : '-'}${Math.abs(ps.pnl_usd).toFixed(2)}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Holding {ps.benchmark_symbol} with the same capital over the same time">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">vs {benchCoin} hold</div>
+							<div class="mt-1 text-base font-bold {toneOf(ps.excess_return_pct)}">{fmtSignedPct(ps.excess_return_pct)}</div>
+							<div class="text-[11px] text-sc-ink3">{benchCoin} {fmtSignedPct(ps.benchmark_return_pct)}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Annualised, from daily equity; needs a week of history">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Sharpe</div>
+							<div class="mt-1 text-base font-bold text-sc-ink">{ps.sharpe != null ? ps.sharpe.toFixed(2) : '—'}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Max drawdown</div>
+							<div class="mt-1 text-base font-bold text-sc-ink">{ps.max_drawdown_pct.toFixed(2)}%</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Gross wins divided by gross losses">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Profit factor</div>
+							<div class="mt-1 text-base font-bold text-sc-ink">{ps.profit_factor != null ? ps.profit_factor.toFixed(2) : '—'}</div>
+							<div class="text-[11px] text-sc-ink3">{ps.closed_trades} closed · {ps.win_rate != null ? `${(ps.win_rate * 100).toFixed(0)}% won` : 'none yet'}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Trading fees per closed trade">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Fees / trade</div>
+							<div class="mt-1 text-base font-bold text-sc-ink">{ps.fees_per_trade_usd != null ? `$${ps.fees_per_trade_usd.toFixed(2)}` : '—'}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Estimated AI spend since the bot first ran">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">AI cost</div>
+							<div class="mt-1 text-base font-bold text-sc-ink">{fmtCost(ps.ai_cost_usd)}</div>
+							<div class="text-[11px] text-sc-ink3">{ps.ai_cost_pct_of_pnl != null ? `${ps.ai_cost_pct_of_pnl < 1 ? '<1' : ps.ai_cost_pct_of_pnl.toFixed(0)}% of profit` : 'est.'}</div>
+						</div>
+						<div class="bg-sc-panel px-4 py-3" title="Profit or loss after the estimated AI spend">
+							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">P&L after AI</div>
+							<div class="mt-1 text-base font-bold {toneOf(ps.pnl_after_ai_usd)}">{ps.pnl_after_ai_usd >= 0 ? '+' : '-'}${Math.abs(ps.pnl_after_ai_usd).toFixed(2)}</div>
+						</div>
+					</div>
+					<div class="border-b border-sc-line p-4">
+						<div class="mb-2 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Equity and drawdown, against holding {benchCoin}</div>
+						{#if botPerf.curve.length >= 2}
+							<EquityChart data={botPerf.curve} benchmarkData={botPerf.benchmark_curve} benchmarkTitle="{benchCoin} hold" height={260} />
+						{:else}
+							<div class="py-8 text-center text-sm text-sc-ink3">The curve starts once the bot has run.</div>
+						{/if}
+					</div>
+					<div class="p-4">
+						<div class="mb-2 flex flex-wrap items-center gap-2">
+							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Price and trades</span>
+							{#if chart}
+								<select
+									value={chartPair}
+									on:change={(e) => selectChartPair(e.currentTarget.value)}
+									class="terminal-input w-auto text-[12px]"
+									aria-label="Coin"
+								>
+									{#each chart.pairs as p}
+										<option value={p}>{p}</option>
+									{/each}
+								</select>
+								<span class="text-[11px] text-sc-ink3">{chart.timeframe} candles · {chart.entries.length} entries, {chart.exits.length} exits shown</span>
+							{/if}
+						</div>
+						{#if chart && chart.candles.length > 0}
+							<CandlestickChart data={chart.candles} signals={chartSignals} height={320} showVolume={false} />
+						{:else}
+							<div class="py-8 text-center text-sm text-sc-ink3">No stored {chart?.timeframe ?? ''} candles for {chartPair ?? 'this coin'} yet.</div>
+						{/if}
+					</div>
+				{/if}
+			{:else if activeView === 'replay'}
+				<BotReplayPanel {bot} />
+			{:else if activeView === 'activity'}
 				{#if decisions.length === 0}
 					<div class="p-8 text-center text-sm text-sc-ink3">
 						No decisions yet. {isRunning ? 'Waiting for market events...' : 'Start the bot to begin trading.'}
@@ -697,7 +979,20 @@
 											<span class="px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {direction === 'long' ? 'border border-emerald-900 bg-emerald-500/10 text-emerald-400' : 'border border-red-900 bg-red-500/10 text-red-400'}">{direction}</span>
 										{/if}
 									</div>
-									<span class="text-xs text-sc-ink3">{formatTime(decision.timestamp)}</span>
+									<span class="flex items-center gap-2 text-xs text-sc-ink3">
+										{#if decision.cost_usd != null}
+											<span title="Estimated: {decision.tokens_in ?? 0} tokens in, {decision.tokens_out ?? 0} out">{fmtCost(decision.cost_usd)}</span>
+										{/if}
+										{#if decision.run_id}
+											<span class="font-mono {bot.run_id && decision.run_id !== bot.run_id ? 'text-yellow-500' : ''}" title={bot.run_id && decision.run_id !== bot.run_id ? 'Written by an earlier run' : 'Run that made this decision'}>run {decision.run_id}</span>
+										{/if}
+										<span>{formatTime(decision.timestamp)}</span>
+										<button
+											on:click={() => openInspector(decision.id)}
+											class="terminal-button px-1.5 py-0.5 text-[11px]"
+											title={decision.has_details ? 'See what the bot was shown, what it answered and what the risk check did' : 'See the market data this decision used'}
+										>Inspect</button>
+									</span>
 								</div>
 								{#if decision.reasoning}
 									<p class="mt-2 text-sm leading-relaxed {decision.action_type === 'error' ? 'text-red-300' : 'text-sc-ink2'}">{decision.reasoning}</p>
@@ -1092,3 +1387,84 @@
 		</div>
 	{/if}
 </div>
+
+{#if inspecting || inspectLoading || inspectError}
+	<div class="fixed inset-0 z-40 bg-black/50" on:click={closeInspector} role="presentation"></div>
+	<aside
+		class="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-sc-line bg-sc-panel shadow-xl"
+		aria-label="Decision inspector"
+	>
+		<div class="flex items-center justify-between border-b border-sc-line px-4 py-3">
+			<div>
+				<div class="text-[14px] font-semibold text-sc-ink">Why did it do that?</div>
+				{#if inspecting}
+					<div class="text-[11px] text-sc-ink3">
+						{formatTime(inspecting.timestamp)} · {inspecting.action_type}{#if inspecting.run_id} · run {inspecting.run_id}{/if}
+					</div>
+				{/if}
+			</div>
+			<button on:click={closeInspector} class="terminal-button text-[12px]" aria-label="Close inspector">Close</button>
+		</div>
+		<div class="flex-1 space-y-5 overflow-y-auto p-4 text-xs">
+			{#if inspectLoading}
+				<div class="py-10 text-center text-sc-ink3">Loading…</div>
+			{:else if inspectError}
+				<div class="text-red-400">{inspectError}</div>
+			{:else if inspecting}
+				{@const det = inspecting.details}
+				<section>
+					<h3 class="mb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Outcome</h3>
+					<div class="text-sc-ink2">
+						<span class="capitalize {actionTypeColor(inspecting.action_type)}">{inspecting.action_type}</span>{#if inspecting.reasoning}<span>: {inspecting.reasoning}</span>{/if}
+					</div>
+					{#if det?.risk_check}
+						<div class="mt-2 border px-2 py-1.5 {det.risk_check.allowed ? 'border-emerald-900 bg-emerald-500/5 text-emerald-300' : 'border-red-900 bg-red-500/5 text-red-300'}">
+							Risk check: {det.risk_check.reason}
+						</div>
+					{/if}
+					{#if inspecting.action_data}
+						<pre class="mt-2 overflow-x-auto bg-sc-bg p-2 font-mono text-sc-ink2 whitespace-pre">{JSON.stringify(inspecting.action_data, null, 2)}</pre>
+					{/if}
+				</section>
+				<section>
+					<h3 class="mb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Cost</h3>
+					<div class="text-sc-ink2">
+						{det?.model ?? bot?.model ?? '—'} ·
+						{inspecting.cost_usd != null ? `${fmtCost(inspecting.cost_usd)} est.` : 'no AI cost recorded'}
+						{#if inspecting.tokens_in != null} · {inspecting.tokens_in} tokens in, {inspecting.tokens_out ?? 0} out{/if}
+					</div>
+				</section>
+				{#if det}
+					<section>
+						<h3 class="mb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">What it answered</h3>
+						{#if det.response}
+							<pre class="overflow-x-auto bg-sc-bg p-2 font-mono text-sc-ink whitespace-pre-wrap break-words">{det.response}</pre>
+						{:else}
+							<div class="text-red-300">No answer: the call failed ({inspecting.reasoning ?? 'unknown error'}).</div>
+						{/if}
+					</section>
+					<section>
+						<h3 class="mb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">What it was shown</h3>
+						{#each det.prompt ?? [] as message, i}
+							<details class="mb-2 border border-sc-line" open={i > 0}>
+								<summary class="cursor-pointer px-2 py-1.5 font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink2">
+									{message.role === 'system' ? 'Instructions (soul, rules, answer format)' : message.role === 'user' ? 'Situation (strategy, portfolio, market data)' : message.role}
+									<span class="text-sc-ink3">· {message.content.length.toLocaleString()} characters</span>
+								</summary>
+								<pre class="max-h-[50vh] overflow-auto border-t border-sc-line bg-sc-bg p-2 font-mono text-sc-ink2 whitespace-pre-wrap break-words">{message.content}</pre>
+							</details>
+						{/each}
+					</section>
+				{:else}
+					<section>
+						<h3 class="mb-1.5 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">What it was shown</h3>
+						<p class="mb-2 text-sc-ink3">The full prompt wasn't kept for this entry (older entries, and entries that aren't AI decisions, only keep the market data).</p>
+						{#if inspecting.event_trigger}
+							<pre class="max-h-[50vh] overflow-auto bg-sc-bg p-2 font-mono text-sc-ink2 whitespace-pre">{JSON.stringify(inspecting.event_trigger, null, 2)}</pre>
+						{/if}
+					</section>
+				{/if}
+			{/if}
+		</div>
+	</aside>
+{/if}

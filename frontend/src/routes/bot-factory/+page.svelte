@@ -1,4 +1,5 @@
 <script lang="ts">
+	const RULE_LABELS: Record<string, string> = { grid: 'Grid bot', dca: 'DCA bot', signal: 'Signal follower' };
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
@@ -9,9 +10,14 @@
 		deleteBot,
 		cloneBot,
 		killAllBots,
+		getBotFleet,
+		applyRecommendedBotSettings,
 		type BotConfig,
 		type BotTemplate,
+		type BotFleetRow,
+		type BotHealthLevel,
 	} from '$lib/api';
+	import Sparkline from '$lib/components/Sparkline.svelte';
 	import { addToast } from '$lib/stores/processTracker';
 	import {
 		createRealtimeRefresh,
@@ -20,6 +26,14 @@
 
 	let bots: BotConfig[] = [];
 	let templates: BotTemplate[] = [];
+	let fleet: Record<string, BotFleetRow> = {};
+	let benchmarkSymbol = 'BTC/USDT';
+
+	type SortKey = 'name' | 'status' | 'health' | 'return' | 'excess' | 'win' | 'open' | 'ai' | 'last';
+	let sortKey: SortKey = 'status';
+	let sortDir: 1 | -1 = 1;
+	let filterText = '';
+	let filterStatus: 'all' | 'running' | 'stopped' | 'paused' | 'error' | 'live' | 'paper' | 'attention' = 'all';
 	let loading = true;
 	let error: string | null = null;
 	let confirmDelete: string | null = null;
@@ -49,7 +63,18 @@
 
 	async function load() {
 		try {
-			[bots, templates] = await Promise.all([listBots(), listTemplates()]);
+			const [botList, templateList, fleetData] = await Promise.all([
+				listBots(),
+				listTemplates(),
+				// The cockpit metrics are extra: the roster still renders without them.
+				getBotFleet().catch(() => null),
+			]);
+			bots = botList;
+			templates = templateList;
+			if (fleetData) {
+				fleet = Object.fromEntries(fleetData.bots.map((row) => [row.bot_id, row]));
+				benchmarkSymbol = fleetData.benchmark_symbol;
+			}
 			error = null;
 		} catch (e: any) {
 			error = e.message || 'Failed to load bots';
@@ -141,6 +166,98 @@
 		}
 	}
 
+	async function handleApplyRecommended(id: string) {
+		if (busyBots.has(id)) return;
+		setBotBusy(id, true);
+		try {
+			await applyRecommendedBotSettings(id);
+			addToast('Bot now decides once per new candle', 'success');
+			await load();
+		} catch (e: any) {
+			addToast(`Change failed: ${e.message}`, 'error');
+		} finally {
+			setBotBusy(id, false);
+		}
+	}
+
+	const STATUS_ORDER: Record<string, number> = { error: 0, paused: 1, running: 2, stopped: 3 };
+	const HEALTH_ORDER: Record<BotHealthLevel, number> = { bad: 0, warn: 1, ok: 2, idle: 3 };
+
+	function healthOf(bot: BotConfig): BotHealthLevel {
+		return fleet[bot.id]?.health.level ?? (bot.model_check && !bot.model_check.ok ? 'bad' : 'idle');
+	}
+
+	function sortValue(bot: BotConfig, key: SortKey): number | string {
+		const row = fleet[bot.id];
+		switch (key) {
+			case 'name': return bot.name.toLowerCase();
+			case 'status': return STATUS_ORDER[statusOf(bot)] ?? 9;
+			case 'health': return HEALTH_ORDER[healthOf(bot)];
+			case 'return': return row?.return_pct ?? -Infinity;
+			case 'excess': return row?.excess_return_pct ?? -Infinity;
+			case 'win': return row?.win_rate ?? -Infinity;
+			case 'open': return row?.open_positions ?? bot.open_positions ?? 0;
+			case 'ai': return row?.ai_cost_today_usd ?? bot.llm_cost_today ?? 0;
+			case 'last': return row?.health.last_decision_at ? Date.parse(row.health.last_decision_at) : 0;
+		}
+	}
+
+	function setSort(key: SortKey) {
+		if (sortKey === key) sortDir = sortDir === 1 ? -1 : 1;
+		else {
+			sortKey = key;
+			// Text and status read best ascending; numbers best-first.
+			sortDir = key === 'name' || key === 'status' || key === 'health' ? 1 : -1;
+		}
+	}
+
+	function matchesFilter(bot: BotConfig, text: string, status: typeof filterStatus): boolean {
+		const q = text.trim().toLowerCase();
+		if (q && !`${bot.name} ${bot.model} ${(bot.locked_pairs || []).join(' ')}`.toLowerCase().includes(q)) return false;
+		if (status === 'all') return true;
+		if (status === 'live') return bot.execution_mode === 'live';
+		if (status === 'paper') return bot.execution_mode !== 'live';
+		if (status === 'attention') return ['bad', 'warn'].includes(healthOf(bot));
+		return statusOf(bot) === status;
+	}
+
+	$: visibleBots = bots
+		.filter((b) => matchesFilter(b, filterText, filterStatus))
+		.sort((a, b) => {
+			const va = sortValue(a, sortKey);
+			const vb = sortValue(b, sortKey);
+			if (va < vb) return -sortDir;
+			if (va > vb) return sortDir;
+			return a.name.localeCompare(b.name);
+		});
+	$: attentionCount = bots.filter((b) => ['bad', 'warn'].includes(healthOf(b))).length;
+
+	function healthDot(level: BotHealthLevel): string {
+		if (level === 'bad') return 'bg-red-500';
+		if (level === 'warn') return 'bg-yellow-400';
+		if (level === 'ok') return 'bg-emerald-400';
+		return 'bg-sc-line2';
+	}
+
+	function fmtPct(v: number | null | undefined, digits = 1): string {
+		if (v == null || !Number.isFinite(v)) return '—';
+		return `${v >= 0 ? '+' : ''}${v.toFixed(digits)}%`;
+	}
+
+	function pctTone(v: number | null | undefined): string {
+		if (v == null) return 'text-sc-ink3';
+		return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-red-400' : 'text-sc-ink2';
+	}
+
+	function fmtAgo(iso: string | null | undefined): string {
+		if (!iso) return 'never';
+		const secs = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+		if (secs < 90) return `${Math.round(secs)}s ago`;
+		if (secs < 5400) return `${Math.round(secs / 60)}m ago`;
+		if (secs < 172800) return `${Math.round(secs / 3600)}h ago`;
+		return `${Math.round(secs / 86400)}d ago`;
+	}
+
 	function createFromTemplate(templateId: string) {
 		goto(`/bot-factory/editor?template=${templateId}`);
 	}
@@ -194,7 +311,7 @@
 	<div class="mb-4 flex items-end justify-between border-b border-sc-line pb-4">
 		<div>
 			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink">Bot Factory</h1>
-			<p class="mt-1 text-xs text-sc-ink3">Autonomous LLM trading bots — paper by default, live behind GO LIVE</p>
+			<p class="mt-1 text-xs text-sc-ink3">AI and rule-based trading bots — paper by default, live behind GO LIVE</p>
 		</div>
 		<div class="flex gap-2">
 			{#if hasRunningBots}
@@ -206,6 +323,9 @@
 				{:else}
 					<button on:click={() => (confirmKillAll = true)} disabled={killAllBusy} class="terminal-button-danger text-[12px]">Kill All</button>
 				{/if}
+			{/if}
+			{#if bots.length >= 2}
+				<a href="/bot-factory/arena" class="terminal-button text-[12px]" title="Replay several bots over the same dates and rank them">Arena</a>
 			{/if}
 			<button on:click={() => goto('/bot-factory/editor')} class="terminal-button-primary text-[12px]">+ New Bot</button>
 		</div>
@@ -272,108 +392,169 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Bot roster -->
-		<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-			{#each bots as bot}
-				{@const isBusy = busyBots.has(bot.id)}
-				{@const status = statusOf(bot)}
-				{@const pnl = bot.realized_pnl ?? 0}
-				{@const isLive = bot.execution_mode === 'live'}
-				{@const walletEquity = bot.live_wallet_equity ?? null}
-				{@const equity = isLive ? (walletEquity ?? 0) : (bot.capital_allocation || 0) + pnl}
-				<div class="terminal-card flex flex-col">
-					<!-- Card header -->
-					<div class="flex items-start justify-between border-b border-sc-line px-4 py-3">
-						<div class="min-w-0">
-							<div class="flex items-center gap-2">
-								<a href="/bot-factory/{bot.id}" class="truncate text-sm font-bold text-sc-ink hover:underline">{bot.name}</a>
-								{#if bot.execution_mode === 'live'}
-									<span class="border border-red-900 bg-red-500/10 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-red-400">Live</span>
-								{:else}
-									<span class="border border-sc-line2 px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Paper</span>
+		<!-- Fleet table -->
+		<div class="mb-3 flex flex-wrap items-center gap-2">
+			<input
+				bind:value={filterText}
+				placeholder="Filter by name, model or coin"
+				class="terminal-input w-full max-w-xs text-[12px]"
+				aria-label="Filter bots"
+			/>
+			<select bind:value={filterStatus} class="terminal-input w-auto text-[12px]" aria-label="Show">
+				<option value="all">All bots</option>
+				<option value="attention">Needs attention{attentionCount ? ` (${attentionCount})` : ''}</option>
+				<option value="running">Running</option>
+				<option value="paused">Paused</option>
+				<option value="error">Error</option>
+				<option value="stopped">Stopped</option>
+				<option value="paper">Paper</option>
+				<option value="live">Live</option>
+			</select>
+			<span class="ml-auto text-[11px] text-sc-ink3">Return is since each bot first ran; "vs {benchmarkSymbol.split('/')[0]}" is against holding {benchmarkSymbol.split('/')[0]} over the same time.</span>
+		</div>
+
+		<div class="terminal-card overflow-x-auto">
+			<table class="w-full min-w-[960px] text-left text-[12px]">
+				<thead class="border-b border-sc-line font-plex-cond text-[11px] uppercase tracking-[0.08em] text-sc-ink3">
+					<tr>
+						{#each [
+							['health', ''],
+							['name', 'Bot'],
+							['status', 'Status'],
+							['return', 'Equity'],
+							['excess', `vs ${benchmarkSymbol.split('/')[0]}`],
+							['win', 'Win rate'],
+							['open', 'Open'],
+							['ai', 'AI today'],
+							['last', 'Last decision'],
+						] as [key, label]}
+							<th class="px-3 py-2 font-medium">
+								<button class="hover:text-sc-ink" on:click={() => setSort(key as SortKey)} title="Sort">
+									{label || 'Health'}{#if sortKey === key}<span class="ml-0.5">{sortDir === 1 ? '▲' : '▼'}</span>{/if}
+								</button>
+							</th>
+						{/each}
+						<th class="px-3 py-2 text-right font-medium">Actions</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each visibleBots as bot (bot.id)}
+						{@const isBusy = busyBots.has(bot.id)}
+						{@const status = statusOf(bot)}
+						{@const row = fleet[bot.id]}
+						{@const health = row?.health}
+						{@const isLive = bot.execution_mode === 'live'}
+						{@const walletEquity = bot.live_wallet_equity ?? null}
+						<tr class="border-b border-sc-line align-top last:border-b-0 hover:bg-sc-raise/40">
+							<td class="px-3 py-2.5">
+								<span
+									class="mt-1 inline-block h-2 w-2 rounded-full {healthDot(healthOf(bot))}"
+									title={health?.reasons.length ? health.reasons.join('\n') : healthOf(bot) === 'ok' ? 'Healthy' : 'Not running'}
+								></span>
+							</td>
+							<td class="max-w-[260px] px-3 py-2.5">
+								<div class="flex items-center gap-2">
+									<a href="/bot-factory/{bot.id}" class="truncate font-bold text-sc-ink hover:underline">{bot.name}</a>
+									{#if isLive}
+										<span class="border border-red-900 bg-red-500/10 px-1.5 py-px font-plex-cond text-[10px] font-medium uppercase tracking-[0.08em] text-red-400">Live</span>
+									{:else}
+										<span class="border border-sc-line2 px-1.5 py-px font-plex-cond text-[10px] font-medium uppercase tracking-[0.08em] text-sc-ink2">Paper</span>
+									{/if}
+								</div>
+								<div class="mt-0.5 text-[11px] text-sc-ink3">
+									{#if bot.bot_type && bot.bot_type !== 'ai'}
+										{RULE_LABELS[bot.bot_type] ?? bot.bot_type} · decides in code
+									{:else}
+										<span class={bot.model_check && !bot.model_check.ok ? 'text-red-400' : ''} title={bot.model_check?.reason ?? ''}>{bot.model}</span>
+										· {bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}
+										· {bot.timeframe ?? '1h'} · {bot.decision_cadence === 'candle_close' ? 'per candle' : `every ${bot.cooldown_seconds ?? 60}s`}
+									{/if}
+								</div>
+								{#if (bot.bot_type ?? 'ai') === 'ai' && bot.decision_cadence !== 'candle_close'}
+									<button
+										on:click={() => handleApplyRecommended(bot.id)}
+										disabled={isBusy}
+										class="mt-1 text-[11px] text-sky-400 hover:underline disabled:opacity-50"
+										title="Decide once per closed candle instead of on a timer; stops, targets and drawdown are still checked every minute"
+									>Decide once per candle instead</button>
 								{/if}
-							</div>
-							<div class="mt-1 flex items-center gap-2 text-[11px] text-sc-ink3">
-								<span class="truncate">{bot.model}</span>
-								<span class="h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
-								<span class="truncate">{bot.asset_mode === 'locked' ? (bot.locked_pairs || []).join(', ') : 'Free roam'}</span>
-								{#if bot.live_wallet}
-									<span class="h-0.5 w-0.5 rounded-full bg-sc-line2"></span>
-									<span class="truncate text-sc-ink2" title="Live orders route to this sub-account">⌂ {bot.live_wallet}</span>
+								{#if health && health.reasons.length && status !== 'running' && healthOf(bot) === 'bad'}
+									<div class="mt-1 text-[11px] text-red-400">{health.reasons[0]} <a href="/bot-factory/{bot.id}" class="underline">Fix it</a></div>
+								{:else if bot.error_message && status !== 'running'}
+									<div class="mt-1 truncate text-[11px] text-red-400" title={bot.error_message}>{bot.error_message}</div>
 								{/if}
-							</div>
-						</div>
-						<div class="flex shrink-0 items-center gap-1.5 pl-3">
-							<span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(status)}"></span>
-							<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {statusColor(status)}">{status}</span>
-						</div>
-					</div>
-
-					<!-- Performance row -->
-					<div class="grid grid-cols-3 gap-px bg-sc-raise">
-						<div class="bg-sc-panel px-4 py-2.5">
-							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{isLive ? 'Wallet' : 'Equity'}</div>
-							{#if isLive && walletEquity == null}
-								<div class="mt-0.5 text-sm font-bold text-sc-ink3" title="Live wallet balance unavailable — daemon snapshot pending or wallet unfunded">—</div>
-							{:else}
-								<div class="mt-0.5 text-sm font-bold text-sc-ink">{fmtUsd(equity)}</div>
-							{/if}
-						</div>
-						<div class="bg-sc-panel px-4 py-2.5">
-							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">P&L</div>
-							<div class="mt-0.5 text-sm font-bold {pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-red-400' : 'text-sc-ink3'}">
-								{pnl >= 0 ? '+' : ''}{fmtUsd(pnl)}
-							</div>
-						</div>
-						<div class="bg-sc-panel px-4 py-2.5">
-							<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Positions</div>
-							<div class="mt-0.5 text-sm font-bold text-sc-ink">
-								{bot.open_positions ?? 0}<span class="text-sc-ink3"> open</span>
-							</div>
-						</div>
-					</div>
-
-					<!-- Meta row -->
-					<div class="flex items-center justify-between border-t border-sc-line px-4 py-2 text-[10px] text-sc-ink3">
-						<span>{bot.closed_trades ?? 0} closed trades</span>
-						<span>LLM {bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day}</span>
-					</div>
-
-					{#if bot.error_message && status !== 'running'}
-						<div class="border-t border-red-900/40 bg-red-500/5 px-4 py-2 text-[11px] text-red-400">
-							{bot.error_message}
-						</div>
-					{/if}
-
-					<!-- Actions -->
-					<div class="mt-auto flex gap-1.5 border-t border-sc-line px-4 py-2.5 text-[10px]">
-						{#if status === 'running'}
-							{#if confirmStop === bot.id}
-								{@const closesLive = isLive && (bot.open_positions ?? 0) > 0}
-								<button on:click={() => handleStop(bot.id)} disabled={isBusy} aria-busy={isBusy} title={closesLive ? `Closes ${bot.open_positions} live position(s) on Hyperliquid` : ''} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Stopping…' : closesLive ? `Confirm + Close ${bot.open_positions}` : 'Confirm'}</button>
-								<button on:click={() => (confirmStop = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
-							{:else}
-								<button on:click={() => (confirmStop = bot.id)} disabled={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">Stop</button>
-							{/if}
-						{:else}
-							<button on:click={() => handleStart(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px] hover:border-emerald-500 hover:bg-emerald-500 hover:text-black">{isBusy ? 'Starting…' : 'Start'}</button>
-						{/if}
-						<button on:click={() => goto(`/bot-factory/editor?id=${bot.id}`)} class="terminal-button px-2 py-1 text-[12px]">Edit</button>
-						<button on:click={() => handleClone(bot.id, bot.name)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px]">{isBusy ? '…' : 'Clone'}</button>
-						<span class="ml-auto"></span>
-						{#if confirmDelete === bot.id}
-							<button on:click={() => handleDelete(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Deleting…' : 'Confirm'}</button>
-							<button on:click={() => (confirmDelete = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
-						{:else}
-							<button
-								on:click={() => (confirmDelete = bot.id)}
-								class="px-2 py-1 text-[12px] text-sc-ink3 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-								disabled={status === 'running' || isBusy}
-							>Delete</button>
-						{/if}
-					</div>
-				</div>
-			{/each}
+							</td>
+							<td class="px-3 py-2.5">
+								<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] {statusColor(status)}">{status}</span>
+								{#if health && health.reasons.length && status === 'running'}
+									<div class="mt-0.5 max-w-[160px] text-[11px] {healthOf(bot) === 'bad' ? 'text-red-400' : 'text-yellow-400'}">{health.reasons[0]}</div>
+								{/if}
+							</td>
+							<td class="px-3 py-2.5">
+								<div class="flex items-center gap-2">
+									<Sparkline data={row?.sparkline ?? []} width={72} height={22} />
+									<div>
+										{#if isLive}
+											<div class="font-bold text-sc-ink" title="Live wallet balance">{walletEquity == null ? '—' : fmtUsd(walletEquity)}</div>
+										{:else}
+											<div class="font-bold text-sc-ink">{fmtUsd(row?.equity ?? (bot.capital_allocation || 0) + (bot.realized_pnl ?? 0))}</div>
+										{/if}
+										<div class="text-[11px] {pctTone(row?.return_pct)}">{fmtPct(row?.return_pct)}</div>
+									</div>
+								</div>
+							</td>
+							<td class="px-3 py-2.5">
+								<div class={pctTone(row?.excess_return_pct)}>{fmtPct(row?.excess_return_pct)}</div>
+								<div class="text-[11px] text-sc-ink3" title="{benchmarkSymbol} buy-and-hold over the same time">{benchmarkSymbol.split('/')[0]} {fmtPct(row?.benchmark_return_pct)}</div>
+							</td>
+							<td class="px-3 py-2.5">
+								<div class="text-sc-ink">{row?.win_rate != null ? `${(row.win_rate * 100).toFixed(0)}%` : '—'}</div>
+								<div class="text-[11px] text-sc-ink3">{row?.closed_trades ?? bot.closed_trades ?? 0} trades</div>
+							</td>
+							<td class="px-3 py-2.5 text-sc-ink">{row?.open_positions ?? bot.open_positions ?? 0}</td>
+							<td class="px-3 py-2.5">
+								<div class="text-sc-ink">${(row?.ai_cost_today_usd ?? bot.llm_cost_today ?? 0).toFixed(2)}</div>
+								<div class="text-[11px] text-sc-ink3" title="AI calls today of the daily cap">{bot.llm_calls_today ?? 0}/{bot.max_llm_calls_per_day} calls</div>
+							</td>
+							<td class="px-3 py-2.5">
+								<div class="text-sc-ink2">{fmtAgo(health?.last_decision_at)}</div>
+								{#if health?.last_action_type}
+									<div class="text-[11px] text-sc-ink3">{health.last_action_type}</div>
+								{/if}
+							</td>
+							<td class="px-3 py-2.5">
+								<div class="flex justify-end gap-1.5">
+									{#if status === 'running'}
+										{#if confirmStop === bot.id}
+											{@const closesLive = isLive && (bot.open_positions ?? 0) > 0}
+											<button on:click={() => handleStop(bot.id)} disabled={isBusy} aria-busy={isBusy} title={closesLive ? `Closes ${bot.open_positions} live position(s) on Hyperliquid` : ''} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Stopping…' : closesLive ? `Confirm + Close ${bot.open_positions}` : 'Confirm'}</button>
+											<button on:click={() => (confirmStop = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
+										{:else}
+											<button on:click={() => (confirmStop = bot.id)} disabled={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">Stop</button>
+										{/if}
+									{:else}
+										<button on:click={() => handleStart(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px] hover:border-emerald-500 hover:bg-emerald-500 hover:text-black">{isBusy ? 'Starting…' : 'Start'}</button>
+									{/if}
+									<button on:click={() => goto(`/bot-factory/editor?id=${bot.id}`)} class="terminal-button px-2 py-1 text-[12px]">Edit</button>
+									<button on:click={() => handleClone(bot.id, bot.name)} disabled={isBusy} aria-busy={isBusy} class="terminal-button px-2 py-1 text-[12px]">{isBusy ? '…' : 'Clone'}</button>
+									{#if confirmDelete === bot.id}
+										<button on:click={() => handleDelete(bot.id)} disabled={isBusy} aria-busy={isBusy} class="terminal-button-danger px-2 py-1 text-[12px]">{isBusy ? 'Deleting…' : 'Confirm'}</button>
+										<button on:click={() => (confirmDelete = null)} disabled={isBusy} class="terminal-button px-2 py-1 text-[12px]">Cancel</button>
+									{:else}
+										<button
+											on:click={() => (confirmDelete = bot.id)}
+											class="px-2 py-1 text-[12px] text-sc-ink3 transition-colors hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+											disabled={status === 'running' || isBusy}
+										>Delete</button>
+									{/if}
+								</div>
+							</td>
+						</tr>
+					{:else}
+						<tr><td colspan="10" class="px-3 py-8 text-center text-sc-ink3">No bots match this filter.</td></tr>
+					{/each}
+				</tbody>
+			</table>
 		</div>
 	{/if}
 </div>

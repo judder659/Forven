@@ -10,7 +10,7 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock('$lib/api', () => apiMocks);
 
-import SettingsNotifications from '../lib/components/settings/sections/SettingsNotifications.svelte';
+import SettingsAreaView from '../lib/components/settings/SettingsAreaView.svelte';
 import { originalValues, clearDirty, dirtyFields } from '../lib/settings/dirty';
 import { notificationPrefs } from '../lib/stores/notificationPrefs';
 import { defaultNotificationPrefs } from '../lib/notifications/catalog';
@@ -45,7 +45,10 @@ async function flush(): Promise<void> {
 function render(settings: Record<string, unknown>) {
 	target = document.createElement('div');
 	document.body.appendChild(target);
-	instance = mount(SettingsNotifications, { target, props: { settings } });
+	instance = mount(SettingsAreaView, {
+			target,
+			props: {
+				area: 'notifications', settings } });
 }
 
 function rowSwitches(categoryId: string): HTMLButtonElement[] {
@@ -60,12 +63,12 @@ describe('SettingsNotifications section', () => {
 		const text = target.textContent || '';
 		expect(text).toContain('Where notifications go');
 		expect(text).toContain('Sidebar badges');
-		expect(text).toContain('Discord transport');
-		expect(text).toContain('Delivery policy');
+		expect(text).toContain('Discord connection');
+		expect(text).toContain('Discord delivery');
 		// The coarse Discord-only toggles were replaced by the per-event matrix.
 		expect(text).not.toContain('Event subscriptions');
 		expect(target.querySelector('tr[data-category="paper_trade_opened"]')).not.toBeNull();
-		expect(target.querySelector('li[data-badge="/approval"]')).not.toBeNull();
+		expect(target.querySelector('li[data-badge="/agents"]')).not.toBeNull();
 	});
 
 	it('shows paper trades off and live trades on by default', async () => {

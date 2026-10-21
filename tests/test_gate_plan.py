@@ -307,6 +307,69 @@ def test_free_slots_go_to_the_best_evidence_first(forven_db):
     assert policy.paper_admission_reason("STRONG", cfg) is None
 
 
+def _paced_metrics(trades: int, months: float, avg_trade: float) -> dict:
+    half = trades // 2
+    return {
+        "in_sample": {"total_trades": half, "backtest_months": months * 0.7, "avg_trade_pct": avg_trade},
+        "out_of_sample": {
+            "total_trades": trades - half,
+            "backtest_months": months * 0.3,
+            "avg_trade_pct": avg_trade,
+            "sharpe": 1.0,
+        },
+    }
+
+
+def test_a_slow_strategy_outranks_a_busy_one_with_better_scores(forven_db):
+    cfg = _config(paper_pool={"max_strategies": 2, "max_per_market": 0, "max_per_family": 0})
+    with get_db() as conn:
+        _insert_paper_strategy(conn, "P1")
+        _insert_paper_strategy(conn, "P2")
+        # ~1 trade a month on 4h with a wide edge vs ~20 a month on 15m, thin edge, top DSR.
+        _insert_gauntlet_strategy(conn, "SLOW", metrics=_paced_metrics(24, 24, 0.01), deflated_sharpe=0.3)
+        _insert_gauntlet_strategy(conn, "BUSY", metrics=_paced_metrics(480, 24, 0.0005), deflated_sharpe=0.99)
+        conn.execute("UPDATE strategies SET timeframe = '4h' WHERE id = 'SLOW'")
+        conn.execute("UPDATE strategies SET timeframe = '15m' WHERE id = 'BUSY'")
+
+    assert policy.paper_admission_reason("BUSY", cfg)
+    assert policy.paper_admission_reason("SLOW", cfg)
+    assert [entry["strategy_id"] for entry in policy.paper_queue_snapshot()] == ["SLOW", "BUSY"]
+
+
+def test_backtest_pace_reads_the_whole_window():
+    pace, avg_trade = policy._backtest_pace(_paced_metrics(48, 24, 0.004))
+    assert pace == pytest.approx(2.0)
+    assert avg_trade == pytest.approx(0.004)
+    assert policy._backtest_pace({}) == (None, None)
+    assert policy._backtest_pace({"out_of_sample": {"total_trades": 0}}) == (None, None)
+
+
+def test_queue_rank_favours_slow_paces_slower_bars_and_covered_costs():
+    assert paper_pool.timeframe_minutes("15m") == 15
+    assert paper_pool.timeframe_minutes("4h") == 240
+    assert paper_pool.timeframe_minutes("1d") == 1440
+    assert paper_pool.timeframe_minutes("bogus") is None
+    assert paper_pool.pace_score(6) == pytest.approx(0.5)
+    assert paper_pool.pace_score(1) > paper_pool.pace_score(6) > paper_pool.pace_score(20)
+    assert paper_pool.pace_score(None) == 0.0
+    assert [paper_pool.timeframe_score(tf) for tf in ("5m", "15m", "30m", "1h", "4h", "1d", None)] == [
+        0.0, 0.0, 0.4, 0.7, 1.0, 1.0, 0.0,
+    ]
+    # Net 0.13% average on a 0.13% round trip: the gross move covers two round trips.
+    assert paper_pool.cost_coverage(0.0013, 0.0013) == pytest.approx(2.0)
+    assert paper_pool.cost_coverage(None) is None
+
+    def score(**kwargs):
+        return paper_pool.evidence_score(0.5, 60, 1.0, **kwargs)
+
+    assert score(trades_per_month=1) > score(trades_per_month=20)
+    assert score(timeframe="4h") > score(timeframe="1h") > score(timeframe="15m")
+    covered = score(avg_trade=0.005)
+    thin = score(avg_trade=0.0002)
+    assert covered - thin == pytest.approx(paper_pool.THIN_EDGE_PENALTY)
+    assert score(avg_trade=None) == covered
+
+
 def test_dry_run_admission_writes_nothing(forven_db):
     cfg = _config(paper_pool={"max_strategies": 1, "max_per_market": 0, "max_per_family": 0})
     with get_db() as conn:

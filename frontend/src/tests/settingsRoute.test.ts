@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe('Settings page shell', () => {
-	it('renders the sidebar with all seven area labels', async () => {
+	it('renders the sidebar with area labels', async () => {
 		const SettingsPage = (await import('../routes/settings/+page.svelte')).default;
 		target = document.createElement('div');
 		document.body.appendChild(target);
@@ -71,13 +71,13 @@ describe('Settings page shell', () => {
 		await flush();
 
 		const text = target.textContent || '';
-		expect(text).toContain('Home');
-		expect(text).toContain('Lab');
-		expect(text).toContain('Trading');
+		expect(text).toContain('Overview');
+		expect(text).toContain('Strategy pipeline');
+		expect(text).toContain('Live trading & risk');
 		expect(text).toContain('Data');
 		expect(text).toContain('Notifications');
 		expect(text).toContain('System');
-		expect(text).toContain('Danger Zone');
+		expect(text).toContain('Danger zone');
 	});
 
 	it('defaults to the Home section when no hash is set', async () => {
@@ -102,7 +102,7 @@ describe('Settings page shell', () => {
 
 		const text = target.textContent || '';
 		// Trading section renders manifest-driven subsection headings.
-		expect(text).toContain('Exchange connection');
+		expect(text).toContain('Real money');
 	});
 
 	it('calls getSettings on mount', async () => {

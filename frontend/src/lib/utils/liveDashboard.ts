@@ -258,7 +258,7 @@ export function buildAttentionItems(input: AttentionInput): AttentionItem[] {
 			id: 'approvals',
 			severity: 'info',
 			title: `${pendingApprovals} approval${pendingApprovals === 1 ? '' : 's'} waiting`,
-			href: '/approval',
+			href: '/agents#decisions',
 		});
 	}
 

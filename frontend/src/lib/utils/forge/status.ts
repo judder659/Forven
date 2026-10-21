@@ -14,6 +14,7 @@ export type ForgeStatusKey =
 	| 'ready'
 	| 'in_flight'
 	| 'waiting_evidence'
+	| 'probation'
 	| 'live'
 	| 'unknown';
 
@@ -77,23 +78,86 @@ export const STATUS_META: Record<ForgeStatusKey, StatusMeta> = {
 		rank: 5,
 		help: 'Nothing has failed. The gate needs more evidence (paper days, trades or fresh validation) first.',
 	},
+	probation: {
+		key: 'probation',
+		label: 'Probation',
+		short: 'probation',
+		tone: 'caution',
+		rank: 6,
+		help: 'Trading live at reduced size until its live trades confirm the backtest.',
+	},
 	live: {
 		key: 'live',
 		label: 'Live',
 		short: 'trading',
 		tone: 'ok',
-		rank: 6,
-		help: 'Trading real capital on the graduated schedule.',
+		rank: 7,
+		help: 'Trading real capital at full size.',
 	},
 	unknown: {
 		key: 'unknown',
 		label: 'Not assessed',
 		short: 'unassessed',
 		tone: 'idle',
-		rank: 7,
+		rank: 8,
 		help: 'The pipeline explainer has not reported on this strategy yet.',
 	},
 };
+
+/**
+ * The words for one strategy, specific to where it is. Paper strategies are
+ * waiting on the probation entry checks, so they read as the check that holds
+ * them ("Confirming 1/3", "Paper losing"); probation strategies show their size
+ * and live-trade count. Every other stage uses the plain status words.
+ */
+export function entryStatusMeta(
+	entry: PipelineExplainStrategy | null | undefined,
+	fallbackStatus: string | null | undefined = null,
+): StatusMeta {
+	const base = statusMeta(entry?.status ?? fallbackStatus);
+	if (!entry || base.key === 'awaiting_operator') return base;
+	const probation = entry.evidence?.probation;
+	if (entry.pipeline_stage === 'probation' || base.key === 'probation') {
+		const size = probation?.size_pct;
+		const trades = probation?.live_trades;
+		const need = probation?.graduate_trades;
+		const sizeText = typeof size === 'number' ? ` ${Math.round(size)}%` : '';
+		const tradesText = typeof trades === 'number' && typeof need === 'number' ? ` · ${trades}/${need} live trades` : '';
+		const paused = probation?.state === 'paused' ? ' · paused' : probation?.state === 'demoting' ? ' · demoting' : '';
+		return { ...STATUS_META.probation, label: `Probation${sizeText}${tradesText}${paused}` };
+	}
+	if (entry.stage !== 'paper' || !probation) return base;
+	if (base.key === 'ready') {
+		return { ...base, label: 'Ready for probation', short: 'ready', help: 'Every probation check passes. Start probation on the strategy page.' };
+	}
+	const failing = new Set(probation.failing ?? []);
+	const pick = (label: string, short: string, tone: Tone, help: string): StatusMeta => ({ ...base, label, short, tone, help });
+	if (failing.has('edge_covers_costs') && base.key === 'blocked_merit') {
+		return pick('Edge too thin', 'edge thin', 'fail', 'The backtest edge per trade does not cover trading costs with room to spare.');
+	}
+	if (failing.has('held_back') && base.key === 'blocked_merit') {
+		return pick('Failed held-back data', 'held back', 'fail', 'It lost on the data kept back from research.');
+	}
+	if (failing.has('paper_breakeven')) {
+		return pick('Paper losing', 'losing', 'caution', 'Still paper trading. Probation needs paper at breakeven or better.');
+	}
+	if (failing.has('paper_confirmation')) {
+		const days = probation.slow && probation.need_days ? `, ${Math.floor(Number(probation.paper_days ?? 0))}/${probation.need_days}d` : '';
+		return pick(
+			`Confirming ${probation.matched}/${probation.need_trades}${days}`,
+			'confirming',
+			'wait',
+			'Paper trades so far that matched what the backtest would have done. Probation needs this many.',
+		);
+	}
+	if (failing.has('cooldown')) {
+		return pick('Cooling down', 'cooling', 'wait', 'It was demoted from probation recently and waits out the cooldown first.');
+	}
+	if (failing.has('capacity') || failing.has('live_admission')) {
+		return pick('No room live', 'no room', 'caution', 'Probation is full, or the live account has no room for it right now.');
+	}
+	return base;
+}
 
 export function statusMeta(status: string | null | undefined): StatusMeta {
 	const key = String(status ?? '').trim().toLowerCase() as ForgeStatusKey;
@@ -202,38 +266,19 @@ export interface ProgressItem {
 	fraction: number;
 }
 
-const PROGRESS_LABELS: Record<string, string> = {
-	paper_duration: 'Days',
-	paper_trades: 'Trades',
-};
-
-function toProgress(key: string, extra: unknown): ProgressItem | null {
-	if (!extra || typeof extra !== 'object') return null;
-	const rec = extra as Record<string, unknown>;
-	const current = Number(rec.current);
-	const threshold = Number(rec.threshold);
-	if (!Number.isFinite(current) || !Number.isFinite(threshold) || threshold <= 0) return null;
-	const direction = String(rec.direction ?? 'gte');
-	const met = direction === 'gt' ? current > threshold : current >= threshold;
-	return {
-		key,
-		label: PROGRESS_LABELS[key] ?? key,
-		current,
-		threshold,
-		unit: String(rec.unit ?? ''),
-		met,
-		fraction: Math.max(0, Math.min(1, current / threshold)),
-	};
+function progressItem(key: string, label: string, current: number, threshold: number, unit: string): ProgressItem {
+	const met = current >= threshold;
+	return { key, label, current, threshold, unit, met, fraction: threshold > 0 ? Math.max(0, Math.min(1, current / threshold)) : 1 };
 }
 
-/** Paper warm-up progress toward the paper→live gate: days and trades. */
+/** Paper progress toward probation: matched paper trades (and days, for slow strategies). */
 export function paperProgress(entry: PipelineExplainStrategy | null | undefined): ProgressItem[] {
 	if (!entry || entry.stage !== 'paper') return [];
-	const out: ProgressItem[] = [];
-	for (const key of ['paper_duration', 'paper_trades'] as const) {
-		const step = (entry.readiness_steps ?? []).find((s) => s?.name === key);
-		const item = toProgress(key, step?.extra) ?? toProgress(key, entry.evidence?.paper?.[key]);
-		if (item) out.push(item);
+	const p = entry.evidence?.probation;
+	if (!p || !Number.isFinite(Number(p.need_trades)) || Number(p.need_trades) <= 0) return [];
+	const out = [progressItem('paper_confirmation', 'Matched trades', Number(p.matched ?? 0), Number(p.need_trades), 'trades')];
+	if (p.slow && Number(p.need_days) > 0) {
+		out.push(progressItem('paper_days', 'Days', Math.floor(Number(p.paper_days ?? 0)), Number(p.need_days), 'days'));
 	}
 	return out;
 }
@@ -263,6 +308,7 @@ export const STAGE_LABEL: Record<string, string> = {
 	quick_screen: 'Quick screen',
 	gauntlet: 'Gauntlet',
 	paper: 'Paper',
+	probation: 'Probation',
 	live_graduated: 'Live',
 	archived: 'Archived',
 	rejected: 'Rejected',

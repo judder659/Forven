@@ -143,7 +143,33 @@
         "default": true,
         "locked": false
       },
-      "discord": null
+      "discord": {
+        "keys": [
+          "bot_trades_to_discord"
+        ],
+        "default": false,
+        "locked": false,
+        "note": ""
+      }
+    },
+    {
+      "id": "bot_alerts",
+      "group": "trading",
+      "label": "Bot Factory alerts",
+      "description": "A bot paused (spend or call cap, drawdown limit, repeated errors) or stopped on an error.",
+      "popup": {
+        "key": "popup_bot_alerts",
+        "default": true,
+        "locked": false
+      },
+      "discord": {
+        "keys": [
+          "bot_alerts_to_discord"
+        ],
+        "default": true,
+        "locked": false,
+        "note": ""
+      }
     },
     {
       "id": "approval_required",
@@ -376,9 +402,9 @@
   "badges": [
     {
       "id": "approvals",
-      "href": "/approval",
-      "label": "Approvals",
-      "description": "Approvals waiting for your decision.",
+      "href": "/agents",
+      "label": "Agents",
+      "description": "Agent requests waiting for your decision.",
       "key": "badge_approvals",
       "default": true,
       "mode": "total"

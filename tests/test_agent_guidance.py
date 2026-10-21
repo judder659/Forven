@@ -136,3 +136,40 @@ def test_static_prompts_do_not_freeze_risk_caps():
     ])
     for stale in ("10% drawdown kill", "5% daily loss limit", "2% max risk per trade", "Test stage", "Ideation -> Test"):
         assert stale not in text
+
+
+def test_strategy_developer_brief_has_process_rules_and_no_held_back_steering():
+    from forven.agents.instructions import AGENT_INSTRUCTIONS
+    from forven.strategy_creation import AUTONOMOUS_TASK_DESCRIPTION
+
+    brief = AGENT_INSTRUCTIONS["strategy-developer"]["instructions"]
+    for required in (
+        "Always declare parameter_space() as a real search grid",
+        "trial-count correction",
+        "full-history edge",
+        "most liquid coins",
+        "the quick screen's minimum trade count",
+        "other than BTC",
+        "plain EMA/MACD crosses",
+        "ORB/ROC breakouts",
+        "RSI 30/70 fades on majors",
+        "naive taker-flow momentum",
+        "volatility risk premium (VRP)",
+        "prior-day high/low sweeps",
+        "calendar/flow effects",
+        "standalone funding-rate fades",
+        "plain Bollinger fades on alts",
+        "Donchian/SuperTrend continuation",
+    ):
+        assert required in brief
+    for required in ("known dead ends", "parameter_space()", "minimum trade count"):
+        assert required in AUTONOMOUS_TASK_DESCRIPTION
+
+    # Steering designs by held-back outcomes would contaminate future held-back
+    # tests, so the static guidance carries process rules and dead ends only.
+    text = "\n".join(
+        [AUTONOMOUS_TASK_DESCRIPTION]
+        + [entry["role"] + entry["instructions"] for entry in AGENT_INSTRUCTIONS.values()]
+    ).lower()
+    for leaked in ("implied volatility", "implied-volatility", "volatility state", "vol state", "2026"):
+        assert leaked not in text

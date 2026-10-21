@@ -2,11 +2,46 @@ import { fetchApi } from './core';
 
 // ── Types ──────────────────────────────────────────────────────────
 
+export type BotDecisionCadence = 'candle_close' | 'interval';
+export type BotTimeframe = '15m' | '1h' | '4h' | '1d';
+
+export interface BotModelCheck {
+	ok: boolean;
+	provider: string | null;
+	model_id: string | null;
+	reason: string | null;
+	/** The operator's primary model as "provider:model", offered as the fix. */
+	default_model: string | null;
+}
+
 export interface BotSessionHours {
 	timezone: string;
 	days: string[];
 	start: string;
 	end: string;
+}
+
+export type BotInput =
+	| 'indicators'
+	| 'higher_timeframe'
+	| 'funding'
+	| 'open_interest'
+	| 'regime'
+	| 'strategy_signals';
+
+export type BotType = 'ai' | 'grid' | 'dca' | 'signal';
+
+export interface BotFollowableStrategy {
+	id: string;
+	name: string;
+	symbol: string | null;
+	timeframe: string | null;
+	stage: 'paper' | 'live';
+	open_trades: number;
+}
+
+export async function listFollowableStrategies(): Promise<BotFollowableStrategy[]> {
+	return fetchApi('/bot-factory/followable-strategies');
 }
 
 export interface BotConfig {
@@ -32,6 +67,17 @@ export interface BotConfig {
 	locked_pairs: string[] | null;
 	max_llm_calls_per_day: number;
 	max_consecutive_errors: number;
+	/** Daily AI spend cap in USD (estimated); null = only the call cap. Send 0 to clear. */
+	max_llm_cost_per_day: number | null;
+	/** candle_close = decide once per new 1h candle; interval = every cooldown_seconds. */
+	decision_cadence: BotDecisionCadence;
+	/** Candle timeframe the bot reads and, on candle_close, decides on. */
+	timeframe: BotTimeframe;
+	/** Extra inputs joined to the candles in the prompt; null/empty = candles only. */
+	data_sources: BotInput[] | null;
+	/** ai asks a model; grid, dca and signal decide in code from rule_params. */
+	bot_type: BotType;
+	rule_params: Record<string, unknown> | null;
 	template_id: string | null;
 	execution_mode: 'paper' | 'live';
 	live_wallet: string | null;
@@ -46,6 +92,12 @@ export interface BotConfig {
 	error_message: string | null;
 	llm_calls_today: number | null;
 	consecutive_errors: number | null;
+	/** Run that owns the bot right now (null when stopped). */
+	run_id: string | null;
+	/** Estimated AI spend today, USD. */
+	llm_cost_today: number | null;
+	/** Whether the bot's model can be called on this install. */
+	model_check?: BotModelCheck;
 	// List-endpoint trade digest (absent on getBot)
 	realized_pnl?: number;
 	open_positions?: number;
@@ -63,6 +115,113 @@ export interface BotDecision {
 	action_type: string;
 	action_data: Record<string, unknown> | null;
 	verbosity_level: string;
+	/** Run that made the decision (two copies can never interleave unseen). */
+	run_id: string | null;
+	/** Estimated AI cost of this decision, USD (null when not an AI call). */
+	cost_usd: number | null;
+	tokens_in: number | null;
+	tokens_out: number | null;
+	/** True when the prompt, reply and risk check were kept for the inspector. */
+	has_details?: boolean;
+}
+
+export interface BotPromptMessage {
+	role: string;
+	content: string;
+}
+
+/** One decision with what the bot was shown and answered (the inspector). */
+export interface BotDecisionDetail extends BotDecision {
+	details: {
+		model: string | null;
+		prompt: BotPromptMessage[] | null;
+		response: string | null;
+		parsed: Record<string, unknown> | null;
+		risk_check: { allowed: boolean; reason: string } | null;
+		created_at: string | null;
+	} | null;
+}
+
+export interface BotEquityPoint {
+	timestamp: string;
+	equity: number;
+}
+
+export interface BotPerformanceSummary {
+	starting_capital: number;
+	equity: number;
+	pnl_usd: number;
+	return_pct: number | null;
+	benchmark_symbol: string;
+	benchmark_return_pct: number | null;
+	excess_return_pct: number | null;
+	sharpe: number | null;
+	max_drawdown_pct: number;
+	closed_trades: number;
+	win_rate: number | null;
+	profit_factor: number | null;
+	fees_usd: number;
+	fees_per_trade_usd: number | null;
+	ai_cost_usd: number;
+	pnl_after_ai_usd: number;
+	ai_cost_pct_of_pnl: number | null;
+	start_at: string;
+	end_at: string;
+	open_positions: number;
+	funding_usd: number;
+}
+
+export interface BotPerformance {
+	bot_id: string;
+	summary: BotPerformanceSummary;
+	curve: BotEquityPoint[];
+	benchmark_curve: BotEquityPoint[] | null;
+}
+
+export interface BotChartMarker {
+	timestamp: string;
+	price: number;
+	type: 'entry' | 'exit';
+	direction: string | null;
+	pnl_usd?: number | null;
+}
+
+export interface BotChart {
+	bot_id: string;
+	pair: string;
+	pairs: string[];
+	timeframe: BotTimeframe;
+	candles: Array<{ timestamp: string; open: number; high: number; low: number; close: number; volume: number }>;
+	entries: BotChartMarker[];
+	exits: BotChartMarker[];
+}
+
+export type BotHealthLevel = 'ok' | 'warn' | 'bad' | 'idle';
+
+export interface BotFleetRow {
+	bot_id: string;
+	sparkline: number[];
+	equity: number;
+	return_pct: number | null;
+	benchmark_return_pct: number | null;
+	excess_return_pct: number | null;
+	win_rate: number | null;
+	closed_trades: number;
+	open_positions: number;
+	ai_cost_today_usd: number;
+	ai_cost_usd: number;
+	start_at: string;
+	health: {
+		level: BotHealthLevel;
+		reasons: string[];
+		last_decision_at: string | null;
+		last_action_type: string | null;
+	};
+}
+
+export interface BotFleet {
+	benchmark_symbol: string;
+	bots: BotFleetRow[];
 }
 
 export interface BotConfigVersion {
@@ -118,8 +277,66 @@ export async function deleteBot(id: string): Promise<{ status: string }> {
 
 // ── Bot Lifecycle ──────────────────────────────────────────────────
 
-export async function startBot(id: string): Promise<{ status: string; pid: number }> {
+export async function startBot(id: string): Promise<{ status: string; pid: number; run_id?: string }> {
 	return fetchApi(`/bot-factory/bots/${id}/start`, { method: 'POST' });
+}
+
+/** Switch a bot to the operator's default model (the fix when Start refuses a retired model). */
+export async function useDefaultModel(id: string): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/use-default-model`, { method: 'POST' });
+}
+
+export interface BotCostEstimate {
+	provider: string | null;
+	model_id: string | null;
+	cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
+	decisions_wanted_per_day: number;
+	calls_per_day: number;
+	/** Hours of trading before the daily call cap pauses the bot (null = never hits it). */
+	hours_until_call_cap: number | null;
+	hours_until_spend_cap: number | null;
+	tokens_in_per_call: number;
+	tokens_out_per_call: number;
+	usd_per_call: number | null;
+	usd_per_day: number | null;
+	/** False when the model has no price row and a provider ceiling rate was used. */
+	priced: boolean;
+	/** True when tokens per call come from the bot's own recent decisions. */
+	from_history: boolean;
+	model_check: BotModelCheck;
+}
+
+export interface BotCostEstimateParams {
+	model: string;
+	decision_cadence: BotDecisionCadence;
+	timeframe: BotTimeframe;
+	cooldown_seconds: number;
+	asset_mode: string;
+	locked_pairs: string[];
+	reasoning_verbosity: string;
+	max_llm_calls_per_day: number;
+	max_llm_cost_per_day: number | null;
+	bot_id?: string | null;
+	data_sources?: BotInput[];
+}
+
+/** Projected AI calls and spend per day for an editor configuration (estimates). */
+export async function getBotCostEstimate(params: BotCostEstimateParams): Promise<BotCostEstimate> {
+	const q = new URLSearchParams({
+		decision_cadence: params.decision_cadence,
+		timeframe: params.timeframe,
+		cooldown_seconds: String(params.cooldown_seconds),
+		asset_mode: params.asset_mode,
+		reasoning_verbosity: params.reasoning_verbosity,
+		max_llm_calls_per_day: String(params.max_llm_calls_per_day),
+	});
+	if (params.model) q.set('model', params.model);
+	if (params.locked_pairs.length) q.set('locked_pairs', params.locked_pairs.join(','));
+	if (params.max_llm_cost_per_day) q.set('max_llm_cost_per_day', String(params.max_llm_cost_per_day));
+	if (params.bot_id) q.set('bot_id', params.bot_id);
+	if (params.data_sources?.length) q.set('data_sources', params.data_sources.join(','));
+	return fetchApi(`/bot-factory/cost-estimate?${q.toString()}`);
 }
 
 export interface BotFlattenResult {
@@ -219,6 +436,9 @@ export interface BotStats {
 	total_pnl_usd: number;
 	best_pnl_usd: number;
 	worst_pnl_usd: number;
+	/** Estimated AI spend over all decisions, USD. */
+	ai_cost_usd?: number;
+	ai_priced_calls?: number;
 }
 
 export async function getBotStats(id: string): Promise<BotStats> {
@@ -227,6 +447,218 @@ export async function getBotStats(id: string): Promise<BotStats> {
 
 export async function getBotDecisions(id: string, limit = 50): Promise<BotDecision[]> {
 	return fetchApi(`/bot-factory/bots/${id}/decisions?limit=${limit}`);
+}
+
+export async function getBotDecision(id: string, decisionId: number): Promise<BotDecisionDetail> {
+	return fetchApi(`/bot-factory/bots/${id}/decisions/${decisionId}`);
+}
+
+export async function getBotPerformance(id: string): Promise<BotPerformance> {
+	return fetchApi(`/bot-factory/bots/${id}/performance`);
+}
+
+export async function getBotChart(id: string, pair?: string | null): Promise<BotChart> {
+	const qs = pair ? `?pair=${encodeURIComponent(pair)}` : '';
+	return fetchApi(`/bot-factory/bots/${id}/chart${qs}`);
+}
+
+export async function getBotFleet(): Promise<BotFleet> {
+	return fetchApi('/bot-factory/fleet');
+}
+
+/** One decision on live data with the editor's settings; nothing is traded or logged. */
+export interface BotTestDecision {
+	ran: boolean;
+	reason?: string;
+	pairs?: string[];
+	stale_pairs: Record<string, string>;
+	open_positions?: number;
+	model?: string;
+	prompt?: BotPromptMessage[];
+	response?: string;
+	parsed?: Record<string, unknown>;
+	action?: string;
+	risk_check?: { allowed: boolean; reason: string };
+	cost_usd?: number | null;
+	tokens_in?: number | null;
+	tokens_out?: number | null;
+	priced?: boolean;
+}
+
+export async function testBotDecision(
+	config: Partial<BotConfig>,
+	botId?: string | null
+): Promise<BotTestDecision> {
+	return fetchApi('/bot-factory/test-decision', {
+		method: 'POST',
+		body: JSON.stringify({ bot_id: botId || null, config })
+	});
+}
+
+// ── Replays ───────────────────────────────────────────────────────
+
+export interface BotReplayTrade {
+	trade_id: string;
+	ticker: string;
+	direction: string;
+	qty: number;
+	entry_price: number;
+	exit_price: number;
+	opened_at: string;
+	closed_at: string;
+	pnl_usd: number;
+	fees_usd: number;
+	exit_reason: string;
+	reasoning: string;
+}
+
+/** AI cost is left out of replays: most installs use a subscription login. */
+export interface BotReplaySummary
+	extends Omit<
+		BotPerformanceSummary,
+		'start_at' | 'end_at' | 'open_positions' | 'funding_usd' | 'ai_cost_usd' | 'pnl_after_ai_usd' | 'ai_cost_pct_of_pnl'
+	> {
+	decisions: number;
+	ai_calls: number;
+	ai_cached: number;
+	refused: number;
+	fee_bps: number;
+	slippage_bps: number;
+	ended_early: string | null;
+	pairs?: string[];
+	missing_pairs?: string[];
+	timeframe?: string;
+	inputs_not_replayed?: string[];
+	note?: string;
+}
+
+export interface BotReplay {
+	id: string;
+	bot_id: string | null;
+	template_id: string | null;
+	arena_id: string | null;
+	status: 'running' | 'done' | 'failed';
+	error: string | null;
+	window_start: string;
+	window_end: string;
+	summary: BotReplaySummary | null;
+	curve?: BotEquityPoint[] | null;
+	benchmark?: BotEquityPoint[] | null;
+	trades?: BotReplayTrade[] | null;
+	created_at: string;
+	finished_at: string | null;
+}
+
+export interface BotReplayStarted {
+	id: string;
+	status: 'running';
+	window_start: string;
+	window_end: string;
+	shifted_for_holdout: boolean;
+}
+
+export interface BotReplayRequest {
+	days?: number;
+	end?: string | null;
+	config?: Partial<BotConfig>;
+}
+
+export async function startBotReplay(id: string, body: BotReplayRequest): Promise<BotReplayStarted> {
+	return fetchApi(`/bot-factory/bots/${id}/replays`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listBotReplays(id: string, limit = 20): Promise<BotReplay[]> {
+	return fetchApi(`/bot-factory/bots/${id}/replays?limit=${limit}`);
+}
+
+export async function getBotReplay(replayId: string): Promise<BotReplay> {
+	return fetchApi(`/bot-factory/replays/${replayId}`);
+}
+
+export interface BotArenaRow {
+	rank: number | null;
+	replay_id: string;
+	bot_id: string | null;
+	name: string | null;
+	status: 'running' | 'done' | 'failed';
+	error: string | null;
+	return_pct: number | null;
+	excess_return_pct: number | null;
+	benchmark_return_pct: number | null;
+	max_drawdown_pct: number | null;
+	closed_trades: number | null;
+	win_rate: number | null;
+	ai_calls: number | null;
+	ended_early: string | null;
+	pairs: string[] | null;
+}
+
+export interface BotArena {
+	id: string;
+	window_start: string;
+	window_end: string;
+	created_at: string;
+	running: number;
+	rows: BotArenaRow[];
+}
+
+export interface BotArenaListItem {
+	id: string;
+	created_at: string;
+	window_start: string;
+	window_end: string;
+	bots: number;
+}
+
+export interface BotArenaStarted {
+	id: string;
+	window_start: string;
+	window_end: string;
+	shifted_for_holdout: boolean;
+	replays: string[];
+}
+
+export async function startBotArena(body: {
+	bot_ids: string[];
+	days?: number;
+}): Promise<BotArenaStarted> {
+	return fetchApi('/bot-factory/arena', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listBotArenas(limit = 10): Promise<BotArenaListItem[]> {
+	return fetchApi(`/bot-factory/arena?limit=${limit}`);
+}
+
+export async function getBotArena(id: string): Promise<BotArena> {
+	return fetchApi(`/bot-factory/arena/${id}`);
+}
+
+/** Latest replay per template id; refreshFree starts free replays for rule templates. */
+export async function getTemplateReplays(refreshFree = false): Promise<Record<string, BotReplay | null>> {
+	return fetchApi(`/bot-factory/template-replays${refreshFree ? '?refresh_free=true' : ''}`);
+}
+
+export async function startTemplateReplay(
+	templateId: string,
+	body: { days?: number }
+): Promise<BotReplayStarted> {
+	return fetchApi(`/bot-factory/templates/${templateId}/replays`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** What a bot has shown against the live gate; GO LIVE is refused until it passes. */
+export interface BotLiveGate {
+	bot_id: string;
+	passed: boolean;
+	checks: Array<{ key: string; ok: boolean; label: string; detail: string }>;
+}
+
+export async function getBotLiveGate(id: string): Promise<BotLiveGate> {
+	return fetchApi(`/bot-factory/bots/${id}/live-gate`);
+}
+
+/** Move an existing bot onto the recommended settings (decide on each new candle). */
+export async function applyRecommendedBotSettings(id: string): Promise<BotConfig> {
+	return fetchApi(`/bot-factory/bots/${id}/apply-recommended`, { method: 'POST' });
 }
 
 export async function getBotVersions(id: string): Promise<BotConfigVersion[]> {

@@ -16,10 +16,13 @@ kernel live close (fill-based P&L, protection-order retirement, risk-slot
 release); the bot's realized-P&L ledger is credited at the close choke-point
 in trade_state.close_trade_record.
 
-This module runs INSIDE the bot subprocess. Exchange credentials come from the
-encrypted KV settings store (or forwarded env vars for live-armed bots — see
-manager._build_isolated_env); scanner/risk state is all DB/KV-backed, so the
-gate stack behaves identically here and in the backend process.
+By default this module runs in the API process: a live bot asks Forven to
+place its orders (bot_writes.live → api_domains.bot_factory.api_bot_live),
+which reads the bot's settings from the database and uses Forven's own
+exchange keys, so the bot holds none. With FORVEN_BOT_WRITES_VIA_API=0 it runs
+inside the bot subprocess instead, with credentials handed over by
+manager._build_isolated_env. Scanner/risk state is all DB/KV-backed, so the
+gate stack behaves identically in either process.
 """
 
 from __future__ import annotations

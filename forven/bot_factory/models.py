@@ -2,7 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+BotType = Literal["ai", "grid", "dca", "signal"]
+
+# Extra inputs an AI bot can be shown (see forven.bot_factory.inputs).
+BotInput = Literal[
+    "indicators", "higher_timeframe", "funding", "open_interest", "regime", "strategy_signals",
+]
 
 
 class BotConfigCreate(BaseModel):
@@ -32,6 +41,18 @@ class BotConfigCreate(BaseModel):
     locked_pairs: list[str] | None = None
     max_llm_calls_per_day: int = Field(default=200, ge=1)
     max_consecutive_errors: int = Field(default=5, ge=1)
+    # Daily AI spend cap in USD (estimated); None = no dollar cap, only the call cap.
+    max_llm_cost_per_day: float | None = Field(default=None, gt=0)
+    # "candle_close": decide once per new 1h candle (risk checks still run
+    # every minute). "interval": decide every cooldown_seconds.
+    decision_cadence: Literal["candle_close", "interval"] = "candle_close"
+    # Candle timeframe the bot reads (and, on candle_close, decides on).
+    timeframe: Literal["15m", "1h", "4h", "1d"] = "1h"
+    # Extra inputs joined to the candles in the prompt; empty = candles only.
+    data_sources: list[BotInput] | None = None
+    # "ai" asks a model; "grid", "dca" and "signal" decide in code (rule_params).
+    bot_type: BotType = "ai"
+    rule_params: dict | None = None
     template_id: str | None = None
 
 
@@ -60,6 +81,13 @@ class BotConfigUpdate(BaseModel):
     locked_pairs: list[str] | None = None
     max_llm_calls_per_day: int | None = Field(default=None, ge=1)
     max_consecutive_errors: int | None = Field(default=None, ge=1)
+    # 0 clears the dollar cap (None means "leave unchanged" on an update).
+    max_llm_cost_per_day: float | None = Field(default=None, ge=0)
+    decision_cadence: Literal["candle_close", "interval"] | None = None
+    timeframe: Literal["15m", "1h", "4h", "1d"] | None = None
+    data_sources: list[BotInput] | None = None
+    bot_type: BotType | None = None
+    rule_params: dict | None = None
 
 
 class BotCloneRequest(BaseModel):

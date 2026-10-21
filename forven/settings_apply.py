@@ -172,16 +172,6 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     # paper→live promotion requires an explicit operator confirmation with a
     # notional ceiling — unless this is deliberately flipped on (dangerous).
     "allow_auto_live_promotion": False,
-    # When a challenger materially beats an incumbent occupying a capital slot,
-    # auto-apply the dethrone so the slot frees without operator action. Default
-    # ON for autonomous operation — reversible (the incumbent is demoted
-    # paper->gauntlet, not archived). See policy._maybe_auto_apply_dethrone.
-    "auto_approve_dethrone": True,
-    # When True, capital slots hold ONE strategy per symbol/timeframe: the duplicate
-    # tournament, paper slot-guard, capital-slot dedupe, and paper WIP cap all apply.
-    # Default OFF: every strategy that passes the gauntlet is promoted to paper with
-    # no per-slot competition and no cap. See policy._paper_slot_competition_enabled.
-    "paper_slot_competition_enabled": False,
     "task_stale_recovery_minutes": 10,
     "health_checks_enabled": True,
     "rolling_backtest_days": 30,
@@ -250,13 +240,10 @@ _DEFAULT_SETTINGS_PAYLOAD = {
 # fallback loop, so nothing is lost.
 _DEFAULT_API_KEY_SOURCES = ("polygon",)
 
-_PIPELINE_STAGE_WIP_CAPS = {
-    "paper": {
-        "mode_key": "paper_wip_cap_mode",
-        "cap_key": "paper_wip_cap",
-        "default": 20,
-    },
-}
+# Stage WIP caps the pipeline settings payload carries, as
+# {stage: {"mode_key", "cap_key", "default"}}. Empty since the paper cap went
+# with slot competition (2026-10): the paper pool caps paper on its own.
+_PIPELINE_STAGE_WIP_CAPS: dict[str, dict[str, object]] = {}
 _PIPELINE_WIP_CAP_UNLIMITED_VALUES = {"", "0", "none", "null", "unlimited", "off", "disabled"}
 _DEFAULT_GRAVEYARD_STRATEGY_LIMIT = 500
 _GRAVEYARD_STRATEGY_STATUSES = {"archived", "rejected", "backtest_failed", "graveyard", "trash"}
@@ -279,6 +266,11 @@ _DEFAULT_PIPELINE_SETTINGS = {
     "retention_scanner_results_days": 30,
     "retention_gate_rejections_days": 30,
     "maintenance_vacuum_enabled": False,
+    # Database backups (forven.backups). The FORVEN_DB_BACKUP_* environment
+    # variables still win when set. 0 total size = automatic (6x the live DB,
+    # at least 2 GB).
+    "db_backup_keep_daily": 7,
+    "db_backup_max_total_gb": 0,
     "min_backtest_trades": 30,
     "min_sharpe_ratio": 0.5,
     "max_drawdown_pct": 40,
@@ -291,8 +283,6 @@ _DEFAULT_PIPELINE_SETTINGS = {
     "max_paper_divergence_pct": 30,
     "min_paper_trades": 50,
     "min_paper_sharpe": 0.5,
-    "paper_wip_cap_mode": "capped",
-    "paper_wip_cap": 20,
     "graveyard_strategy_limit_mode": "capped",
     "graveyard_strategy_limit": _DEFAULT_GRAVEYARD_STRATEGY_LIMIT,
     "validation_recent_window_enabled": False,
@@ -690,8 +680,6 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         # PORT-LAYER-2 / BASKET-2 funding-carry basket
         "basket_funding_carry_enabled", "basket_rebalance_hours", "basket_n_legs",
         "basket_gross_leverage", "basket_universe_min_bars", "basket_rank_buffer",
-        # universe paper books
-        "universe_books_enabled",
         # LIVE-LOOP-1 paper->live graduation recommender
         "live_graduation_recommender_enabled", "graduation_min_soak_days",
         "graduation_min_paper_trades", "graduation_min_measured_trades",

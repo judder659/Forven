@@ -64,7 +64,15 @@ AUTONOMOUS_TASK_DESCRIPTION = "Write one new trading idea and build a strategy f
         "with enough history (see the data schema in your context; list_local_datasets shows "
         "what is stored).",
         "Avoid what has already failed: read the failure patterns and strategy-family outcomes "
-        "in your context.",
+        "in your context, and do not rebuild known dead ends (plain EMA/MACD crosses, ORB/ROC "
+        "breakouts, RSI 30/70 fades on majors, naive taker-flow momentum, volatility risk premium "
+        "trades, prior-day high/low sweeps, calendar/flow effects, standalone funding-rate fades, "
+        "plain Bollinger fades on alts, generic Donchian/SuperTrend continuation). Design for an "
+        "edge across the full history and most liquid coins that trades rarely (1h or slower "
+        "bars, a handful of trades a month) with an expected move per trade of at least twice "
+        "the round-trip cost, while still reaching the quick screen's minimum trade count. "
+        "Busy, thin-edge strategies are eaten by costs. Declare parameter_space() as a real "
+        "search grid.",
         "Write the idea with create_hypothesis, including disproof: the backtest or forward "
         "result that would show the idea is wrong. An idea that needs a second asset's series, "
         "a second timeframe, or an input with no local feed cannot be built yet; pick another.",
@@ -170,16 +178,26 @@ def run_creation_cycle() -> dict[str, Any]:
         settings["daily_budget"] - counts["created_today"],
     )
     day = datetime.now(timezone.utc).date().isoformat()
+    # Each task gets one liquid coin, least-used first (forven.creation_markets).
+    from forven.creation_markets import liquid_universe, market_assignment_text, pick_creation_markets
+
+    universe = liquid_universe()
+    markets = pick_creation_markets(room, universe=universe)
     task_ids = []
-    for index in range(room):
+    for index, market in enumerate(markets):
+        description = AUTONOMOUS_TASK_DESCRIPTION
+        input_data: dict[str, Any] = {"origin_mode": AUTONOMOUS_ORIGIN}
+        if market:
+            description = f"{description}\n\n{market_assignment_text(market, universe)}"
+            input_data["target_symbol"] = market
         task_id = assign_task(
             agent_id=CREATION_AGENT_ID,
             task_type=CREATION_TASK_TYPE,
             # Distinct titles: pending tasks with the same agent, type and title
             # dedupe into one, which would cap creation at one task in flight.
             title=f"{AUTONOMOUS_TASK_TITLE} ({day} #{counts['created_today'] + index + 1})",
-            description=AUTONOMOUS_TASK_DESCRIPTION,
-            input_data={"origin_mode": AUTONOMOUS_ORIGIN},
+            description=description,
+            input_data=input_data,
         )
         task_ids.append(int(task_id) if task_id else None)
     log.info(

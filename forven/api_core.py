@@ -1722,12 +1722,6 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
                 payload.get("basket_funding_carry_enabled"),
                 bool(updates.get("basket_funding_carry_enabled", False)),
             )
-        # Universe paper books toggle (forven.universe.book).
-        if "universe_books_enabled" in payload:
-            updates["universe_books_enabled"] = _coerce_bool(
-                payload.get("universe_books_enabled"),
-                bool(updates.get("universe_books_enabled", False)),
-            )
         # EQ-BASIS-1: whether the master wallet counts toward the live equity
         # basis when direction books are enabled (forven.daemon).
         if "live_equity_include_master" in payload:
@@ -1962,10 +1956,6 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             updates["auto_approve_promotions"] = _coerce_bool(payload.get("auto_approve_promotions"), updates.get("auto_approve_promotions", False))
         if "allow_auto_live_promotion" in payload:
             updates["allow_auto_live_promotion"] = _coerce_bool(payload.get("allow_auto_live_promotion"), updates.get("allow_auto_live_promotion", False))
-        if "auto_approve_dethrone" in payload:
-            updates["auto_approve_dethrone"] = _coerce_bool(payload.get("auto_approve_dethrone"), updates.get("auto_approve_dethrone", True))
-        if "paper_slot_competition_enabled" in payload:
-            updates["paper_slot_competition_enabled"] = _coerce_bool(payload.get("paper_slot_competition_enabled"), updates.get("paper_slot_competition_enabled", False))
         if "brain_queue_max_pending" in payload:
             updates["brain_queue_max_pending"] = _coerce_optional_int(payload.get("brain_queue_max_pending"), updates.get("brain_queue_max_pending", 15))
         if "maintenance_start_hour" in payload:
@@ -8892,19 +8882,17 @@ def post_backtesting_run(body: dict):
             # stored timeframe > "1h" (the row is applied below, once it is loaded)
             explicit_timeframe = str(body.get("timeframe") or "").strip()
 
-            if " " in dataset_id.strip():
-                # Legacy space-separated format: "BTC/USDT 1h"
-                symbol = dataset_id.split()[0]
-                timeframe = dataset_id.split()[-1]
-            else:
-                # The shared parser strips any "dataset-26-" / "DATASET-" prefix
-                # and "-ccxt" source suffix, and splits off the timeframe. A plain
-                # symbol ("BTC/USDT") names no timeframe: None lets the strategy
-                # row's stored one apply (a 1h default here silently ran a 4h
-                # strategy at 1h).
-                from forven.symbols import parse_dataset_id
+            # A numbered id ("1", "dataset-299") resolves through the dataset
+            # catalog; anything else must name a market. A refusal returns here,
+            # before the task row below is created. A plain symbol ("BTC/USDT")
+            # names no timeframe: None lets the strategy row's stored one apply
+            # (a 1h default here silently ran a 4h strategy at 1h).
+            from forven.backtest_dataset_ids import resolve_backtest_dataset
 
-                symbol, timeframe = parse_dataset_id(dataset_id)
+            resolved_dataset = resolve_backtest_dataset(dataset_id)
+            if resolved_dataset.error:
+                return {"ok": False, "error": resolved_dataset.error}
+            symbol, timeframe = resolved_dataset.symbol, resolved_dataset.timeframe
 
             # Override timeframe if explicitly provided
             if explicit_timeframe:

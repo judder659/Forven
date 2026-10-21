@@ -7,6 +7,7 @@ import {
 } from './core';
 import { getForvenStrategiesQuery, promoteForvenStrategy } from './forven';
 import { normalizeStrategyPayload } from './strategies';
+import { parseCoinList, parseMultiCoin, type CoinList, type MultiCoinInfo } from './multiCoin';
 
 export async function getPromotedStrategies(): Promise<{ strategies: Strategy[] }> {
 	try {
@@ -275,6 +276,10 @@ export interface StrategyContainerPayload {
 		positions: Record<string, unknown>[];
 	};
 	events: LifecycleEvent[];
+	/** Multi-coin paper container (coin list and each coin's record), else null. */
+	multi_coin?: MultiCoinInfo | null;
+	/** Every strategy's editable coin list (home coin alone when single-coin). */
+	coin_list?: CoinList | null;
 }
 
 function parseContainerHistoryItem(raw: unknown): StrategyContainerHistoryItem {
@@ -324,6 +329,8 @@ export async function getStrategyContainer(
 			positions: asArray(executionRoot.positions).map((item) => asRecord(item) ?? {}),
 		},
 		events: asArray(root.events).map(parseLifecycleEvent),
+		multi_coin: parseMultiCoin(root.multi_coin),
+		coin_list: parseCoinList(root.coin_list),
 	};
 }
 
@@ -734,11 +741,35 @@ export interface PipelineExplainEvidence {
 	last_optimization_age_days?: number;
 	validation_tests?: Record<string, PipelineExplainValidationEvidence>;
 	paper?: {
-		paper_duration?: { current: number; threshold: number; unit: string };
-		paper_trades?: { current: number; threshold: number; unit: string };
 		last_trade_at?: string;
 		last_trade_age_days?: number;
 	};
+	/**
+	 * Paper: the probation entry checks. Probation: its size and live trades.
+	 * The backend sends whichever fits the strategy's stage.
+	 */
+	probation?: PipelineExplainProbationEvidence;
+}
+
+export interface PipelineExplainProbationEvidence {
+	// Paper (entry checks)
+	eligible?: boolean;
+	matched?: number;
+	mismatched?: number;
+	need_trades?: number;
+	need_days?: number;
+	paper_days?: number | null;
+	slow?: boolean;
+	failing?: string[];
+	checked_at?: string | null;
+	// Probation (live at reduced size)
+	state?: string;
+	size_pct?: number;
+	size_locked?: boolean;
+	entered_at?: string | null;
+	live_trades?: number;
+	graduate_trades?: number;
+	graduation?: Record<string, unknown>;
 }
 
 export type PipelineExplainStatus =
@@ -748,6 +779,7 @@ export type PipelineExplainStatus =
 	| 'blocked_merit'
 	| 'slot_contention'
 	| 'awaiting_operator'
+	| 'probation'
 	| 'live'
 	| 'unknown';
 
@@ -759,6 +791,8 @@ export interface PipelineExplainStrategy {
 	timeframe: string | null;
 	type: string | null;
 	stage: string;
+	/** Where it is on the one road: a live strategy on probation reads 'probation'. */
+	pipeline_stage?: string;
 	stage_label: string;
 	stage_changed_at: string | null;
 	days_in_stage: number | null;
@@ -803,7 +837,7 @@ export interface PipelineExplainResponse {
 	generated_at: string;
 	pipeline_preset: string;
 	stages: string[];
-	counts: { by_stage: Record<string, number>; by_status: Record<string, number> };
+	counts: { by_stage: Record<string, number>; by_status: Record<string, number>; by_pipeline_stage?: Record<string, number> };
 	truncated: boolean;
 	strategies: PipelineExplainStrategy[];
 	errors: Array<{ id: string | null; error: string }>;

@@ -194,13 +194,6 @@ PAGES: list[dict] = [
         "actions": ["Review what the Brain saw/decided/spawned", "Edit working notes"],
     },
     {
-        "route": "/approval",
-        "name": "Approvals",
-        "kind": "approvals",
-        "summary": "Human-gate queue for sensitive actions: approve/deny/revise/handoff, bulk-approve, per-type context.",
-        "actions": ["Approve, deny, or revise pending gated actions", "Bulk-approve"],
-    },
-    {
         "route": "/diagnostics",
         "name": "Diagnostics",
         "kind": "diagnostics",
@@ -247,20 +240,6 @@ PAGES: list[dict] = [
             "Choose which events pop up, which go to Discord, and which sidebar badges show (Notifications)",
             "Danger zone: factory reset",
         ],
-    },
-    {
-        "route": "/settings/approvals",
-        "name": "Approval Modes",
-        "kind": "settings",
-        "summary": "Per-approval-type policy: smart / off / manual.",
-        "actions": ["Set how much human gating each action type needs"],
-    },
-    {
-        "route": "/settings/profile",
-        "name": "Operator profile",
-        "kind": "settings",
-        "summary": "Operator identity and profile settings.",
-        "actions": ["Edit the operator profile"],
     },
     {
         "route": "/tasks",
@@ -396,12 +375,12 @@ HOWTOS: dict[str, dict] = {
         "routes": ["/routines"],
     },
     "approvals": {
-        "title": "Handle approvals (human gates)",
+        "title": "Answer agent requests (human gates)",
         "steps": [
-            "Pending gated actions queue at /approval — approve, deny, revise, or hand off; bulk-approve is available.",
-            "Tune how much gating each action type needs at /settings/approvals: smart / off / manual.",
+            "Requests only you can answer (demote a live strategy, add a routine, update a skill) wait under \"Waiting for your decision\" on the Agents page (/agents), with Approve/Deny buttons and details.",
+            "What runs by itself and what waits for you is set in Settings → Automation (/settings#automation).",
         ],
-        "routes": ["/approval", "/settings/approvals"],
+        "routes": ["/agents", "/settings"],
     },
     "agents-and-models": {
         "title": "Configure agents, models, and API keys",
@@ -426,13 +405,14 @@ HOWTOS: dict[str, dict] = {
     "configure-settings": {
         "title": "Find your way around Settings",
         "steps": [
-            "Settings (/settings) is sectioned: home, data, lab, trading, hyperliquid, notifications, system, danger zone.",
-            "Lab: the backtest window and every pipeline gate threshold (presets relaxed/default/strict are just premades — everything is editable).",
-            "Trading: execution mode and risk knobs. Hyperliquid: credentials and wallets.",
+            "Settings (/settings) has areas: Overview, Automation, Live trading & risk, Portfolio, Exchange, Strategy pipeline, Backtesting, Data, AI & agents, Notifications, System, Danger zone.",
+            "Automation: what runs on its own and what waits for you (system mode, promotions, probation). Strategy pipeline: every gate threshold, in pipeline order.",
+            "Live trading & risk: risk limits, each showing the value the engine enforces. Exchange: Hyperliquid credentials and wallets.",
+            "AI & agents > What the assistant knows about you: name, timezone, how you trade, and rules the assistant must follow.",
             "Notifications: for every kind of event, whether it pops up in the app and whether it goes to Discord; which sidebar badges show; Discord credentials; and a test button.",
-            "Danger zone: factory reset. Approval policies live at /settings/approvals.",
+            "'Show only what I changed' lists every setting that differs from its default. Danger zone: factory reset.",
         ],
-        "routes": ["/settings", "/settings/approvals", "/settings/profile"],
+        "routes": ["/settings"],
     },
     "ideas": {
         "title": "Turn an idea into strategies",

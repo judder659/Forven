@@ -134,10 +134,10 @@ def test_get_system_heartbeat_nav_indicators_use_frontend_route_keys(monkeypatch
     assert set(nav) == {badge.href for badge in NAV_BADGES} - {"/data"}
 
     # Real counts, with the ids behind them (the client tells new from seen by id).
-    assert nav["/approval"]["kind"] == "count"
-    assert nav["/approval"]["count"] == 2
-    assert nav["/approval"]["severity"] == "warn"
-    assert nav["/approval"]["item_ids"] == ["11", "12"]
+    assert nav["/agents"]["kind"] == "count"
+    assert nav["/agents"]["count"] == 2
+    assert nav["/agents"]["severity"] == "warn"
+    assert nav["/agents"]["item_ids"] == ["11", "12"]
 
     assert nav["/live-trades"]["kind"] == "count"
     assert nav["/live-trades"]["count"] == 1

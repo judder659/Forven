@@ -40,7 +40,7 @@ from forven.workspace import (
 )
 from forven.util import is_untestable_reason, normalize_stage, untestable_status_reason
 from forven.dethrone_cooldown import clear_dethrone_cooldown, dethrone_cooldown_active_until
-from forven import quick_screen_rule
+from forven import probation_rules, quick_screen_rule
 from forven.policy import evaluate_promotion, load_pipeline_config
 from forven.strategies.certification import certify_execution_strategy
 
@@ -113,7 +113,7 @@ _USER_ACTORS = {"api", "manual", "user", "ui", "pipeline_sweep", "gauntlet_sweep
 #     must not wait on a dethrone approval. It never touches live strategies.
 # NOTE: none of these may retire a CANONICAL strategy — the canonical guard in
 # transition_stage only honours decay_tracker or forced _USER_ACTORS.
-_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement"}
+_SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement", "probation"}
 _OPERATOR_OWNED_STAGES = {"paper", "live_graduated"}
 _TERMINAL_DETHRONE_STAGES = {"archived", "rejected", "backtest_failed"}
 
@@ -1516,8 +1516,14 @@ def transition_stage(
     force: bool = False,
     skip_approval_gate: bool = False,
     evidence: dict | None = None,
+    probation_entry: bool = False,
 ) -> dict[str, str | None]:
-    """Move a strategy between lifecycle stages in one atomic update path."""
+    """Move a strategy between lifecycle stages in one atomic update path.
+
+    ``probation_entry`` (forven.probation only): a paper -> live_graduated move
+    into live probation. Its own entry check replaces the full live gate and the
+    go-live approval; every other admission check still runs.
+    """
     result = _transition_stage_impl(
         strategy_id,
         target_stage,
@@ -1527,6 +1533,7 @@ def transition_stage(
         force=force,
         skip_approval_gate=skip_approval_gate,
         evidence=evidence,
+        probation_entry=probation_entry,
     )
     # Emitted here, after the write transaction closed: emit_notification opens
     # its own connection and would contend with the held WAL writer lock.
@@ -1575,8 +1582,10 @@ def _transition_stage_impl(
     force: bool = False,
     skip_approval_gate: bool = False,
     evidence: dict | None = None,
+    probation_entry: bool = False,
 ) -> dict[str, str | None]:
     normalized_target = _normalize_stage(target_stage)
+    probation_entry = bool(probation_entry) and normalized_target == "live_graduated"
     if not normalized_target:
         raise ValueError(f"Invalid stage: {target_stage}")
     force_activity_message: str | None = None
@@ -1720,6 +1729,43 @@ def _transition_stage_impl(
 
         if normalized_target not in VALID_TRANSITIONS.get(current_stage, set()):
             raise ValueError(f"Invalid transition: {current_stage} -> {normalized_target}")
+
+        # PROBATION-ONLY: paper reaches live through live probation
+        # (forven.probation: probation_entry=True). Anything else asking for
+        # paper -> live (the paper graduation job, agents, fitness, a plain stage
+        # change) is refused here instead of queuing a full-size go-live; an
+        # operator may still skip probation with a forced override and GO LIVE.
+        if (
+            normalized_target == "live_graduated"
+            and current_stage == "paper"
+            and not force
+            and not probation_entry
+        ):
+            return _record_blocked_transition(
+                "Paper goes live through probation: start probation on the strategy page, "
+                "or skip it with an operator override and GO LIVE",
+                "probation_required",
+            )
+
+        if (
+            current_stage == "paper"
+            and _requires_operator_dethrone_approval(current_stage, normalized_target)
+            and not force
+            and actor.lower() not in _USER_ACTORS
+        ):
+            # Paper risks no capital, so an automated demote/archive request (an
+            # agent's, say) is not queued for approval: it is recorded on the
+            # strategy's history and the paper pool's retirement rules
+            # (forven.paper_pool) make the call. Operator moves are forced.
+            requested = str(reason or "").strip()
+            return _record_blocked_transition(
+                (
+                    f"{actor} asked to move {strategy_id} from paper to {normalized_target}"
+                    f"{f' ({requested})' if requested else ''}. Not applied: paper strategies "
+                    "retire by the paper pool's rules."
+                ),
+                "paper_retirement_rules_decide",
+            )
 
         if _requires_operator_dethrone_approval(current_stage, normalized_target) and not force:
             # Deny cooldown: the operator recently rejected a dethrone rec for
@@ -1866,7 +1912,12 @@ def _transition_stage_impl(
             try:
                 from forven.exchange.risk import go_live_refusal
 
-                _admit_refusal = go_live_refusal(conn, strategy_id)
+                # PROBATION-CAP-1: a probation entrant trades at its start size.
+                _admit_weight = (
+                    float(probation_rules.settings(load_pipeline_config())["start_size_pct"]) / 100.0
+                    if probation_entry else None
+                )
+                _admit_refusal = go_live_refusal(conn, strategy_id, candidate_weight=_admit_weight)
             except Exception as exc:
                 log.warning("Live admission check errored for %s: %s", strategy_id, exc)
                 _admit_refusal = f"live admission check unavailable ({exc}); refusing go-live (fail closed)"
@@ -1876,14 +1927,9 @@ def _transition_stage_impl(
 
         # WIP cap enforcement: refuse to admit another strategy into a capped stage
         # when the configured capacity is already full. Skipped for terminal/archival
-        # transitions and for operator-forced moves. The paper cap is also lifted when
-        # slot-competition is disabled (the default) — that mode intentionally promotes
-        # every gauntlet-passing strategy with no cap on how many may paper-trade.
-        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen"}
-        if normalized_target == "paper":
-            from forven.policy import _paper_slot_competition_enabled
-            if not _paper_slot_competition_enabled():
-                _wip_skip_stages = _wip_skip_stages | {"paper"}
+        # transitions and for operator-forced moves. Paper has no WIP cap: the paper
+        # pool (paper_pool.max_strategies) admits and queues paper strategies.
+        _wip_skip_stages = {"archived", "rejected", "backtest_failed", "quick_screen", "paper"}
         if (not force) and normalized_target not in _wip_skip_stages:
             try:
                 from forven.lab_features import check_stage_wip_capacity
@@ -1987,7 +2033,7 @@ def _transition_stage_impl(
                     )
 
         # Enforce strict promotion gates unless manually overridden.
-        if normalized_target in ("paper", "live_graduated") and not force:
+        if normalized_target in ("paper", "live_graduated") and not force and not probation_entry:
             passed, gate_reason = evaluate_promotion(strategy_id, current_stage, normalized_target)
             if not passed:
                 log.warning("Gate REJECTED %s -> %s: %s", strategy_id, normalized_target, gate_reason)
@@ -2018,6 +2064,7 @@ def _transition_stage_impl(
             _requires_operator_promotion_approval(current_stage, normalized_target)
             and not force
             and not skip_approval_gate
+            and not probation_entry
         ):
             approval_id, reused = _queue_promotion_approval(
                 conn,
@@ -4138,12 +4185,10 @@ def run_strategy_review():
         else:
             log.info("Skipped promoting %s to paper: %s", s["id"], msg)
 
+    # PROBATION-ONLY: paper reaches live only through live probation
+    # (forven.probation); fitness no longer requests full-size go-lives.
     for s in candidates.get("promote_to_deploy", []):
-        ok, msg = promote_strategy(s["id"], "live_graduated")
-        if ok:
-            actions.append(f"Promoted {s['id']} to live_graduated (fitness={s['fitness']})")
-        else:
-            log.info("Skipped promoting %s to live_graduated: %s", s["id"], msg)
+        log.info("Not promoting %s to live on fitness: paper goes live through probation", s["id"])
 
     for s in candidates.get("retire", []):
         ok, msg = promote_strategy(s["id"], "retired")

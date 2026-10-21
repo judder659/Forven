@@ -106,14 +106,42 @@ def contract_error(row: dict[str, Any], contract: dict[str, Any]) -> str | None:
     return None
 
 
+_LIVE_STAGES = ("live_graduated", "deployed", "live")
+_OPERATOR_ACTORS = {"api", "ui", "manual", "user"}
+
+
 def accepted_execution(conn: sqlite3.Connection, strategy_id: str) -> dict[str, Any]:
-    """Read the last actual paper promotion, never an arbitrary later backtest."""
-    event = conn.execute(
-        "SELECT details_json FROM strategy_events WHERE strategy_id=? "
-        "AND to_state='paper' AND from_state<>to_state ORDER BY id DESC LIMIT 1",
+    """Read the last actual paper promotion, never an arbitrary later backtest.
+
+    A demotion from live to paper binds no new confirmation, and a legacy live book
+    often has none in its latest workflow, so the demotion event records unverified
+    evidence and blocked every paper entry (S03402, S06151, S06325 on 2026-10-21).
+    Moving back to paper lowers risk, so it keeps the evidence the book was running
+    on: the operator-accepted live baseline, else the paper promotion before it.
+    ``contract_error`` still compares that evidence with the current configuration.
+    """
+    events = conn.execute(
+        "SELECT from_state, to_state, actor, details_json FROM strategy_events WHERE strategy_id=? "
+        "AND ((to_state='paper' AND from_state<>to_state) "
+        f"OR (from_state=to_state AND to_state IN {_LIVE_STAGES!r})) ORDER BY id DESC",
         (strategy_id,),
-    ).fetchone()
-    return _object(_object(event["details_json"]).get("execution_validation")) if event else {}
+    )
+    demotion: dict[str, Any] | None = None
+    for event in events:
+        details = _object(event["details_json"])
+        validation = _object(details.get("execution_validation"))
+        if event["to_state"] != "paper":
+            if (demotion is not None and details.get("event") == "live_execution_baseline"
+                    and event["actor"] in _OPERATOR_ACTORS and validation.get("verified")):
+                return validation
+            continue
+        if validation.get("verified"):
+            return validation
+        if event["from_state"] not in _LIVE_STAGES:
+            return demotion if demotion is not None else validation
+        if demotion is None:
+            demotion = validation
+    return demotion or {}
 
 
 def paper_initial_capital(conn: sqlite3.Connection, strategy_id: str) -> float:

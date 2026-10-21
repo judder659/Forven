@@ -32,6 +32,8 @@ from forven.task_timeouts import coerce_stale_recovery_minutes, recommended_agen
 log = logging.getLogger("forven.scheduler")
 
 
+_PROBATION_WATCHDOG_JOB_ID = "forven-probation-watchdog"
+
 _DEFAULT_JOB_IDS = {
     "forven-strategy-creation",
     "forven-testing-cycle",
@@ -51,6 +53,7 @@ _DEFAULT_JOB_IDS = {
     "forven-exec-quality-watchdog",
     "forven-testnet-harness",
     "forven-live-graduation-scan",
+    "forven-probation-watchdog",
     "forven-scanner-signal",
     "forven-scanner-hourly",
     "forven-recalibration",
@@ -85,7 +88,6 @@ _DEFAULT_JOB_IDS = {
     # and equity record. Listed here as well as in seed_forven_jobs — SEED-DRIFT-1
     # above is exactly this omission, and it has silently deleted seeded jobs twice.
     "forven-db-backup",
-    "forven-capital-slot-dedupe",
     # 2026-10 gate plan: paper-pool retirement + queue admission (forven.paper_pool).
     "forven-paper-pool-tick",
     "forven-gauntlet-step-loop",
@@ -102,7 +104,6 @@ _DEFAULT_JOB_IDS = {
 _PORTFOLIO_JOB_IDS = {
     "forven-portfolio-allocation",
     "forven-basket-funding-carry",
-    "forven-universe-books",
 }
 
 # PROPR-1: same dark-feature treatment as the portfolio jobs — the mirror job
@@ -744,6 +745,39 @@ def migrate_data_sla_collector() -> bool:
     if changed:
         log.info("Migrated data jobs to the SLA collector: %s", "; ".join(changed))
     return bool(changed)
+
+
+def _add_probation_watchdog_job() -> None:
+    """Live probation watchdog, hourly. Finishes pending demotions and refreshes
+    the ready list always; demotes, steps sizes, graduates and admits only as far
+    as the probation automation switches allow."""
+    add_job(
+        job_id=_PROBATION_WATCHDOG_JOB_ID,
+        name="Live Probation Watchdog",
+        schedule_type="interval",
+        schedule_expr="3600000",
+        command="probation-watchdog",
+        timezone_str="UTC",
+        payload={"kind": "probation_tick"},
+    )
+
+
+def migrate_probation_watchdog() -> bool:
+    """Add the probation watchdog on installs seeded before it existed.
+
+    Adding just this row keeps reconcile_forven_jobs from seeing a missing
+    default, which would trigger the full reseed and reset every job's
+    schedule and enabled flag.
+    """
+    with get_db() as conn:
+        present = conn.execute(
+            "SELECT 1 FROM scheduler_jobs WHERE id = ?", (_PROBATION_WATCHDOG_JOB_ID,)
+        ).fetchone()
+    if present is not None:
+        return False
+    _add_probation_watchdog_job()
+    log.info("Added the %s scheduler job", _PROBATION_WATCHDOG_JOB_ID)
+    return True
 
 
 def _sync_data_collector_cadence() -> None:
@@ -1575,14 +1609,10 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 return "ok", "basket disabled or tick skipped"
             return "ok", None
 
-        # Universe paper books (forven.universe.book). No-op unless
-        # universe_books_enabled; returns early until a new daily close exists.
+        # Universe paper books were retired (2026-10-21). reconcile_forven_jobs
+        # reaps the job row; one that runs before that is a no-op.
         if kind == "universe_books_tick":
-            from forven.universe.book import run_universe_tick
-            report = await _run_sync_job(run_universe_tick)
-            if not report.get("enabled"):
-                return "ok", "universe books disabled"
-            return "ok", None
+            return "ok", "universe books retired"
 
         # Strategy decay tracker — auto-demote degraded paper/deployed strategies
         if kind == "decay_tracker":
@@ -1733,24 +1763,11 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             log.info("Scheduled DB backup written: %s", target)
             return "ok", None
 
-        # Capital-slot de-duplication — archive redundant incumbents so each
-        # symbol/timeframe capital slot holds only the single best-Sharpe
-        # strategy. Strategies promoted before the slot/duplicate gate existed can
-        # pile multiple incumbents onto one slot, forcing a challenger to beat ALL
-        # of them and freezing the slot (the documented 2026-05-06 ETH/USDT-1h
-        # deadlock). Idempotent: a slot with one occupant is a no-op, so this is
-        # safe to run on a schedule.
+        # The capital-slot dedupe sweep was removed with slot competition
+        # (2026-10); reconcile_forven_jobs reaps its row, and a row still present
+        # runs as a logged no-op.
         if kind == "capital_slot_dedupe":
-            from forven.policy import dedupe_capital_slots
-            result = await _run_sync_job(
-                dedupe_capital_slots, actor="pipeline_sweep", timeout_seconds=120.0
-            )
-            archived = result.get("archived", []) if isinstance(result, dict) else []
-            if archived:
-                log.info(
-                    "capital_slot_dedupe: archived %d redundant slot occupant(s)",
-                    len(archived),
-                )
+            log.info("Scheduler job %s (capital_slot_dedupe) is retired; skipping", job_id)
             return "ok", None
 
         # Paper pool (2026-10 gate plan): retire paper strategies whose forward
@@ -1857,6 +1874,16 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # Live-graduation recommender — daily paper→live candidate scan; queues
         # operator approvals only (arming stays in the typed GO-LIVE flow) and
         # no-ops unless live_graduation_recommender_enabled is set
+        # Live probation watchdog (forven.probation): demotions, size steps,
+        # graduation and admission, as far as the automation switches allow.
+        if kind == "probation_tick":
+            from forven.probation import tick as probation_tick
+            result = await _run_sync_job(probation_tick)
+            if not isinstance(result, dict):
+                return "ok", None
+            parts = [f"{len(result.get(key) or [])} {key}" for key in ("started", "stepped", "graduated", "demoting", "demoted") if result.get(key)]
+            return "ok", (", ".join(parts) if parts else f"{len(result.get('ready') or [])} ready for probation")
+
         if kind == "live_graduation_scan":
             from forven.live_graduation import run_live_graduation_scan
             result = await _run_sync_job(run_live_graduation_scan)
@@ -3180,21 +3207,6 @@ def seed_forven_jobs():
         payload={"kind": "db_backup"},
     )
 
-    # 4c5. Capital-Slot De-duplication — every 6h, drain multi-incumbent capital
-    # slots down to the single best-Sharpe strategy. The slot/duplicate gate only
-    # blocks NEW duplicates; strategies promoted before that gate can pile onto a
-    # slot and freeze it against all challengers. dedupe_capital_slots is
-    # idempotent and a no-op when every slot has one occupant.
-    add_job(
-        job_id="forven-capital-slot-dedupe",
-        name="Capital-Slot De-duplication",
-        schedule_type="interval",
-        schedule_expr="21600000",  # 6h in ms
-        command="capital-slot-dedupe",
-        timezone_str="UTC",
-        payload={"kind": "capital_slot_dedupe"},
-    )
-
     # 4c6. Paper pool — hourly: retire clearly-losing/idle paper strategies and
     # admit waiting door-passers into free paper slots (forven.paper_pool).
     add_job(
@@ -3258,15 +3270,6 @@ def seed_forven_jobs():
             command="basket-funding-carry",
             timezone_str="UTC",
             payload={"kind": "basket_funding_carry_tick"},
-        )
-        add_job(
-            job_id="forven-universe-books",
-            name="Universe Paper Books Tick",
-            schedule_type="interval",
-            schedule_expr="3600000",
-            command="universe-books",
-            timezone_str="UTC",
-            payload={"kind": "universe_books_tick"},
         )
 
     # PROPR-1: the strategy-mirror observer exists only while the hidden Propr
@@ -3354,6 +3357,9 @@ def seed_forven_jobs():
         timezone_str="UTC",
         payload={"kind": "live_graduation_scan"},
     )
+
+    # 5.5d. Live probation watchdog — hourly.
+    _add_probation_watchdog_job()
 
     # 5.6. Adaptive regime recalibration — Every 30 minutes
     add_job(
@@ -3667,6 +3673,7 @@ def reconcile_forven_jobs() -> dict[str, int]:
     # would reset the operator's schedules and enabled flags on the first boot
     # after the Data Manager rebuild ships. Idempotent.
     migrate_data_sla_collector()
+    migrate_probation_watchdog()
     # PORT-GATE-1: expected ids are dynamic — the portfolio layer's jobs count
     # as defaults only while its master switch is on, so disabling the layer
     # reaps its jobs here and re-enabling restores them via the reseed below.

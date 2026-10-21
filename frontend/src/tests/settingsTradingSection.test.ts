@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mount, unmount } from 'svelte';
 import { get } from 'svelte/store';
-import SettingsTrading from '../lib/components/settings/sections/SettingsTrading.svelte';
+import SettingsAreaView from '../lib/components/settings/SettingsAreaView.svelte';
 import { originalValues, clearDirty } from '../lib/settings/dirty';
 
 let target: HTMLElement;
@@ -28,9 +28,10 @@ describe('SettingsTrading section', () => {
 	it('renders the expected trading subsections from the manifest', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsTrading, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'trading',
 				settings: {
 					max_daily_loss: 150,
 					strict_regime_gating: true,
@@ -42,17 +43,19 @@ describe('SettingsTrading section', () => {
 		await flush();
 
 		const text = target.textContent || '';
-		expect(text).toContain('Exchange connection');
-		expect(text).toContain('Regime gating');
+		expect(text).toContain('Real money');
+		expect(text).not.toContain('Exchange connection');
+		expect(text).toContain('Market regime');
 		expect(text).toContain('Loss limits');
 	});
 
 	it('seeds originalValues on mount from the flat settings blob', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsTrading, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'trading',
 				settings: {
 					max_daily_loss_pct: 3,
 				},
@@ -67,9 +70,10 @@ describe('SettingsTrading section', () => {
 	it('risk fields are bound to the keys enforcement reads (no placebo twins)', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsTrading, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'trading',
 				settings: {
 					max_risk_per_trade_pct: 7,
 					max_daily_loss_pct: 3,
@@ -93,9 +97,10 @@ describe('SettingsTrading section', () => {
 	it('shows the value in force when mainnet locks replace a saved value', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsTrading, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'trading',
 				settings: {
 					max_concurrent_positions: 25,
 					risk_effective: {

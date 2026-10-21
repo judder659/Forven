@@ -4,6 +4,7 @@
 	import type { ManagerRow } from '$lib/utils/strategy';
 	import { stageClass } from '$lib/utils/strategy';
 	import type { ForwardRecord } from '$lib/utils/forge/forward';
+	import CoinBreakdown from '$lib/components/strategy/container/CoinBreakdown.svelte';
 	import type { Cause } from '$lib/utils/forge/causes';
 	import { CAUSES } from '$lib/utils/forge/causes';
 	import {
@@ -12,7 +13,7 @@
 		blockerTone,
 		cleanReason,
 		stageLabel,
-		statusMeta,
+		entryStatusMeta,
 		TONE_DOT,
 		TONE_PILL,
 		TONE_TEXT,
@@ -35,7 +36,7 @@
 
 	let panel: HTMLElement;
 
-	$: meta = statusMeta(entry?.status);
+	$: meta = entryStatusMeta(entry);
 	$: steps = (entry?.readiness_steps ?? []).filter((step) => step.status !== 'skipped');
 	$: tests = Object.entries(entry?.evidence?.validation_tests ?? {});
 	$: gauntlet = entry?.gauntlet ?? null;
@@ -97,7 +98,7 @@
 >
 	<header class="grid gap-2 border-b border-sc-line px-4 pb-3 pt-3.5">
 		<div class="flex items-center gap-2">
-			<span class={`rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${stageClass(row.stage)}`}>{stageLabel(row.stage)}</span>
+			<span class={`rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${stageClass(row.stage)}`}>{stageLabel(entry?.pipeline_stage ?? row.stage)}</span>
 			{#if entry?.days_in_stage !== undefined && entry?.days_in_stage !== null}
 				<span class="text-[11px] text-sc-ink3">{daysLabel(entry.days_in_stage)} in stage</span>
 			{:else if bucket === 'trash'}
@@ -107,7 +108,7 @@
 		</div>
 		<h2 class="m-0 text-[16px] font-semibold leading-snug text-sc-ink" title={row.name}>{title}</h2>
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 font-plex-mono text-[11px] text-sc-ink3">
-			<span>{row.id}</span><span aria-hidden="true">·</span><span>{row.symbol}</span><span aria-hidden="true">·</span><span>{row.timeframe}</span>
+			<span>{row.id}</span><span aria-hidden="true">·</span><span>{row.symbol}{#if forward?.multiCoin}<span class="text-sc-ink2">{` +${forward.multiCoin.coins.length - 1} coins`}</span>{/if}</span><span aria-hidden="true">·</span><span>{row.timeframe}</span>
 			{#if row.hypothesis_id}<span aria-hidden="true">·</span><span>Idea {row.hypothesis_display_id || row.hypothesis_id}</span>{/if}
 		</div>
 		<div class="flex items-center gap-2">
@@ -158,7 +159,7 @@
 					<p class="m-0 text-[12px] leading-relaxed text-sc-ink2">{meta.help}</p>
 					{#if entry.pending_approval}
 						<a
-							href={`/approval?approval_id=${encodeURIComponent(String(entry.pending_approval.id))}`}
+							href={`/agents?decision=${encodeURIComponent(String(entry.pending_approval.id))}#decisions`}
 							class="flex items-center justify-between gap-3 rounded-md border border-[#e7b24a]/40 bg-[#e7b24a]/10 px-3 py-2 text-[12px] text-[#e7b24a] hover:bg-[#e7b24a]/15"
 						>
 							<span>Approval #{entry.pending_approval.id} — {approvalTypeLabel(entry.pending_approval.approval_type)}{#if entry.pending_approval.requested_status} (→ {stageLabel(entry.pending_approval.requested_status).toLowerCase()}){/if}</span>
@@ -218,7 +219,7 @@
 
 			{#if forward}
 				<section class="grid gap-1.5 border-b border-sc-line px-4 py-3">
-					<h3 class="m-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{forward.book === 'live' ? 'Live results (wallet $)' : 'Paper results (paper book)'}</h3>
+					<h3 class="m-0 font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">{forward.book === 'live' ? 'Live results (wallet $)' : forward.multiCoin ? `Paper results, all ${forward.multiCoin.coins.length} coins (paper book)` : 'Paper results (paper book)'}</h3>
 					<div class="grid grid-cols-4 gap-2">
 						<div><span class="block text-[10.5px] text-sc-ink3">Realized</span><b class={`font-plex-mono text-[13px] font-medium ${signClass(forward.pnlUsd)}`}>{fmtUsd(forward.pnlUsd, forward.book === 'live' ? 2 : 0)}</b></div>
 						<div><span class="block text-[10.5px] text-sc-ink3">Closed</span><b class="font-plex-mono text-[13px] font-medium text-sc-ink">{forward.closed}</b></div>
@@ -227,6 +228,9 @@
 					</div>
 					{#if forward.blockedEntries > 0}
 						<p class="m-0 text-[11px] text-[#e7b24a]">{forward.blockedEntries} live entr{forward.blockedEntries === 1 ? 'y' : 'ies'} refused{#if forward.blockedReason} — {cleanReason(forward.blockedReason)}{/if}</p>
+					{/if}
+					{#if forward.multiCoin}
+						<CoinBreakdown info={forward.multiCoin} rows={forward.byCoin} showUnrealized compact />
 					{/if}
 				</section>
 			{/if}

@@ -10,6 +10,13 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _gate_passed(monkeypatch):
+    """These tests cover the arming checks after the live gate; the gate has
+    its own tests in test_bot_factory_live_gate.py."""
+    monkeypatch.setattr("forven.api_domains.bot_factory.live_gate_refusal", lambda bot_id: None)
+
+
 def _make_bot(**overrides) -> str:
     from forven.db import create_bot
 

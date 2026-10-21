@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { archivedFromStage, classifyArchive, primaryClause, tallyCauses } from '$lib/utils/forge/causes';
 import { graveyardTotal, stageTotals, summarizeFlows } from '$lib/utils/forge/flow';
-import { cleanReason, paperProgress, statusLine, statusMeta } from '$lib/utils/forge/status';
+import { cleanReason, entryStatusMeta, paperProgress, statusLine, statusMeta } from '$lib/utils/forge/status';
 import { buildAttention, taskLabel } from '$lib/utils/forge/attention';
 import { buildActivity, hourlyMoves } from '$lib/utils/forge/activity';
 import { forgeHeadline } from '$lib/utils/forge/headline';
@@ -153,6 +153,39 @@ describe('forge status', () => {
 		expect(statusMeta('something_new').key).toBe('unknown');
 	});
 
+	it('names the probation check that holds a paper strategy', () => {
+		const paper = (status: string, failing: string[], extra: Record<string, unknown> = {}) =>
+			entryStatusMeta(
+				explainEntry({
+					status,
+					evidence: { probation: { matched: 1, need_trades: 3, failing, ...extra } },
+				}),
+			);
+		expect(paper('waiting_evidence', ['paper_confirmation']).label).toBe('Confirming 1/3');
+		expect(paper('blocked_merit', ['paper_breakeven', 'paper_confirmation']).label).toBe('Paper losing');
+		expect(paper('blocked_merit', ['paper_breakeven']).tone).toBe('caution');
+		expect(paper('blocked_merit', ['edge_covers_costs']).label).toBe('Edge too thin');
+		expect(paper('slot_contention', ['capacity']).label).toBe('No room live');
+		expect(paper('waiting_evidence', ['cooldown']).label).toBe('Cooling down');
+		expect(paper('ready', []).label).toBe('Ready for probation');
+		expect(paper('waiting_evidence', ['paper_confirmation'], { slow: true, need_days: 21, paper_days: 9.6 }).label).toBe('Confirming 1/3, 9/21d');
+		// No probation evidence (another stage): the plain status words.
+		expect(entryStatusMeta(explainEntry({ stage: 'gauntlet', status: 'blocked_merit' })).label).toBe('Blocked on merit');
+	});
+
+	it('shows a probation strategy with its size and live trades', () => {
+		const meta = entryStatusMeta(
+			explainEntry({
+				stage: 'live_graduated',
+				pipeline_stage: 'probation',
+				status: 'probation',
+				evidence: { probation: { state: 'active', size_pct: 25, live_trades: 2, graduate_trades: 10 } },
+			}),
+		);
+		expect(meta.label).toBe('Probation 25% · 2/10 live trades');
+		expect(meta.key).toBe('probation');
+	});
+
 	it('leads with the pending approval when one is waiting', () => {
 		const line = statusLine(
 			explainEntry({
@@ -163,18 +196,13 @@ describe('forge status', () => {
 		expect(line.text).toBe('Approval #484 · dethrone recommendation');
 	});
 
-	it('reads paper progress from the readiness steps, falling back to evidence', () => {
+	it('reads paper progress toward probation from the probation evidence', () => {
 		const progress = paperProgress(
-			explainEntry({
-				readiness_steps: [
-					{ name: 'paper_duration', status: 'failed', detail: '', actionable: null, extra: { current: 20, threshold: 30, direction: 'gte', unit: 'days' } },
-				],
-				evidence: { paper: { paper_trades: { current: 3, threshold: 50, unit: 'trades' } } },
-			}),
+			explainEntry({ evidence: { probation: { matched: 1, need_trades: 3, slow: true, need_days: 21, paper_days: 9.6 } } }),
 		);
 		expect(progress.map((p) => [p.label, p.current, p.threshold, p.met])).toEqual([
-			['Days', 20, 30, false],
-			['Trades', 3, 50, false],
+			['Matched trades', 1, 3, false],
+			['Days', 9, 21, false],
 		]);
 		expect(paperProgress(explainEntry({ stage: 'live_graduated' }))).toEqual([]);
 	});
@@ -256,7 +284,7 @@ describe('forge attention', () => {
 			nameOf: (id) => `name-${id}`,
 		});
 		expect(items.map((i) => i.key)).toEqual(['approval:484', 'live:S4', 'blocked:S2']);
-		expect(items[0]).toMatchObject({ title: 'name-S1', meta: 'S1 · Paper', actionLabel: 'Review #484', href: '/approval?approval_id=484' });
+		expect(items[0]).toMatchObject({ title: 'name-S1', meta: 'S1 · Paper', actionLabel: 'Decide', href: '/agents?decision=484#decisions' });
 		expect(items[0].detail).toBe('Dethrone recommendation → archived');
 		expect(items[1].detail).toBe('84 live entries refused in 30d — Validated leverage 1.3 cannot be applied');
 		expect(items[2].detail).toBe('Walk-forward OOS trades 17 below 20 minimum');
@@ -273,6 +301,25 @@ describe('forge attention', () => {
 			nameOf: (id) => id,
 		});
 		expect(items).toEqual([expect.objectContaining({ key: 'recovery:S7', detail: 'Recovery gave up — Funding history incomplete' })]);
+	});
+
+	it('lists a paper strategy ready for probation, right after approvals', () => {
+		const items = buildAttention({
+			activeIds: new Set(['S5', 'S6', 'S8']),
+			explain: [
+				explainEntry({ id: 'S6', status: 'blocked_merit', gate_reason: 'Edge covers costs: 1.3x (need 2x)' }),
+				explainEntry({ id: 'S5', status: 'ready' }),
+				// Ready to promote out of the gauntlet happens on its own: not a decision.
+				explainEntry({ id: 'S8', stage: 'gauntlet', status: 'ready' }),
+			],
+			fleet: null,
+			nowWorking: [],
+			rows: [],
+			health: null,
+			nameOf: (id) => id,
+		});
+		expect(items.map((item) => item.key)).toEqual(['probation:S5', 'blocked:S6']);
+		expect(items[0]).toMatchObject({ actionLabel: 'Start probation', tone: 'ok' });
 	});
 
 	it('humanizes task types', () => {

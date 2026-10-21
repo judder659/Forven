@@ -670,7 +670,7 @@ def create_approval(
     # None, so the insert above is already committed). When a caller passes its
     # own conn the row is still uncommitted and the caller may be holding the
     # WAL write lock across a larger transaction -- e.g. transition_stage's
-    # promotion gate, which reaches here via policy._queue_challenger_dethrone.
+    # promotion gate, which reaches here via brain._queue_dethrone_approval.
     # Auto-apply opens *separate* connections (apply_smart_decision /
     # post_approve_approval) whose writes would block on that held lock up to
     # the 60s busy_timeout. Defer to the caller: it commits, and any auto-apply

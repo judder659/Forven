@@ -490,8 +490,8 @@ async function openBacktestHistory(target: HTMLDivElement): Promise<void> {
 }
 
 async function openOptimizationTab(target: HTMLDivElement): Promise<void> {
-	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
-	clickByTestId(target, 'strategy-tab-runs');
+	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-parameters"]') !== null);
+	clickByTestId(target, 'strategy-tab-parameters');
 	await waitForCondition(() => target.textContent?.includes('Run Optimization') ?? false);
 }
 
@@ -507,8 +507,8 @@ async function openOptimizationHistory(target: HTMLDivElement): Promise<void> {
 }
 
 async function openGauntletParamsPanel(target: HTMLDivElement): Promise<void> {
-	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
-	clickByTestId(target, 'strategy-tab-runs');
+	await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-parameters"]') !== null);
+	clickByTestId(target, 'strategy-tab-parameters');
 	await waitForCondition(() => target.textContent?.includes('Gauntlet Parameters') ?? false);
 }
 
@@ -642,7 +642,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		return container;
 	}
 
-	it('puts the heatmap and market grid under Robustness, and the heatmap runs the Gauntlet request', async () => {
+	it('puts the heatmap under Parameters and the market grid under Robustness, and the heatmap runs the Gauntlet request', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 		// Every cell the same: settings the strategy never reads.
 		apiMocks.strategyParamHeatmap.mockImplementation(async (request: { x: { values: number[] }; y: { values: number[] } }) => ({
@@ -657,8 +657,13 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(target.querySelector('[data-testid="strategy-tab-markets"]')).toBeNull();
 
 		clickByTestId(target, 'strategy-tab-robustness');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-markets-tab"]') !== null);
+		// The market grid sits beside Breadth: both ask whether the edge travels to other coins.
+		expect(target.querySelector('#rb-other-coins [data-testid="strategy-markets-tab"]')).not.toBeNull();
+		expect(target.querySelector('[data-testid="strategy-heatmap-tab"]')).toBeNull();
+		// The heatmap is a sensitivity check on the settings, so it lives with them.
+		clickByTestId(target, 'strategy-tab-parameters');
 		await waitForCondition(() => target.querySelector('[data-testid="strategy-heatmap-tab"]') !== null);
-		expect(target.querySelector('[data-testid="strategy-markets-tab"]')).not.toBeNull();
 		clickButtonByText(target, 'Run heatmap');
 		await waitForCondition(() => apiMocks.strategyParamHeatmap.mock.calls.length > 0);
 		const [request, signal] = apiMocks.strategyParamHeatmap.mock.calls[0];
@@ -726,7 +731,10 @@ describe('/lab/strategy/[id] backtest history', () => {
 		clickByTestId(target, 'backtest-row-B2002');
 		await waitForCondition(() => startInput()?.value === '2024-01-15');
 
+		// The draft editor lives on Parameters; its reset also restores the backtest market and window.
+		await openGauntletParamsPanel(target);
 		clickByTestId(target, 'backtest-params-reset');
+		clickByTestId(target, 'strategy-tab-runs');
 		await waitForCondition(() => startInput()?.value === '2025-03-11');
 		expect(symbolInput()?.value).toBe('BTC/USDT');
 		expect(timeframeInput()?.value).toBe('1h');
@@ -743,6 +751,9 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 
 		app = mount(StrategyDetailPage, { target });
+		// TradingView sits in the header's More menu.
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-export-trigger"]') !== null);
+		clickByTestId(target, 'strategy-export-trigger');
 		await waitForCondition(() => target.querySelector('[data-testid="export-tradingview-button"]') !== null);
 
 		clickByTestId(target, 'export-tradingview-button');
@@ -1216,7 +1227,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		}), { background: true });
 	});
 
-	it('shows editable parameters on the backtest tab and submits the edited draft', async () => {
+	it('shows editable parameters on Parameters and backtests the edited draft', async () => {
 		apiMocks.getStrategyContainer
 			.mockResolvedValueOnce(buildContainer(['B1001']))
 			.mockResolvedValueOnce(buildContainer(['B1001']));
@@ -1225,7 +1236,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getResultChartContext.mockImplementation(async (resultId: string) => buildChartContext(resultId));
 
 		app = mount(StrategyDetailPage, { target });
-		await openBacktestHistory(target);
+		await openGauntletParamsPanel(target);
 
 		expect(target.querySelector('[data-testid="backtest-parameter-panel"]')).not.toBeNull();
 		expect(target.textContent).toContain('Gauntlet Parameters');
@@ -1235,6 +1246,9 @@ describe('/lab/strategy/[id] backtest history', () => {
 		setInputValue(fastInput, '15');
 		await flush();
 
+		// "Run backtest with these settings" carries the draft over to the Backtests form.
+		clickByTestId(target, 'parameters-run-backtest');
+		await waitForCondition(() => target.querySelector('#runs-new-backtest') !== null);
 		clickButtonByText(target, 'Run the Gauntlet');
 		await waitForCondition(() => apiMocks.submitBacktest.mock.calls.length > 0);
 
@@ -1351,7 +1365,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(container);
 
 		app = mount(StrategyDetailPage, { target });
-		await openBacktestHistory(target);
+		await openGauntletParamsPanel(target);
 
 		const panel = target.querySelector('[data-testid="backtest-parameter-panel"]');
 		expect(panel?.getAttribute('class') ?? '').toContain('emerald');
@@ -1397,8 +1411,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		app = mount(StrategyDetailPage, { target });
 		// Open the Gauntlet section (no history rows needed) and reach the params pane
 		// on its DEFAULT view — the exact state the user reported as stuck "Unsaved".
-		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
-		clickByTestId(target, 'strategy-tab-runs');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-parameters"]') !== null);
+		clickByTestId(target, 'strategy-tab-parameters');
 		await waitForCondition(() => target.querySelector('[data-testid="backtest-params-save"]') !== null);
 
 		const save = target.querySelector('[data-testid="backtest-params-save"]') as HTMLButtonElement | null;
@@ -1456,8 +1470,11 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => apiMocks.getStrategyContainer.mock.calls.length >= 2);
 		await waitForCondition(() => target.textContent?.includes('Run B1001') ?? false);
 		apiMocks.submitBacktest.mockClear();
+		await openGauntletParamsPanel(target);
 		clickByTestId(target, 'backtest-params-reset');
 		await waitForCondition(() => target.textContent?.includes('Container defaults') ?? false);
+		clickByTestId(target, 'strategy-tab-runs');
+		await waitForCondition(() => target.querySelector('#runs-new-backtest') !== null);
 		clickButtonByText(target, 'Run the Gauntlet');
 		await waitForCondition(() => apiMocks.submitBacktest.mock.calls.length > 0);
 
@@ -2498,7 +2515,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(row).not.toContain('Dec 31, 2024');
 	});
 
-	it('opening an optimization run leaves the Gauntlet draft alone and shows its detail only under Runs', async () => {
+	it('opening an optimization run leaves the Gauntlet draft alone and shows its detail only under Parameters', async () => {
 		const optimization = buildHistoryItem('OPT1', {
 			result_type: 'optimization',
 			symbol: 'ETH/USDT',
@@ -2518,15 +2535,18 @@ describe('/lab/strategy/[id] backtest history', () => {
 		clickByTestId(target, 'optimization-row-OPT1');
 		await waitForCondition(() => target.querySelector('[data-testid="selected-result-metrics-strip"]') !== null);
 
-		// The Gauntlet form on the same tab keeps the container's market and window.
-		expect((target.querySelector('#container-backtest-symbol') as HTMLInputElement | null)?.value).toBe('BTC/USDT');
-		expect((target.querySelector('#container-backtest-start') as HTMLInputElement | null)?.value).toBe('2025-03-11');
 		// The detail renders below the optimization list, after the optimization heading.
 		const heading = target.querySelector('[data-testid="runs-optimization-heading"]');
 		const strip = target.querySelector('[data-testid="selected-result-metrics-strip"]');
 		expect(heading && strip ? heading.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING : 0).toBeTruthy();
 
-		// It belongs to Runs only.
+		// The Gauntlet form on Backtests keeps the container's market and window, and the
+		// optimization's detail belongs to Parameters only.
+		clickByTestId(target, 'strategy-tab-runs');
+		await waitForCondition(() => target.querySelector('#container-backtest-symbol') !== null);
+		expect((target.querySelector('#container-backtest-symbol') as HTMLInputElement | null)?.value).toBe('BTC/USDT');
+		expect((target.querySelector('#container-backtest-start') as HTMLInputElement | null)?.value).toBe('2025-03-11');
+		expect(target.querySelector('[data-testid="selected-result-metrics-strip"]')).toBeNull();
 		clickByTestId(target, 'strategy-tab-robustness');
 		await waitForCondition(() => target.querySelector('[data-testid="selected-result-metrics-strip"]') === null);
 		clickByTestId(target, 'strategy-tab-summary');
@@ -2572,8 +2592,9 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => target.querySelector('[data-testid="overview-live-ramp"]') !== null);
 
 		expect(target.querySelector('[data-testid="overview-live-ramp"]')?.textContent).toContain('Decay kill switch at 30% drawdown');
-		const titles = Array.from(target.querySelectorAll('button[title]'), (node) => node.getAttribute('title') ?? '');
-		expect(titles.some((title) => title.includes('at least 30 days and 50 closed trades'))).toBe(true);
+		const titles = Array.from(target.querySelectorAll('[data-testid="lifecycle-rail"] [title]'), (node) => node.getAttribute('title') ?? '');
+		expect(titles.some((title) => title.includes('enough paper trades match the backtest'))).toBe(true);
+		expect(titles.some((title) => title.includes('at least 30 days and 50 closed trades'))).toBe(false);
 		expect(titles.some((title) => title.includes('25% (wk 1–2) → 50% (wk 3–4) → 100% (wk 5+)'))).toBe(true);
 	});
 
@@ -2590,6 +2611,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		const chips = target.querySelector('[data-testid="backtest-param-summary-B1001"]')?.textContent ?? '';
 		expect(chips).toContain('fast=12');
 		expect(chips).not.toContain('_asset');
+		await openGauntletParamsPanel(target);
 		expect(target.querySelector('[data-testid="gauntlet-system-params-note"]')?.textContent).toContain('_timeframe');
 		const editorKeys = Array.from(
 			target.querySelectorAll('[data-testid="backtest-parameter-editor"] span.font-mono'),
@@ -2610,7 +2632,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		const [, saved] = backtestingMocks.updateStrategyDefaultParams.mock.calls[0];
 		expect(saved).toMatchObject({ fast: 14, _asset: 'BTC', _timeframe: '1h', _parameter_space: { fast: [8, 12, 16] } });
 	});
-	it('reports the reference run on Performance and switches runs from the picker and the Runs list', async () => {
+	it('reports the reference run on Backtests and switches runs from the picker and the history', async () => {
 		const container = buildContainer(['B1001', 'B1002']);
 		// B1002 is older, so the newest run (B1001) is the reference.
 		((container.history as Record<string, Record<string, unknown>[]>).backtests[1]).created_at = '2026-01-01T00:00:00Z';
@@ -2634,8 +2656,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		);
 
 		app = mount(StrategyDetailPage, { target });
-		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-performance"]') !== null);
-		clickByTestId(target, 'strategy-tab-performance');
+		await waitForCondition(() => target.querySelector('[data-testid="strategy-tab-runs"]') !== null);
+		clickByTestId(target, 'strategy-tab-runs');
 		await waitForCondition(() => target.querySelector('[data-testid="run-stats"]') !== null);
 
 		expect(target.querySelector('[data-testid="run-facts-id"]')?.textContent).toBe('B1001');
@@ -2654,11 +2676,10 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => (target.querySelector('[data-testid="run-stats"]')?.textContent ?? '').includes('1.10'));
 		expect(apiMocks.getResult).toHaveBeenCalledWith('B1002');
 
-		// Back to the reference from the Runs list.
-		await openBacktestHistory(target);
-		clickByTestId(target, 'open-report-B1001');
+		// Back to the reference by clicking its row in the history: the report follows the opened run.
+		clickByTestId(target, 'backtest-row-B1001');
 		await waitForCondition(() => target.querySelector('[data-testid="run-facts-id"]')?.textContent === 'B1001');
-		expect(target.querySelector('[data-testid="strategy-tab-performance"]')?.getAttribute('aria-pressed')).toBe('true');
+		expect(target.querySelector('[data-testid="strategy-tab-runs"]')?.getAttribute('aria-pressed')).toBe('true');
 	});
 
 	it('keeps the lifecycle history on Activity', async () => {
@@ -2679,7 +2700,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => target.querySelector('[data-testid="activity-lifecycle-feed"]') !== null);
 		expect(target.querySelector('[data-testid="activity-lifecycle-feed"]')?.textContent).toContain('Every gate passed');
 	});
-	it('builds the Summary verdict, evidence ladder and scorecard from the stored robustness evidence', async () => {
+	it('builds the Overview verdict and evidence ladder, and the stress matrix, from the stored robustness evidence', async () => {
 		apiMocks.getStrategyContainer.mockResolvedValue(buildContainer(['B1001']));
 		apiMocks.getResult.mockImplementation(async (resultId: string) =>
 			buildResult(resultId, {
@@ -2750,13 +2771,12 @@ describe('/lab/strategy/[id] backtest history', () => {
 		app = mount(StrategyDetailPage, { target });
 		await waitForCondition(() => target.querySelector('[data-testid="finding-thin"]') !== null);
 
-		expect(target.querySelector('[data-testid="verdict-label"]')?.textContent).toContain('Promising · not proven');
+		expect(target.querySelector('[data-testid="verdict-label"]')?.textContent).toContain('Mixed backtest');
 		expect(target.querySelector('[data-testid="verdict-headline"]')?.textContent).toContain('Profitable out of sample and on held-back data');
 		expect(target.querySelector('[data-testid="finding-thin"]')?.textContent).toContain('4 of 15 reruns finished');
 		expect(target.querySelector('[data-testid="finding-concentration"]')).not.toBeNull();
 		expect(target.querySelector('[data-testid="ladder-sharpe-held"]')?.textContent).toContain('0.50');
 		expect(target.querySelector('[data-testid="ladder-sharpe-oos"]')?.textContent).toContain('1.50');
-		expect(target.querySelector('[data-testid="scorecard-parameter_jitter"]')?.textContent).toContain('Pass · thin');
 		expect(target.querySelector('[data-testid="standing-held-back"]')?.textContent).toContain('Pass');
 
 		// A finding's evidence link opens the tab that holds the proof.
@@ -2765,6 +2785,7 @@ describe('/lab/strategy/[id] backtest history', () => {
 		await waitForCondition(() => target.querySelector('[data-testid="stress-matrix"]') !== null);
 		expect(target.querySelector('[data-testid="strategy-tab-robustness"]')?.getAttribute('aria-pressed')).toBe('true');
 		expect(target.querySelector('[data-testid="stress-row-walk_forward"]')?.textContent).toContain('83% OOS/IS Sharpe');
+		expect(target.querySelector('[data-testid="stress-row-parameter_jitter"]')?.textContent).toContain('Pass · thin');
 		expect(target.querySelector('[data-testid="jitter-slots"]')?.children.length).toBe(15);
 		expect(target.querySelector('[data-testid="held-back-verdict"]')?.textContent).toContain('Pass');
 	});
@@ -2786,8 +2807,8 @@ describe('/lab/strategy/[id] backtest history', () => {
 		expect(target.querySelector('[data-testid="parameters-driver"]')?.textContent).toContain('No run is pinned');
 
 		clickByTestId(target, 'parameters-edit');
-		await waitForCondition(() => target.querySelector('[data-testid="backtest-parameter-panel"]') !== null);
-		expect((target.querySelector('[data-testid="backtest-parameter-panel"]') as HTMLDetailsElement | null)?.open).toBe(true);
+		// The editor sits on the same tab, folded until Edit opens it.
+		await waitForCondition(() => (target.querySelector('[data-testid="backtest-parameter-panel"]') as HTMLDetailsElement | null)?.open === true);
 	});
 	it('keeps the archived banner and revive action in the Summary gate card', async () => {
 		const container = buildContainer(['B1001']);

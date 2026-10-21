@@ -43,11 +43,9 @@ const TRADING_COMMANDS = new Set([
 	'slippage-monitor',
 	'funding-history-reconcile',
 	'portfolio-allocation',
-	'capital-slot-dedupe',
 	'paper-pool-tick',
 	'regime-gate-mtm',
 	'basket-funding-carry',
-	'universe-books',
 ]);
 
 export interface ProviderHealthInput {

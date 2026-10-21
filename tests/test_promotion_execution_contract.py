@@ -242,6 +242,52 @@ def test_live_baseline_does_not_authorize_paper_or_changed_source(forven_db: obj
         accept_live_execution_baseline(row["id"], result_id, actor="user", reason="Repair legacy record")
 
 
+def _demote_to_paper(sid: str) -> None:
+    """A forced live -> paper demotion: its latest workflow binds no confirmation."""
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET stage='paper' WHERE id=?", (sid,))
+        conn.execute(
+            "INSERT INTO strategy_events (strategy_id,from_state,to_state,actor,details_json,created_at) "
+            "VALUES (?,'live_graduated','paper','api',?,datetime('now'))",
+            (sid, json.dumps({"force": True, "execution_validation": {
+                "verified": False, "reason": "No workflow confirmation is bound to this promotion"}})),
+        )
+
+
+def test_demotion_to_paper_keeps_the_accepted_live_baseline(forven_db: object) -> None:
+    """S03402, S06151 and S06325 were blocked in paper after a demotion (2026-10-21)."""
+    from forven.strategies.live_revalidation import accept_live_execution_baseline
+
+    row, result_id = _live_baseline_fixture()
+    accept_live_execution_baseline(row["id"], result_id, actor="user", reason="Repair legacy record")
+    _demote_to_paper(row["id"])
+    bound, error = execution_binding({**row, "stage": "paper"})
+    assert error is None and bound["result_id"] == result_id
+    assert current_execution_error(row["id"], result_id) is None
+    assert "parameters changed" in execution_binding({**row, "stage": "paper", "params": {"rsi_period": 99}})[1]
+
+
+def test_demotion_to_paper_keeps_the_original_paper_promotion(forven_db: object) -> None:
+    row, _ = _live_baseline_fixture(admission=False)
+    accepted = {"verified": True, "result_id": "promoted", "reason": None,
+                "contract": _contract(params=json.loads(row["params"]))}
+    with get_db() as conn:
+        conn.execute("INSERT INTO strategy_events (strategy_id,from_state,to_state,details_json,created_at) "
+                     "VALUES (?,'gauntlet','paper',?,datetime('now'))",
+                     (row["id"], json.dumps({"execution_validation": accepted})))
+        conn.execute("INSERT INTO strategy_events (strategy_id,from_state,to_state,actor,created_at) "
+                     "VALUES (?,'paper','live_graduated','user',datetime('now'))", (row["id"],))
+    _demote_to_paper(row["id"])
+    bound, error = execution_binding({**row, "stage": "paper"})
+    assert error is None and bound["result_id"] == "promoted"
+
+
+def test_demotion_without_earlier_evidence_stays_unverified(forven_db: object) -> None:
+    row, _ = _live_baseline_fixture()
+    _demote_to_paper(row["id"])
+    assert "unverified" in execution_binding({**row, "stage": "paper"})[1]
+
+
 def test_scanner_replays_accepted_configuration_with_fresh_instance(forven_db: object, monkeypatch: pytest.MonkeyPatch) -> None:
     from forven import scanner
     from forven.strategies import backtest, registry

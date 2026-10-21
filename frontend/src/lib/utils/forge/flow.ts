@@ -12,6 +12,13 @@ import { normalizeStage } from '$lib/utils/strategy';
 export const PIPELINE_STAGES = ['quick_screen', 'gauntlet', 'paper', 'live_graduated'] as const;
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
+/**
+ * The stages the Forge shows. Probation is a live strategy at reduced size
+ * (stored as live_graduated), so it has its own column but no flow of its own.
+ */
+export const RAIL_STAGES = ['quick_screen', 'gauntlet', 'paper', 'probation', 'live_graduated'] as const;
+export type RailStage = (typeof RAIL_STAGES)[number];
+
 const TERMINAL = new Set(['archived', 'rejected', 'backtest_failed']);
 
 export interface StageFlow {

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { dirtyFields, markField } from '$lib/settings/dirty';
 	import { formatEffective } from '$lib/settings/effective';
+	import { differsFromDefault } from '$lib/settings/values';
 	import { describeRange, numberBounds, outOfRange } from '$lib/settings/bounds';
 
 	export let id: string;
@@ -22,6 +23,17 @@
 	// RISK-BOUND-1: when the engine replaces the saved value (e.g. a cap locked
 	// on mainnet), the value actually in force and why.
 	export let inForce: { effective: unknown; reason: string } | null = null;
+	// Changes what live orders do with real money.
+	export let realMoney = false;
+
+	// The description, default and range sit behind the (?) beside the name:
+	// shown on hover or focus, and pinned open by a click.
+	let helpOpen = false;
+	let helpEl: HTMLElement | null = null;
+
+	function closeHelpOutside(e: MouseEvent): void {
+		if (helpOpen && helpEl && !helpEl.contains(e.target as Node)) helpOpen = false;
+	}
 
 	$: dirty = $dirtyFields.has(id);
 	$: bounds = type === 'number' ? numberBounds(id) : undefined;
@@ -29,6 +41,22 @@
 	$: invalid = outOfRange(value, bounds);
 	$: showSavedBadge = type === 'secret' && configured && !dirty;
 	$: selectedValues = arrayValue(value);
+	$: changed = differsFromDefault({ id, type, default: defaultValue } as never, value);
+	$: defaultText = describeValue(defaultValue);
+
+	function describeValue(v: unknown): string {
+		if (v === null || v === undefined || v === '') return 'empty';
+		if (typeof v === 'boolean') return v ? 'On' : 'Off';
+		if (Array.isArray(v)) return v.length ? v.join(', ') : 'none';
+		const option = options.find((o) => o.value === v);
+		if (option) return option.label;
+		return `${v}${unit ? ` ${unit}` : ''}`;
+	}
+
+	function resetToDefault(): void {
+		value = defaultValue;
+		markField(id, defaultValue);
+	}
 	$: yearHint =
 		valueHint === 'years' && type === 'number' && value != null && Number(value) > 0
 			? `≈ ${(Number(value) / 365).toFixed(Number(value) / 365 >= 1 ? 1 : 2)}y`
@@ -123,10 +151,19 @@
 	}
 </script>
 
+<svelte:window on:click={closeHelpOutside} on:keydown={(e) => { if (e.key === 'Escape') helpOpen = false; }} />
+
 <div class="flex flex-col gap-1 py-3 border-b border-sc-line">
 	<div class="flex items-center justify-between gap-3">
-		<label for={id} class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 flex items-center gap-2">
+		<span class="group/help relative flex min-w-0 items-center gap-1.5" bind:this={helpEl}>
+		<label for={id} title="Setting ID: {id}" class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 flex flex-wrap items-center gap-2">
 			{label}
+			{#if realMoney}
+				<span
+					class="rounded border border-red-800/70 bg-red-950/30 px-1 text-[10px] text-red-300"
+					data-testid="real-money-{id}"
+				>Real money</span>
+			{/if}
 			{#if dirty}
 				<span
 					data-testid="dirty-dot-{id}"
@@ -135,7 +172,32 @@
 				></span>
 			{/if}
 		</label>
+		<button
+			type="button"
+			class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-sc-line2 text-[10px] leading-none text-sc-ink3 hover:border-sc-ink3 hover:text-sc-ink focus:border-sc-ink3 focus:text-sc-ink focus:outline-none"
+			aria-label="What is {label}?"
+			aria-expanded={helpOpen}
+			aria-controls="{id}-help"
+			data-testid="help-{id}"
+			on:click={() => (helpOpen = !helpOpen)}
+		>?</button>
+		<div
+			id="{id}-help"
+			role="tooltip"
+			class="absolute left-0 top-full z-30 mt-1 w-80 max-w-[80vw] flex-col gap-1.5 rounded-md border border-sc-line2 bg-sc-panel p-3 shadow-lg group-hover/help:flex group-focus-within/help:flex {helpOpen ? 'flex' : 'hidden'}"
+			data-testid="help-text-{id}"
+		>
+			<p class="m-0 text-xs normal-case tracking-normal text-sc-ink2">{description}</p>
+			<p class="m-0 flex flex-wrap items-center gap-x-2 text-[10px] text-sc-ink3">
+				<span>Default: {defaultText}</span>
+				{#if rangeText}<span>· Range: <span data-testid="range-{id}">{rangeText}{unit ? ` ${unit}` : ''}</span></span>{/if}
+			</p>
+		</div>
+		</span>
 		<div class="flex items-center gap-2">
+			{#if inForce}
+				<span class="text-[10px] uppercase tracking-[0.08em] text-sc-ink3">Saved</span>
+			{/if}
 			{#if type === 'toggle'}
 				<input {id} type="checkbox" checked={!!value} on:change={handleToggle} />
 			{:else if type === 'select'}
@@ -219,15 +281,28 @@
 		</div>
 	</div>
 	{#if inForce}
-		<p class="text-xs text-yellow-300" data-testid="in-force-{id}">
-			In force: <span class="font-semibold">{formatEffective(inForce.effective)}{unit ? ` ${unit}` : ''}</span> · {inForce.reason}
-		</p>
+		<div
+			class="flex flex-wrap items-baseline justify-between gap-2 rounded border border-[#e7b24a]/50 bg-[#e7b24a]/10 px-3 py-2"
+			data-testid="in-force-{id}"
+		>
+			<span class="text-xs text-sc-ink2">The engine uses <span class="text-sm font-semibold text-sc-ink">{formatEffective(inForce.effective)}{unit ? ` ${unit}` : ''}</span></span>
+			<span class="text-[11px] text-[#e7b24a]">{inForce.reason}. Your saved value is not used.</span>
+		</div>
 	{/if}
 	{#if invalid}
 		<p id="{id}-range" class="text-xs text-[#e7b24a]" data-testid="out-of-range-{id}">
 			Must be {rangeText}{unit ? ` ${unit}` : ''}.{bounds?.enforced ? ' The save will not keep this value.' : ''}
 		</p>
 	{/if}
-	<p class="text-xs text-sc-ink2">{description}</p>
-	<p class="text-[10px] text-sc-ink3">Default: {defaultValue}{unit ? ` ${unit}` : ''}{#if rangeText}{' '}· Range: <span data-testid="range-{id}">{rangeText}{unit ? ` ${unit}` : ''}</span>{/if} · Setting ID: {id}</p>
+	{#if changed}
+		<p class="m-0 flex flex-wrap items-center gap-x-2 text-[10px] text-sc-ink3">
+			<span class="text-sc-ink2" data-testid="changed-{id}">Changed from {defaultText}</span>
+			<button
+				type="button"
+				class="underline hover:text-sc-ink"
+				on:click={resetToDefault}
+				data-testid="reset-{id}"
+			>Use default</button>
+		</p>
+	{/if}
 </div>

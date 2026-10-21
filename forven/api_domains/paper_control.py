@@ -123,6 +123,11 @@ def _resolve_open_trade(session_id: str) -> tuple[dict, dict]:
     trade = _load_open_trade_row(trade_id) if trade_id else None
     if trade is None:
         raise HTTPException(status_code=400, detail="No open position for this session.")
+    leg_symbol = str((position or {}).get("symbol") or "").strip()
+    if leg_symbol and leg_symbol != str(session.get("symbol") or "").strip():
+        # Another coin of a multi-coin container (forven.multi_coin): every manual
+        # fill on this position is priced on its own coin, never the home coin.
+        session = {**session, "symbol": leg_symbol, "current_price": (position or {}).get("current_price")}
     return session, trade
 
 

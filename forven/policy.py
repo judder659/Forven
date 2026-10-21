@@ -12,7 +12,7 @@ from typing import Any
 from forven import live_evidence, multi_coin, paper_door, paper_pool
 from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
-from forven import quick_screen_rule
+from forven import probation_rules, quick_screen_rule
 from forven.dethrone_cooldown import dethrone_cooldown_active_until
 
 from forven.gauntlet.legitimacy import validate_robustness_payload
@@ -313,8 +313,8 @@ DEFAULT_PIPELINE_CONFIG = {
     # 3x allowance for candle loads), at most max_per_family in one strategy
     # family and, if an operator sets one, max_per_market on one coin (0 = no
     # limit; no per-coin limit by default since 2026-10-20). Strategies that pass
-    # the door while the pool is full wait in a queue ranked by their recorded
-    # evidence. Paper strategies whose forward record shows them losing are
+    # the door while the pool is full wait in a queue ranked by trade pace and
+    # timeframe first, then their recorded evidence. Paper strategies whose forward record shows them losing are
     # retired (archived as paper_retired:<why>), freeing their slot.
     "paper_pool": {
         "max_strategies": 40,
@@ -351,6 +351,12 @@ DEFAULT_PIPELINE_CONFIG = {
         ],
         "decay_kill_switch_pct": 0.30,
     },
+    # Live probation (2026-10 probation plan): a short paper confirmation, then
+    # real money at a fraction of normal size that grows with the live record,
+    # and automatic demotion when live results leave the backtest's range.
+    # Thresholds only; what Forven does on its own is switched separately
+    # (forven.probation automation, typed confirmation).
+    "probation": dict(probation_rules.DEFAULTS),
     # Absolute anti-bypass floors clamped onto the promotion gates. FULLY EDITABLE —
     # these bound how far a relaxed preset / custom config / automated caller can
     # soften the path, but the operator can change them from Settings. Set a floor to
@@ -2891,23 +2897,6 @@ def _evaluate_source_divergence_gate(
     return True, f"source divergence {max_div:.2f}% within {max_threshold:.2f}%"
 
 
-def _paper_slot_competition_enabled(settings: object = None) -> bool:
-    """Whether capital slots are limited to ONE strategy per symbol/timeframe.
-
-    When True, the quality-aware duplicate tournament (gauntlet entry), the paper
-    slot-guard, the capital-slot dedupe sweep, and the paper WIP cap all apply, so
-    a market holds a single champion and challengers must dethrone it.
-
-    When False (DEFAULT), every strategy that passes the gauntlet robustness gate is
-    promoted to paper — no per-slot competition, no dethrone tournament, and no
-    cap on how many strategies may paper-trade. The gauntlet quality gate itself is
-    unchanged. Wired setting: forven:settings.paper_slot_competition_enabled.
-    """
-    if settings is None:
-        settings = kv_get("forven:settings")
-    return bool(settings.get("paper_slot_competition_enabled", False)) if isinstance(settings, dict) else False
-
-
 def evaluate_promotion(
     strategy_id: str,
     from_stage: str,
@@ -3017,99 +3006,14 @@ def evaluate_promotion(
                 _log_gate_rejection_record(strategy_id, stage_label, div_reason, config)
             return False, div_reason
 
-    # Guardrail 6: Active strategy correlation check (S00291)
-    # Check for duplication with live/paper strategies before gauntlet promotion
+    # Several strategies may trade the same market: the old one-per-slot
+    # tournament (paper_slot_competition_enabled) was removed 2026-10.
     if normalized_to == "gauntlet":
-        with get_db() as conn:
-            live_rows = conn.execute(
-                """SELECT s.id, s.name, s.symbol, s.timeframe, s.stage, s.metrics
-                   FROM strategies s
-                   WHERE s.stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed')
-                      AND s.symbol IS NOT NULL
-                      AND s.symbol != ''
-                      AND s.symbol != 'GENERIC'"""
-            ).fetchall()
-
-            new_row = conn.execute(
-                "SELECT symbol, timeframe, metrics FROM strategies WHERE id = ?",
-                (strategy_id,)
-            ).fetchone()
-
-        if new_row and _paper_slot_competition_enabled(general_settings):
-            new_symbol = str(new_row["symbol"] or "").strip().upper()
-            new_timeframe = str(new_row["timeframe"] or "").strip().lower()
-            challenger_metrics = _load_metrics_blob(new_row)
-
-            # Collect incumbents holding the same symbol/timeframe slot.
-            colliding = [
-                live
-                for live in live_rows
-                if str(live["symbol"] or "").strip().upper() == new_symbol
-                and str(live["timeframe"] or "").strip().lower() == new_timeframe
-            ]
-            # Quality-aware tournament: block unless the challenger materially beats
-            # every incumbent on the slot. A weaker/equal challenger is still rejected
-            # (roster hygiene). A clearly better one passes AND queues a dethrone so
-            # the occupied slot can free up rather than blocking the better strategy.
-            beaten: list[tuple] = []
-            sharpe_ceiling = _challenger_sharpe_ceiling(config)
-            for live in colliding:
-                incumbent_metrics = _load_metrics_blob(live)
-                if _challenger_materially_beats(
-                    challenger_metrics, incumbent_metrics, sharpe_ceiling=sharpe_ceiling
-                ):
-                    beaten.append((live, incumbent_metrics))
-                else:
-                    return False, f"Duplicate with active strategy {live['id']} (same {new_symbol} {new_timeframe})"
-            # dry_run: same tournament verdict, but never queue/apply a dethrone.
-            for live, incumbent_metrics in [] if dry_run else beaten:
-                with get_db() as dconn:
-                    approval_id = _queue_challenger_dethrone(
-                        conn=dconn,
-                        incumbent_id=str(live["id"]),
-                        incumbent_stage=str(live["stage"] or "paper").strip().lower(),
-                        challenger_id=strategy_id,
-                        challenger_sharpe=_metric_sharpe(challenger_metrics),
-                        incumbent_sharpe=_metric_sharpe(incumbent_metrics),
-                    )
-                _maybe_auto_apply_dethrone(approval_id, general_settings)
-
         result = _evaluate_quick_screen_gate(strategy_id, config)
         if record_rejection and not result[0]:
             _log_gate_rejection_record(strategy_id, "quick_screen", result[1], config)
         return result
     if normalized_to == "paper":
-        # Slot-guard: when slot-competition is enabled, keep one strategy per
-        # symbol/timeframe in capital-bearing stages (a challenger waits for the
-        # incumbent's slot to free via dethrone). When disabled (default), any
-        # strategy that clears the gauntlet gate below is promoted regardless of how
-        # many already trade the same market.
-        if _paper_slot_competition_enabled(general_settings):
-            with get_db() as conn:
-                occ_rows = conn.execute(
-                    """SELECT s.id, s.symbol, s.timeframe
-                       FROM strategies s
-                       WHERE s.stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed')
-                         AND s.id != ?
-                         AND s.symbol IS NOT NULL
-                         AND s.symbol != ''
-                         AND s.symbol != 'GENERIC'""",
-                    (strategy_id,),
-                ).fetchall()
-                self_row = conn.execute(
-                    "SELECT symbol, timeframe FROM strategies WHERE id = ?", (strategy_id,)
-                ).fetchone()
-            if self_row:
-                my_symbol = str(self_row["symbol"] or "").strip().upper()
-                my_timeframe = str(self_row["timeframe"] or "").strip().lower()
-                for occ in occ_rows:
-                    occ_symbol = str(occ["symbol"] or "").strip().upper()
-                    occ_timeframe = str(occ["timeframe"] or "").strip().lower()
-                    if occ_symbol == my_symbol and occ_timeframe == my_timeframe:
-                        return False, (
-                            f"Slot occupied by incumbent {occ['id']} "
-                            f"(same {my_symbol} {my_timeframe}) — awaiting dethrone"
-                        )
         result = _evaluate_gauntlet_gate(strategy_id, config, dry_run=dry_run)
         if result[0]:
             # Capacity, not merit: the door passed, so the strategy either takes a
@@ -3574,285 +3478,6 @@ def _clear_pending_dethrone_recommendations_for_strategy(conn, strategy_id: str,
     return len(approval_ids)
 
 
-def _metric_sharpe(metrics: dict) -> float | None:
-    """Read a strategy's Sharpe from a metrics blob, preferring 'sharpe'."""
-    if not isinstance(metrics, dict):
-        return None
-    raw = metrics.get("sharpe")
-    if raw is None:
-        raw = metrics.get("sharpe_ratio")
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-# Above this Sharpe, an incumbent's extra Sharpe is treated as overfitting
-# noise rather than a real edge a challenger must beat. Without a cap, an
-# overfit incumbent (e.g. Sharpe 8-10 from a curve-fit on one regime) holds its
-# symbol/timeframe slot forever because nothing can clear it by the 15% margin —
-# the documented 2026-05-06 paper-promotion deadlock. Configurable via the
-# pipeline `gauntlet.challenger_sharpe_comparison_ceiling` setting.
-_DEFAULT_CHALLENGER_SHARPE_CEILING = 3.0
-
-
-def _challenger_sharpe_ceiling(config: dict | None) -> float:
-    """Resolve the incumbent Sharpe comparison ceiling from pipeline config."""
-    try:
-        gauntlet = (config or {}).get("gauntlet") if isinstance(config, dict) else None
-        raw = (gauntlet or {}).get("challenger_sharpe_comparison_ceiling")
-        ceiling = float(raw) if raw is not None else _DEFAULT_CHALLENGER_SHARPE_CEILING
-    except (TypeError, ValueError):
-        ceiling = _DEFAULT_CHALLENGER_SHARPE_CEILING
-    return ceiling if ceiling > 0 else _DEFAULT_CHALLENGER_SHARPE_CEILING
-
-
-def _challenger_materially_beats(
-    challenger_metrics: dict,
-    incumbent_metrics: dict,
-    margin: float = 0.15,
-    *,
-    sharpe_ceiling: float | None = None,
-) -> bool:
-    """True when the challenger's Sharpe clears the incumbent's by `margin`.
-
-    The incumbent's comparison Sharpe is capped at ``sharpe_ceiling`` (when set)
-    so an overfit incumbent with an implausible Sharpe cannot defend its slot
-    against a genuinely good challenger forever.
-
-    Conservative by design: if either side lacks a usable Sharpe, return False so
-    the duplicate gate keeps blocking (roster hygiene is preserved on missing data).
-    """
-    ch_s = _metric_sharpe(challenger_metrics)
-    inc_s = _metric_sharpe(incumbent_metrics)
-    if ch_s is None or inc_s is None:
-        return False
-    base = max(inc_s, 0.0)
-    if sharpe_ceiling is not None and sharpe_ceiling > 0:
-        base = min(base, float(sharpe_ceiling))
-    threshold = base * (1.0 + margin)
-    return ch_s >= threshold and ch_s > 0
-
-
-def dedupe_capital_slots(*, actor: str = "pipeline_sweep", dry_run: bool = False) -> dict:
-    """Archive redundant duplicates so each symbol/timeframe capital slot holds
-    only the single best-Sharpe strategy.
-
-    The slot/duplicate gate prevents NEW duplicates, but strategies promoted
-    before that gate existed can pile multiple incumbents onto one slot, which
-    forces a challenger to beat ALL of them and effectively freezes the slot
-    (the documented 2026-05-06 ETH/USDT-1h deadlock). Keeps the highest-Sharpe
-    incumbent per slot and archives the rest through the proper lifecycle path
-    (force-archive + strategy_events). Idempotent: a slot with one occupant is a
-    no-op, so it is safe to re-run.
-
-    No-op when slot-competition is disabled (the default) — that mode deliberately
-    allows multiple strategies per market, so de-duping them would fight the policy.
-    """
-    import logging as _logging
-
-    from forven.brain import transition_stage
-
-    if not _paper_slot_competition_enabled():
-        return {"archived": [], "dry_run": dry_run, "slots_examined": 0,
-                "skipped": "paper_slot_competition_disabled"}
-
-    slots: dict[tuple[str, str], list[tuple[str, float]]] = {}
-    with get_db() as conn:
-        rows = conn.execute(
-            """SELECT id, symbol, timeframe, stage, metrics FROM strategies
-               WHERE stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed')
-                 AND symbol IS NOT NULL AND symbol != '' AND symbol != 'GENERIC'"""
-        ).fetchall()
-    for row in rows:
-        sharpe = _metric_sharpe(_load_metrics_blob(row))
-        key = (str(row["symbol"]).strip().upper(), str(row["timeframe"]).strip().lower())
-        slots.setdefault(key, []).append(
-            (str(row["id"]), sharpe if sharpe is not None else float("-inf"))
-        )
-
-    archived: list[dict] = []
-    for (symbol, timeframe), members in slots.items():
-        if len(members) <= 1:
-            continue
-        members.sort(key=lambda m: m[1], reverse=True)
-        keep_id, keep_sharpe = members[0]
-        for victim_id, victim_sharpe in members[1:]:
-            entry = {
-                "slot": f"{symbol} {timeframe}",
-                "kept": keep_id,
-                "kept_sharpe": None if keep_sharpe == float("-inf") else keep_sharpe,
-                "archived": victim_id,
-                "archived_sharpe": None if victim_sharpe == float("-inf") else victim_sharpe,
-            }
-            if not dry_run:
-                try:
-                    transition_stage(
-                        strategy_id=victim_id,
-                        target_stage="archived",
-                        reason=(
-                            f"Slot de-dup: {symbol} {timeframe} kept best-Sharpe "
-                            f"incumbent {keep_id}"
-                        ),
-                        actor=actor,
-                        force=True,
-                    )
-                except Exception:
-                    _logging.getLogger("forven.policy").exception(
-                        "dedupe_capital_slots: failed to archive %s", victim_id
-                    )
-                    continue
-            archived.append(entry)
-    if archived:
-        _logging.getLogger("forven.policy").info(
-            "dedupe_capital_slots: archived %d redundant slot occupant(s)%s",
-            len(archived),
-            " (dry run)" if dry_run else "",
-        )
-    return {"archived": archived, "dry_run": dry_run, "slots_examined": len(slots)}
-
-
-def _queue_challenger_dethrone(
-    *,
-    conn,
-    incumbent_id: str,
-    incumbent_stage: str,
-    challenger_id: str,
-    challenger_sharpe: float | None,
-    incumbent_sharpe: float | None,
-) -> int | None:
-    """Queue a dethrone recommendation because a superior challenger appeared.
-
-    Tagged with trigger='superior_challenger' so the insufficient-evidence
-    auto-clear leaves it alone. Deduped on any existing pending dethrone.
-    """
-    pending = conn.execute(
-        """
-        SELECT id FROM approvals
-        WHERE approval_type = ?
-          AND target_type = 'strategy'
-          AND target_id = ?
-          AND status = 'pending_approval'
-        ORDER BY id DESC
-        LIMIT 1
-        """,
-        (_DETHRONE_APPROVAL_TYPE, incumbent_id),
-    ).fetchone()
-    if pending:
-        return int(pending["id"])
-
-    if dethrone_cooldown_active_until(incumbent_id, conn=conn):
-        logging.getLogger("forven.policy").info(
-            "challenger dethrone suppressed by deny cooldown: %s", incumbent_id
-        )
-        return None
-
-    try:
-        from forven.brain import _paper_dethrone_soak_block
-
-        soak_block = _paper_dethrone_soak_block(conn, incumbent_id, incumbent_stage)
-    except Exception:
-        soak_block = None
-    if soak_block:
-        logging.getLogger("forven.policy").info(
-            "challenger dethrone suppressed for %s: %s", incumbent_id, soak_block
-        )
-        return None
-
-    payload = {
-        "strategy_id": incumbent_id,
-        "current_stage": incumbent_stage,
-        "trigger": "superior_challenger",
-        "challenger_id": challenger_id,
-        "challenger_sharpe": challenger_sharpe,
-        "incumbent_sharpe": incumbent_sharpe,
-        "recommended_action": "dethrone",
-        "recommended_target_stage": _resolve_dethrone_target_stage(incumbent_stage),
-        "operator_required": True,
-    }
-    try:
-        from forven.brain import _strategy_approval_snapshot
-
-        snapshot = _strategy_approval_snapshot(conn, incumbent_id)
-        if snapshot:
-            payload["strategy_snapshot"] = snapshot
-    except Exception:
-        pass
-
-    recommended_target_stage = payload["recommended_target_stage"]
-    approval_id = create_approval(
-        approval_type=_DETHRONE_APPROVAL_TYPE,
-        target_type="strategy",
-        target_id=incumbent_id,
-        requested_status=recommended_target_stage,
-        status="pending_approval",
-        actor="policy",
-        reason=(
-            f"Dethrone recommendation: challenger {challenger_id} (Sharpe {challenger_sharpe}) "
-            f"materially beats incumbent {incumbent_id} (Sharpe {incumbent_sharpe}) on the same slot"
-        ),
-        payload=payload,
-        owner="ceo",
-        conn=conn,
-    )
-    conn.execute(
-        """
-        INSERT INTO strategy_events
-            (strategy_id, from_state, to_state, actor, reason, created_at)
-        VALUES
-            (?, ?, ?, 'policy', ?, strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
-        """,
-        (
-            incumbent_id,
-            incumbent_stage,
-            incumbent_stage,
-            f"Dethrone recommendation queued (approval #{approval_id}): superior challenger {challenger_id}",
-        ),
-    )
-    return approval_id
-
-
-def _maybe_auto_apply_dethrone(approval_id: int | None, settings: object) -> None:
-    """Apply a challenger-driven dethrone immediately when auto-approval is on.
-
-    Routes through the operator-approval code path (force=True, actor='ui'), which
-    demotes the incumbent paper->gauntlet — reversible, so the former incumbent can
-    re-promote. Failures are swallowed: the approval simply stays pending for review.
-    """
-    if not approval_id:
-        return
-    settings_dict = settings if isinstance(settings, dict) else {}
-    # Default ON: in autonomous operation a frozen roster (occupied slots that can
-    # never free) is itself a failure mode. The flag defaults True so existing
-    # installs without the key still free slots; an operator can explicitly set it
-    # False to require manual approval. Fully-autonomous mode (promotion_mode=='auto'
-    # / auto_approve_promotions) also implies auto-dethrone.
-    auto_dethrone = bool(settings_dict.get("auto_approve_dethrone", True))
-    if not auto_dethrone:
-        try:
-            from forven.brain import _auto_approve_promotions_enabled
-            auto_dethrone = bool(_auto_approve_promotions_enabled())
-        except Exception:  # noqa: BLE001 - autonomy probe is best-effort
-            auto_dethrone = False
-    if not auto_dethrone:
-        return
-    try:
-        from forven.control_plane.approvals import post_approve_approval
-        from forven.control_plane.models import ApprovalDecisionBody
-
-        post_approve_approval(
-            int(approval_id),
-            ApprovalDecisionBody(
-                actor="policy:auto_dethrone",
-                reason="Auto-approved challenger-driven dethrone (auto_approve_dethrone enabled)",
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 - leave pending on any failure
-        log.warning("Auto-approve dethrone failed for approval #%s: %s", approval_id, exc)
-
-
 def _check_repeated_failure_auto_archive(
     strategy_id: str,
     gate: str,
@@ -3951,6 +3576,10 @@ def _check_repeated_failure_auto_archive(
                     )
                     return
                 if dethrone_cooldown_active_until(strategy_id, conn=conn):
+                    return
+                if current_stage in {"paper", "paper_trading"}:
+                    # Paper retirement belongs to the paper pool's rules
+                    # (forven.paper_pool), not to an approval queue.
                     return
                 approval_id = _queue_dethrone_recommendation(
                     conn=conn,
@@ -4867,12 +4496,30 @@ def _paper_evidence_score(row) -> float:
         metrics = {}
     oos = _unwrap_metrics_dict(metrics.get("out_of_sample", metrics)) if metrics else {}
     oos = oos if isinstance(oos, dict) else {}
+    pace, avg_trade = _backtest_pace(metrics)
     return paper_pool.evidence_score(
         row["deflated_sharpe"] if "deflated_sharpe" in keys else None,
         _resolve_robustness_points(metrics) if metrics else None,
         oos.get("sharpe_ratio", oos.get("sharpe")),
         _breadth_verdict(str(row["id"])) if "id" in keys else None,
+        trades_per_month=pace,
+        timeframe=row["timeframe"] if "timeframe" in keys else None,
+        avg_trade=avg_trade,
     )
+
+
+def _backtest_pace(metrics: dict) -> tuple[float | None, float | None]:
+    """(trades per month, net average trade) over the whole backtest window, None when unmeasured."""
+    whole = quick_screen_rule.whole_window(metrics) if metrics else {}
+    trades = _coerce_optional_float(whole.get("total_trades", whole.get("trades")))
+    if trades is None or trades <= 0:
+        return None, None
+    months = _coerce_optional_float(whole.get("backtest_months"))
+    if not months or months <= 0:
+        days = quick_screen_rule.window_span_days(metrics)
+        months = days / 30.44 if days else None
+    pace = trades / months if months else None
+    return pace, _coerce_optional_float(whole.get("avg_trade_pct"))
 
 
 def paper_admission_reason(strategy_id: str, config: dict | None = None, *, record: bool = True) -> str | None:
@@ -5535,6 +5182,17 @@ def _evaluate_gauntlet_gate(strategy_id: str, config: dict, *, dry_run: bool = F
     # === Promotion Readiness Gates (configurable via pipeline settings) ===
     ps = _load_pipeline_settings()
     warnings_list: list[str] = []
+
+    # Thin-edge warning (2026-10 forward replay): most strategies' average trade
+    # barely clears costs. Never blocks; it lowers the paper-queue rank.
+    _pace, _avg_trade = _backtest_pace(metrics)
+    _coverage = paper_pool.cost_coverage(_avg_trade)
+    if _coverage is not None and _coverage < paper_pool.MIN_COST_COVERAGE:
+        warnings_list.append(
+            f"thin edge: average trade {_avg_trade * 100:.3f}% covers {_coverage:.1f}x the "
+            f"{paper_pool.DEFAULT_ROUND_TRIP_COST * 100:.2f}% round-trip cost "
+            f"(want {paper_pool.MIN_COST_COVERAGE:.0f}x)"
+        )
 
     def _gate_check(enabled_key: str, required_key: str, check_fn, *args) -> tuple[bool, str] | None:
         if not ps.get(enabled_key, True):

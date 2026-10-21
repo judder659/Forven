@@ -968,6 +968,42 @@ def build_server(client: ForvenClient | None = None) -> FastMCP:
         )
 
     @server.tool(
+        name="forven_get_probation",
+        description=(
+            "Live probation: with strategy_id, one strategy's probation record, "
+            "live record since probation began, demotion triggers hit, size "
+            "ladder, and (for a paper strategy) its probation entry checks. "
+            "Without strategy_id, every strategy in probation plus the ready list. "
+            "Read-only."
+        ),
+    )
+    def forven_get_probation(strategy_id: str | None = None) -> dict[str, Any]:
+        if strategy_id:
+            return forven.get(f"/api/probation/strategies/{strategy_id}")
+        return forven.get("/api/probation")
+
+    @server.tool(
+        name="forven_reduce_probation_risk",
+        description=(
+            "Reduce a live probation strategy's risk: action='pause' stops new "
+            "entries, action='resume' allows them again, action='demote' sends it "
+            "back to paper (open positions run to their own exit first). Starting "
+            "probation, raising size and graduating to full size put more real "
+            "money at risk and are done by the operator in the app."
+        ),
+    )
+    def forven_reduce_probation_risk(strategy_id: str, action: str, reason: str = "") -> dict[str, Any]:
+        verb = str(action or "").strip().lower()
+        if verb in {"pause", "resume"}:
+            return forven.post(f"/api/probation/strategies/{strategy_id}/pause", {"paused": verb == "pause"})
+        if verb == "demote":
+            return forven.post(
+                f"/api/probation/strategies/{strategy_id}/demote",
+                {"reason": reason or "Demoted through MCP"},
+            )
+        return {"ok": False, "error": "action must be pause, resume or demote"}
+
+    @server.tool(
         name="forven_run_gauntlet_candidate",
         description=(
             "Orchestrated shortcut for steps 5+7+8 on a promising candidate: "

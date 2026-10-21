@@ -95,7 +95,15 @@ export function buildRows(input: {
 		const legs = legsOf(session);
 		const mark = livePrice(input.prices, session.symbol) ?? (num(session.current_price) || null);
 		const leverage = num(session.leverage) ?? 1;
-		const maths = mark !== null ? legs.map((leg) => legMath(leg, mark, leverage, session.timeframe, input.now)) : [];
+		// A multi-coin container's other coins are marked on their own price, never the home coin's.
+		const legMarks = legs.map((leg) =>
+			leg.symbol && assetOf(leg.symbol) !== assetOf(session.symbol)
+				? livePrice(input.prices, leg.symbol) ?? leg.serverMark
+				: mark,
+		);
+		const maths = legMarks.every((legMark) => legMark !== null)
+			? legs.map((leg, index) => legMath(leg, legMarks[index] as number, leverage, session.timeframe, input.now))
+			: [];
 		const stats = input.stats.get(sid) ?? empty;
 		let state: LiveStrategyState = fleet?.state ?? (session.status === 'blocked' ? 'blocked' : 'watching');
 		// The session is fresher than the scorecard for positions.

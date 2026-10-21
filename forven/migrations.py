@@ -889,6 +889,75 @@ def _m_2026_09_data_jobs(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_routine ON data_jobs (routine, created_at DESC)")
 
 
+def _m_2026_10_close_stale_dethrone_approvals(conn: sqlite3.Connection) -> None:
+    """Close dethrone approvals that no longer have anything to decide.
+
+    Agent requests to demote or archive a PAPER strategy stopped going to
+    approval (the paper pool's retirement rules decide; 2026-10 Settings and
+    Approvals overhaul), and the Approvals page went with them. Pending
+    dethrone rows for paper strategies, and rows whose strategy has since left
+    the stage the request was about, are marked expired. History is kept.
+    Idempotent: a second run finds nothing pending to close.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {"approvals", "strategies"} <= tables:
+        return
+    canonical = {"paper_trading": "paper", "deployed": "live_graduated"}
+    rows = conn.execute(
+        """SELECT a.id, a.payload, s.stage
+           FROM approvals a
+           LEFT JOIN strategies s ON s.id = a.target_id
+           WHERE a.status = 'pending_approval'
+             AND a.approval_type = 'strategy_dethrone_recommendation'"""
+    ).fetchall()
+    stale: list[int] = []
+    for approval_id, payload_raw, stage in rows:
+        try:
+            payload = json.loads(payload_raw) if payload_raw else {}
+        except (TypeError, ValueError):
+            payload = {}
+        asked_about = str((payload or {}).get("current_stage") or "").strip().lower()
+        now_in = str(stage or "").strip().lower()
+        asked_about = canonical.get(asked_about, asked_about)
+        now_in = canonical.get(now_in, now_in)
+        if not now_in or now_in == "paper" or (asked_about and asked_about != now_in):
+            stale.append(int(approval_id))
+    for approval_id in stale:
+        conn.execute(
+            """UPDATE approvals
+               SET status = 'expired',
+                   decision = 'Closed: nothing left to decide (paper retirement follows the paper pool rules)',
+                   decided_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'),
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')
+               WHERE id = ? AND status = 'pending_approval'""",
+            (approval_id,),
+        )
+    log.info("Closed %d stale dethrone approval(s)", len(stale))
+
+
+def _m_2026_10_close_paper_live_promotion_approvals(conn: sqlite3.Connection) -> None:
+    """Close pending paper -> live promotion approvals.
+
+    Paper now reaches live only through live probation (forven.probation), so a
+    queued full-size go-live request has nothing left to decide. Marked expired;
+    history is kept. Idempotent.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "approvals" not in tables:
+        return
+    cur = conn.execute(
+        """UPDATE approvals
+           SET status = 'expired',
+               decision = 'Closed: paper goes live through probation (start it on the strategy page)',
+               decided_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'),
+               updated_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')
+           WHERE status = 'pending_approval'
+             AND approval_type = 'strategy_promotion_approval'
+             AND LOWER(COALESCE(requested_status, '')) IN ('live_graduated', 'deployed')"""
+    )
+    log.info("Closed %d paper-to-live promotion approval(s)", cur.rowcount or 0)
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -953,6 +1022,14 @@ MIGRATIONS: list[Migration] = [
     Migration(name="2026_09_retire_research_only", up=_m_2026_09_retire_research_only),
     Migration(name="2026_09_retire_crucibles", up=_m_2026_09_retire_crucibles),
     Migration(name="2026_09_data_jobs", up=_m_2026_09_data_jobs),
+    Migration(
+        name="2026_10_close_stale_dethrone_approvals",
+        up=_m_2026_10_close_stale_dethrone_approvals,
+    ),
+    Migration(
+        name="2026_10_close_paper_live_promotion_approvals",
+        up=_m_2026_10_close_paper_live_promotion_approvals,
+    ),
 ]
 
 

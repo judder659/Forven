@@ -60,7 +60,6 @@ from forven.routers.strategy_library import router as strategy_library_router
 from forven.routers.system import router as system_router
 from forven.routers.tasks import router as tasks_router
 from forven.routers.trading import router as trading_router
-from forven.routers.universe import router as universe_router
 from forven.routers.websockets import router as websockets_router
 from forven.routers.quant_factory import router as quant_factory_router
 from forven.routers.routines import router as routines_router
@@ -69,6 +68,7 @@ from forven.routers.webhooks import router as webhooks_router
 from forven.routers.updates import router as updates_router
 from forven.routers.backtesting import router as backtesting_router
 from forven.routers.breadth import router as breadth_router
+from forven.routers.probation import router as probation_router
 from forven.routers.lifecycle import router as lifecycle_router
 from forven.routers.verdict import router as verdict_router
 from forven.routers.robustness import router as robustness_router
@@ -450,6 +450,11 @@ async def lifespan(_app: FastAPI):
             log.info("Recovered %d bot(s) after restart.", result["recovered"])
     except Exception:
         log.exception("Failed to recover bots on startup.")
+    try:
+        from forven.bot_factory.manager import warm_bot_sandbox
+        warm_bot_sandbox()
+    except Exception:
+        log.exception("Failed to warm the bot sandbox.")
 
     # Phase 4: register MCP server tools (each server's tools become
     # available to granted agents via tool_registry). Per-server failures
@@ -776,7 +781,6 @@ app.include_router(notifications_router)
 app.include_router(ideas_router)
 app.include_router(approvals_router)
 app.include_router(ops_router)
-app.include_router(universe_router)
 app.include_router(analytics_router)
 app.include_router(data_router)
 app.include_router(data_acquire_router)
@@ -810,6 +814,7 @@ if not _is_beta_build():
     app.include_router(webhooks_router)
 app.include_router(backtesting_router)
 app.include_router(lifecycle_router)
+app.include_router(probation_router)
 app.include_router(deepdive_router)
 app.include_router(assistant_router)
 app.include_router(verdict_router)

@@ -2681,9 +2681,11 @@ def check_paper_graduation():
         passed, gate_reason = evaluate_promotion(strat_id, "paper", "live_graduated")
 
         if passed:
-            transition_stage(strat_id, "live_graduated", reason="Paper graduation criteria met", actor="system")
-            graduated.append(f"{strat_id}")
-            log.info("Evolution: graduated %s to live_graduated", strat_id)
+            # PROBATION-ONLY: paper reaches live only through live probation
+            # (forven.probation), which lists ready strategies and starts them on
+            # the operator's word or its own automation switch. This job no
+            # longer asks for a full-size go-live.
+            log.info("Evolution: %s passes the full-size gate; paper goes live through probation", strat_id)
         else:
             # Check if paper metrics are met but optimization is pending
             from forven.policy import check_paper_live_readiness

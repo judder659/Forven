@@ -4872,7 +4872,18 @@ def _index_to_position(value, index: pd.Index) -> int:
         return -1
 
 
-def _coerce_bool_series(values, index: pd.Index, label: str) -> pd.Series:
+def _is_default_range_index(candidate: pd.Index, length: int) -> bool:
+    """True when ``candidate`` is a default ``RangeIndex(0..length-1)`` (start 0, step 1)."""
+
+    return (
+        isinstance(candidate, pd.RangeIndex)
+        and candidate.start == 0
+        and candidate.step == 1
+        and len(candidate) == length
+    )
+
+
+def _coerce_bool_series(values: object, index: pd.Index, label: str) -> pd.Series:
     """Normalize arbitrary signal payloads into bool Series aligned to index."""
 
     if isinstance(values, pd.Series):
@@ -4888,6 +4899,14 @@ def _coerce_bool_series(values, index: pd.Index, label: str) -> pd.Series:
         raise ValueError(
             f"{label} length mismatch: expected {len(index)} rows, got {len(series)}"
         )
+
+    if not series.index.equals(index) and _is_default_range_index(series.index, len(index)):
+
+        # Strategies often build signals from df["close"].reset_index(drop=True),
+        # yielding an equal-length default RangeIndex. Adopt the price index by
+        # position -- exactly what a bare ndarray payload already gets above, so
+        # this introduces no new lookahead. Any other index shape still reindexes.
+        series = pd.Series(series.to_numpy(), index=index)
 
     if not series.index.equals(index):
 
@@ -6694,24 +6713,35 @@ def backtest_strategy(
                 return {"error": f"Backtest worker process failed: {e}", "trades": [], "metrics": {}}
     else:
         log.info("Running backtest %s inline without process isolation", strategy_id)
-        worker_result = _isolated_backtest_worker(
-            strategy_id,
-            original_strategy_type,
-            family_strategy_type,
-            params,
-            df,
-            float(leverage),
-            resolved_fee_bps,
-            resolved_slippage_bps,
-            regime_gate,
-            warmup,
-            resolved_timeframe,
-            resolved_trade_mode,
-            resolved_include_funding,
-            execution_controls,
-            resolved_initial_capital,
-            asset,
-        )
+        # The inline walk holds the GIL on the calling thread. In the backend
+        # (isolation on) only imported strategies land here, so queue them one at
+        # a time rather than letting several starve the API's event loop. With
+        # isolation off (tests, FORVEN_BACKTEST_PROCESS_ISOLATION=0) nothing
+        # changes.
+        from contextlib import nullcontext
+
+        from forven.strategies.concurrency import inline_backtest_slot
+
+        inline_gate = inline_backtest_slot("backtest") if _should_use_process_isolation() else nullcontext()
+        with inline_gate:
+            worker_result = _isolated_backtest_worker(
+                strategy_id,
+                original_strategy_type,
+                family_strategy_type,
+                params,
+                df,
+                float(leverage),
+                resolved_fee_bps,
+                resolved_slippage_bps,
+                regime_gate,
+                warmup,
+                resolved_timeframe,
+                resolved_trade_mode,
+                resolved_include_funding,
+                execution_controls,
+                resolved_initial_capital,
+                asset,
+            )
 
     check_work_budget()
     if "error" in worker_result:

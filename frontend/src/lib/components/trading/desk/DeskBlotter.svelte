@@ -10,6 +10,7 @@
 	import type { LiveFleet } from '$lib/api/dashboard';
 	import type { DeskFill, DeskMode, JournalEvent } from '$lib/api/desk';
 	import { cap1, dur, fmtPct, fmtPx, fmtQty, fmtUsd, toneClass } from '$lib/utils/tradingDesk/format';
+	import { assetOf } from '$lib/utils/tradingDesk/market';
 	import type { DeskRow } from '$lib/utils/tradingDesk/rows';
 	import DeskFillsTable from './DeskFillsTable.svelte';
 	import DeskJournalList from './DeskJournalList.svelte';
@@ -91,7 +92,7 @@
 							{#each positions as { row, leg, math } (`${row.session.id}-${leg.id}`)}
 								<tr class={`cursor-pointer hover:bg-sc-hover ${row.session.id === selectedSessionId ? 'bg-[#0f1319]' : ''}`} on:click={() => dispatch('select', row.session.id)}>
 									<td class={`${td} text-left font-sans`}>{row.sid}</td>
-									<td class={`${td} text-left font-sans`}>{row.asset}</td>
+									<td class={`${td} text-left font-sans`}>{leg.symbol ? assetOf(leg.symbol) : row.asset}</td>
 									<td class={`${td} text-left`}><span class={`rounded-full border px-2 font-sans text-[11.5px] ${leg.side === 'long' ? 'border-[#139a9f]/55 text-[#5ccac4]' : 'border-[#e0663f]/55 text-[#f2956f]'}`}>{cap1(leg.side)}</span></td>
 									<td class={`${td} text-right`}>{fmtQty(leg.size)}</td>
 									<td class={`${td} text-right`}>{fmtPx(leg.entry)}</td>

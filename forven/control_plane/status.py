@@ -457,7 +457,7 @@ def _build_nav_indicators(
         "/paper-trades": _build_paper_trades_nav_indicator(open_trades),
         "/live-trades": _build_live_trades_nav_indicator(open_trades),
         "/bot-factory": _build_bot_factory_nav_indicator(),
-        "/approval": _build_approvals_nav_indicator(approvals),
+        "/agents": _build_approvals_nav_indicator(approvals),
         "/diagnostics": _build_ops_nav_indicator(notification_summary),
     }
 

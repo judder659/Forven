@@ -495,30 +495,71 @@ def _candidate_task(display_id: str, strategy_id: str | None) -> None:
         )
 
 
-def test_candidate_gate_archives_a_silent_candidate_and_releases_the_task(forven_db, monkeypatch):
-    from forven.strategies.candidate_checks import CandidateTradeCheck
-
-    _insert_strategy("s-silent", stage="quick_screen")
-    _candidate_task("T0300", "s-silent")
-    monkeypatch.setattr(
-        "forven.strategies.candidate_checks.check_candidate_trades",
-        lambda *_a, **_k: CandidateTradeCheck("too_few_trades", trades=0, min_trades=20, symbol="BTC", timeframe="1h"),
-    )
-
-    tokens = set_tool_context("strategy-developer", "T0300")
+def _gate(strategy_id: str, task: str) -> str:
+    tokens = set_tool_context("strategy-developer", task)
     try:
-        message = tools_mod._candidate_trade_gate("s-silent", started_at=time.monotonic())
+        return tools_mod._candidate_trade_gate(strategy_id, started_at=time.monotonic())
     finally:
         reset_tool_context(tokens)
 
-    assert message.startswith("Error:")
+
+def _silent(monkeypatch) -> None:
+    from forven.strategies.candidate_checks import CandidateTradeCheck
+
+    monkeypatch.setattr(
+        "forven.strategies.candidate_checks.check_candidate_trades",
+        lambda *_a, **_k: CandidateTradeCheck("too_few_trades", trades=3, min_trades=20, symbol="BTC", timeframe="1h"),
+    )
+
+
+def test_candidate_gate_withdraws_a_silent_candidate_and_releases_the_task(forven_db, monkeypatch):
+    _insert_strategy("s-silent", stage="quick_screen")
+    _candidate_task("T0300", "s-silent")
+    _silent(monkeypatch)
+
+    message = _gate("s-silent", "T0300")
+
+    assert message.startswith("Error: candidate s-silent was NOT registered")
+    assert "3 trades on BTC 1h" in message and "at least 20" in message
+    assert "2 more attempts" in message
+    with get_db() as conn:
+        assert conn.execute("SELECT 1 FROM strategies WHERE id='s-silent'").fetchone() is None
+        task = conn.execute("SELECT strategy_id, input_data FROM agent_tasks WHERE display_id='T0300'").fetchone()
+    assert task["strategy_id"] is None
+    assert json.loads(task["input_data"])["no_signal_attempts"] == 1
+
+
+def test_no_signal_attempts_are_bounded_per_task(forven_db, monkeypatch):
+    from forven.strategies.candidate_checks import MAX_NO_SIGNAL_ATTEMPTS, validate_agent_registration
+
+    _candidate_task("T0302", None)
+    _silent(monkeypatch)
+    for attempt in range(1, MAX_NO_SIGNAL_ATTEMPTS + 1):
+        assert validate_agent_registration("strategy-developer", "T0302") is None
+        _insert_strategy(f"s-try{attempt}", stage="quick_screen")
+        message = _gate(f"s-try{attempt}", "T0302")
+    assert "last attempt" in message
+    refusal = validate_agent_registration("strategy-developer", "T0302")
+    assert refusal and "Do not register more in this task" in refusal
+
+
+def test_a_candidate_the_pipeline_already_started_is_archived_not_withdrawn(forven_db, monkeypatch):
+    _insert_strategy("s-busy", stage="quick_screen")
+    _candidate_task("T0303", "s-busy")
+    _silent(monkeypatch)
+    from forven.gauntlet.settings import build_settings_snapshot
+    from forven.gauntlet.store import create_or_get_workflow
+
+    workflow = create_or_get_workflow(strategy_id="s-busy", settings_snapshot=build_settings_snapshot())
+    with get_db() as conn:
+        conn.execute("UPDATE gauntlet_steps SET status='running' WHERE workflow_id=?", (workflow["id"],))
+
+    message = _gate("s-busy", "T0303")
+
     assert "untestable:no_signal" in message
     with get_db() as conn:
-        strategy = conn.execute("SELECT stage, status_reason FROM strategies WHERE id='s-silent'").fetchone()
-        task = conn.execute("SELECT strategy_id FROM agent_tasks WHERE display_id='T0300'").fetchone()
-    assert strategy["stage"] == "archived"
-    assert strategy["status_reason"].startswith("untestable:no_signal: 0 trades on BTC 1h")
-    assert task["strategy_id"] is None
+        row = conn.execute("SELECT stage FROM strategies WHERE id='s-busy'").fetchone()
+    assert row["stage"] == "archived"
 
 
 def test_candidate_gate_reports_intake_untestable_as_an_error(forven_db):

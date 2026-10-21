@@ -7,6 +7,8 @@
 	import { ago, cap1, dur, durShort, fmtDateTime, fmtDay, fmtPct, fmtPx, fmtQty, fmtTime, fmtUsd, lastBarClose, nextBarClose, toneClass } from '$lib/utils/tradingDesk/format';
 	import { STATE_LABEL, type DeskRow, type RailFilter } from '$lib/utils/tradingDesk/rows';
 	import DeskSparkline from './DeskSparkline.svelte';
+	import ProbationBadge from '$lib/components/probation/ProbationBadge.svelte';
+	import type { ProbationOverviewRow } from '$lib/api/probation';
 
 
 	export let mode: DeskMode;
@@ -17,6 +19,8 @@
 	export let archivedLoading = false;
 	export let selectedArchivedId: string | null = null;
 	export let now = Date.now();
+	/** Live strategies on probation, by strategy id: their rows carry the PROBATION badge. */
+	export let probation: Map<string, ProbationOverviewRow> = new Map();
 
 	const dispatch = createEventDispatcher<{
 		select: string;
@@ -136,7 +140,7 @@
 					on:click={() => dispatch('select', row.session.id)}
 				>
 					<div class="flex items-center justify-between gap-2">
-						<span class="font-plex-mono text-[13px] font-medium text-sc-ink">{row.sid}</span>
+						<span class="flex min-w-0 items-center gap-1.5"><span class="font-plex-mono text-[13px] font-medium text-sc-ink">{row.sid}</span>{#if probation.get(row.sid)}{@const p = probation.get(row.sid)}<ProbationBadge state={p?.state ?? 'active'} sizePct={p?.size_pct ?? null} compact />{/if}</span>
 						<span class={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 font-plex-cond text-[10.5px] font-semibold uppercase tracking-[0.08em] ${CHIP[row.state]}`}>
 							<i class="inline-block h-1.5 w-1.5 rounded-full bg-current"></i>{STATE_LABEL[row.state]}
 						</span>

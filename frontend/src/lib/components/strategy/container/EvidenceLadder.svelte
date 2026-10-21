@@ -76,6 +76,6 @@
 		</table>
 	</div>
 	<p class="m-0 max-w-[120ch] text-[12px] text-sc-ink3">
-		In-sample and out-of-sample come from {runLabel || 'the selected run'} (the pinned run, else the newest; pick another on Performance). Walk-forward folds re-fit on a rolling window and overlap the out-of-sample period. Held-back data was sealed from research and scored once. Paper and live are closed trades by book; live has no fixed equity base, so its return shows in dollars.
+		In-sample and out-of-sample come from {runLabel || 'the selected run'} (the pinned run, else the newest; pick another on Backtests). Walk-forward folds re-fit on a rolling window and overlap the out-of-sample period. Held-back data was sealed from research and scored once. Paper and live are closed trades by book; live has no fixed equity base, so its return shows in dollars.
 	</p>
 </article>

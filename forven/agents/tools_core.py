@@ -440,7 +440,10 @@ def _tool_write_file(path: str, content: str, append: bool = True) -> str:
 def _tool_list_local_datasets(symbol_filter: str | None = None) -> str:
     """List OHLCV datasets available in local Forven storage."""
     from forven.data import scan_datasets
-    datasets = scan_datasets()
+    from forven.dataeng.dead_markets import drop_dead_datasets
+
+    # Markets whose data stopped for good are left out: nothing built on them can be tested.
+    datasets = drop_dead_datasets(scan_datasets())
     if symbol_filter:
         s = symbol_filter.upper()
         datasets = [d for d in datasets if s in d["symbol"].upper()]

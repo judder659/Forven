@@ -4,10 +4,8 @@
 	import { getForvenAuthProviders, reconcileAgentProviders, updateSettingsSection } from '$lib/api';
 	import { addToast } from '$lib/stores/processTracker';
 	import { pendingValues } from '$lib/settings/dirty';
-	import SettingsTrading from '$lib/components/settings/sections/SettingsTrading.svelte';
-	import SettingsHyperliquid from '$lib/components/settings/sections/SettingsHyperliquid.svelte';
+	import SettingsAreaView from '$lib/components/settings/SettingsAreaView.svelte';
 	import SettingsAgents from '$lib/components/settings/sections/SettingsAgents.svelte';
-	import SettingsNotifications from '$lib/components/settings/sections/SettingsNotifications.svelte';
 	import WizardStepRail from './WizardStepRail.svelte';
 
 	export let settings: Record<string, unknown>;
@@ -22,16 +20,14 @@
 
 	const STEPS: Step[] = [
 		{ id: 'welcome', label: 'Welcome', critical: false, description: 'Get Forven set up.' },
-		{ id: 'trading', label: 'Trading basics', critical: true, description: 'Pick an exchange and paste API credentials.' },
+		{ id: 'trading', label: 'Trading basics', critical: true, description: 'Paste your Hyperliquid API credentials.' },
 		{ id: 'ai', label: 'AI providers', critical: true, description: 'Connect at least one provider so agents can run.' },
 		{ id: 'notifications', label: 'Notifications', critical: false, description: 'Which events pop up in the app, and Discord alerts (optional).' },
 		{ id: 'done', label: 'Done', critical: false, description: 'Review and finish.' },
 	];
 
-	// The HL credentials subsection lives in the dedicated HyperLiquid settings
-	// area now; the wizard's trading step renders it right after the exchange
-	// picker via SettingsHyperliquid below.
-	const TRADING_SUBS_WIZARD = ['trading-exchange'];
+	// Forven trades on Hyperliquid only, so the trading step is just the
+	// credentials group of Settings > Exchange.
 	const HL_SUBS_WIZARD = ['hl-credentials'];
 
 	let providersActive = false;
@@ -210,22 +206,16 @@
 							You can skip anything and change it later in Settings.
 						</p>
 					{:else if step.id === 'trading'}
-						<SettingsTrading
+						<SettingsAreaView
+							area="hyperliquid"
 							{settings}
 							variant="wizard"
-							visibleSubsections={TRADING_SUBS_WIZARD}
+							visibleSubsections={HL_SUBS_WIZARD}
 						/>
-						<div class="mt-4">
-							<SettingsHyperliquid
-								{settings}
-								variant="wizard"
-								visibleSubsections={HL_SUBS_WIZARD}
-							/>
-						</div>
 					{:else if step.id === 'ai'}
 						<SettingsAgents />
 					{:else if step.id === 'notifications'}
-						<SettingsNotifications {settings} />
+						<SettingsAreaView area="notifications" {settings} />
 					{:else if step.id === 'done'}
 						<ul class="space-y-2 text-sm">
 							{#each STEPS.slice(1, -1) as s (s.id)}

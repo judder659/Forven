@@ -165,12 +165,12 @@ def test_paper_stage_reports_warmup_progress_not_merit_failure(forven_db):
     s = payload["strategy"]
     assert s["stage"] == "paper"
     assert s["promotable"] is False
-    # 2 days into a 14-day warm-up with no trades = accumulating evidence.
+    # No paper trades yet = accumulating evidence for probation, not a merit failure.
     assert s["status"] == "waiting_evidence"
-    assert s["next_transition"]["to_stage"] == "live_graduated"
-    duration = s["evidence"]["paper"]["paper_duration"]
-    assert duration["threshold"] >= duration["current"]
-    assert duration["unit"] == "days"
+    assert s["next_transition"]["to_stage"] == "probation"
+    progress = s["evidence"]["probation"]
+    assert (progress["matched"], progress["need_trades"]) == (0, 3)
+    assert "paper_confirmation" in progress["failing"]
 
 
 def test_live_stage_is_standing_not_blocked(forven_db):

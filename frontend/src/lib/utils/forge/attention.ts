@@ -9,7 +9,7 @@ import type { HealthStatusResponse } from '$lib/api/types';
 import type { ManagerRow } from '$lib/utils/strategy';
 import { approvalTypeLabel, cleanReason, stageLabel, type Tone } from './status';
 
-export type AttentionKind = 'approval' | 'live' | 'blocked' | 'stalled' | 'recovery' | 'health';
+export type AttentionKind = 'approval' | 'probation' | 'live' | 'blocked' | 'stalled' | 'recovery' | 'health';
 
 export interface AttentionItem {
 	key: string;
@@ -26,11 +26,12 @@ export interface AttentionItem {
 
 const KIND_RANK: Record<AttentionKind, number> = {
 	approval: 0,
-	live: 1,
-	health: 2,
-	stalled: 3,
-	recovery: 4,
-	blocked: 5,
+	probation: 1,
+	live: 2,
+	health: 3,
+	stalled: 4,
+	recovery: 5,
+	blocked: 6,
 };
 
 export function containerHref(id: string): string {
@@ -64,12 +65,26 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 				title: nameOf(entry.id),
 				meta: `${entry.id} · ${stageLabel(entry.stage)}`,
 				detail: `${capitalize(approvalTypeLabel(approval.approval_type))}${approval.requested_status ? ` → ${stageLabel(approval.requested_status).toLowerCase()}` : ''}`,
-				actionLabel: `Review #${approval.id}`,
-				href: `/approval?approval_id=${encodeURIComponent(String(approval.id))}`,
+				actionLabel: 'Decide',
+				href: `/agents?decision=${encodeURIComponent(String(approval.id))}#decisions`,
 			});
 			continue;
 		}
-		if (entry.status === 'blocked_merit') {
+		if (entry.status === 'ready' && entry.stage === 'paper') {
+			// With automatic probation off, a paper strategy that passes every
+			// probation check waits for the operator: that is a decision to surface.
+			items.push({
+				key: `probation:${entry.id}`,
+				kind: 'probation',
+				tone: 'ok',
+				strategyId: entry.id,
+				title: nameOf(entry.id),
+				meta: `${entry.id} · ${stageLabel(entry.stage)}`,
+				detail: 'Ready for probation: every check passes',
+				actionLabel: 'Start probation',
+				href: containerHref(entry.id),
+			});
+		} else if (entry.status === 'blocked_merit') {
 			items.push({
 				key: `blocked:${entry.id}`,
 				kind: 'blocked',

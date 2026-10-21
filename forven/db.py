@@ -1448,6 +1448,25 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_messages_thread
     ON assistant_messages(thread_id, seq);
+
+-- Live probation (forven.probation): a live_graduated strategy trading at a
+-- fraction of normal size while its live record builds. One row per strategy;
+-- it outlives the probation (graduated/demoted) for the cooldown and history.
+CREATE TABLE IF NOT EXISTS strategy_probation (
+    strategy_id     TEXT PRIMARY KEY,
+    state           TEXT NOT NULL,
+    size_pct        REAL NOT NULL,
+    size_locked     INTEGER NOT NULL DEFAULT 0,
+    entered_at      TEXT,
+    entered_by      TEXT,
+    bypassed_json   TEXT,
+    history_json    TEXT,
+    demotion_count  INTEGER NOT NULL DEFAULT 0,
+    last_demoted_at TEXT,
+    status_reason   TEXT,
+    last_check_json TEXT,
+    updated_at      TEXT
+);
 """
 
 # Indexes that depend on columns added by migrations — run AFTER _run_migrations.
@@ -1521,6 +1540,11 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     data_sources TEXT,
     max_llm_calls_per_day INTEGER DEFAULT 200,
     max_consecutive_errors INTEGER DEFAULT 5,
+    max_llm_cost_per_day REAL,
+    decision_cadence TEXT DEFAULT 'interval',
+    timeframe TEXT DEFAULT '1h',
+    bot_type TEXT DEFAULT 'ai',
+    rule_params TEXT,
     template_id TEXT,
     status TEXT DEFAULT 'stopped',
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
@@ -1548,7 +1572,9 @@ CREATE TABLE IF NOT EXISTS bot_status (
     realized_pnl REAL DEFAULT 0,
     funding_accrued REAL DEFAULT 0,
     peak_equity REAL,
-    equity_state_started_at TEXT
+    equity_state_started_at TEXT,
+    run_id TEXT,
+    llm_cost_today REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS bot_decisions (
@@ -1559,7 +1585,11 @@ CREATE TABLE IF NOT EXISTS bot_decisions (
     reasoning TEXT,
     action_type TEXT,
     action_data TEXT,
-    verbosity_level TEXT
+    verbosity_level TEXT,
+    run_id TEXT,
+    cost_usd REAL,
+    tokens_in INTEGER,
+    tokens_out INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS bot_templates (
@@ -1571,6 +1601,51 @@ CREATE TABLE IF NOT EXISTS bot_templates (
     created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
 
+-- What a decision was shown and answered (prompt, raw reply, risk check), for
+-- the decision inspector. Pruned to the newest BOT_DECISION_DETAILS_KEEP per bot.
+CREATE TABLE IF NOT EXISTS bot_decision_details (
+    decision_id INTEGER PRIMARY KEY REFERENCES bot_decisions(id) ON DELETE CASCADE,
+    bot_id TEXT NOT NULL,
+    model TEXT,
+    prompt TEXT,
+    response TEXT,
+    parsed TEXT,
+    risk_check TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_decision_details_bot ON bot_decision_details (bot_id, decision_id);
+
+-- Replays: a bot run over past candles (Bot Factory phase 4). bot_id is NULL
+-- for a template replay; template_id names it instead.
+CREATE TABLE IF NOT EXISTS bot_replays (
+    id TEXT PRIMARY KEY,
+    bot_id TEXT,
+    template_id TEXT,
+    arena_id TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    error TEXT,
+    config TEXT,
+    window_start TEXT,
+    window_end TEXT,
+    summary TEXT,
+    curve TEXT,
+    benchmark TEXT,
+    trades TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')),
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bot_replays_bot ON bot_replays (bot_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_bot_replays_arena ON bot_replays (arena_id);
+
+-- A model's answer to one replay prompt, so a re-run of the same bot on the
+-- same bars costs nothing.
+CREATE TABLE IF NOT EXISTS bot_replay_cache (
+    prompt_hash TEXT PRIMARY KEY,
+    model TEXT,
+    response TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
+);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_bot_id ON bot_decisions (bot_id);
 CREATE INDEX IF NOT EXISTS idx_bot_decisions_timestamp ON bot_decisions (timestamp);
 CREATE INDEX IF NOT EXISTS idx_bot_config_versions_bot_id ON bot_config_versions (bot_id);
@@ -3467,6 +3542,21 @@ def _run_post_index_migrations(conn: sqlite3.Connection):
     _ensure_column(conn, "bot_status", "funding_accrued", "REAL DEFAULT 0")
     _ensure_column(conn, "bot_status", "peak_equity", "REAL")
     _ensure_column(conn, "bot_status", "equity_state_started_at", "TEXT")
+    # Bot Factory Phase 1: run identity, AI spend, decision cadence. Existing
+    # bots keep the 'interval' cadence they ran with; new bots are created with
+    # 'candle_close' (see create_bot).
+    _ensure_column(conn, "bot_status", "run_id", "TEXT")
+    _ensure_column(conn, "bot_status", "llm_cost_today", "REAL DEFAULT 0")
+    _ensure_column(conn, "bot_configs", "max_llm_cost_per_day", "REAL")
+    _ensure_column(conn, "bot_configs", "decision_cadence", "TEXT DEFAULT 'interval'")
+    _ensure_column(conn, "bot_configs", "timeframe", "TEXT DEFAULT '1h'")
+    # Bot Factory Phase 3: rule bots (grid, dca, signal) decide in code.
+    _ensure_column(conn, "bot_configs", "bot_type", "TEXT DEFAULT 'ai'")
+    _ensure_column(conn, "bot_configs", "rule_params", "TEXT")
+    _ensure_column(conn, "bot_decisions", "run_id", "TEXT")
+    _ensure_column(conn, "bot_decisions", "cost_usd", "REAL")
+    _ensure_column(conn, "bot_decisions", "tokens_in", "INTEGER")
+    _ensure_column(conn, "bot_decisions", "tokens_out", "INTEGER")
 
     # Bot Factory indexes. idx_trades_source speeds the source='bot:%' reads at
     # bot startup / UI refresh / reconcile. The unique version index is guarded
@@ -7499,6 +7589,25 @@ def _default_bot_model() -> str:
     return "gpt-4.1-mini"
 
 
+BOT_DECISION_CADENCES = ("candle_close", "interval")
+# Candle timeframes a bot can read, in minutes per bar.
+BOT_TIMEFRAME_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+
+def normalize_bot_timeframe(value: object) -> str:
+    """A supported bot timeframe; anything else is the 1h every bot used before."""
+    tf = str(value or "").strip().lower()
+    return tf if tf in BOT_TIMEFRAME_MINUTES else "1h"
+
+
+def normalize_bot_cadence(value: object) -> str:
+    """'candle_close' (decide once per new 1h candle) or 'interval' (decide
+    every cooldown_seconds). Anything else falls back to 'interval', the
+    cadence every pre-existing bot ran with."""
+    cadence = str(value or "").strip().lower()
+    return cadence if cadence in BOT_DECISION_CADENCES else "interval"
+
+
 def create_bot(config: dict) -> str:
     """Create a new bot and return its ID.
 
@@ -7519,8 +7628,9 @@ def create_bot(config: dict) -> str:
                 reasoning_verbosity, asset_mode, locked_pairs,
                 tools, web_allowlist, web_rate_limit, data_sources,
                 max_llm_calls_per_day, max_consecutive_errors, template_id,
+                max_llm_cost_per_day, decision_cadence, timeframe, bot_type, rule_params,
                 execution_mode, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper', 'stopped', ?, ?)""",
             (
                 bot_id,
                 config.get("name", "Untitled Bot"),
@@ -7550,6 +7660,11 @@ def create_bot(config: dict) -> str:
                 config.get("max_llm_calls_per_day", 200),
                 config.get("max_consecutive_errors", 5),
                 config.get("template_id"),
+                config.get("max_llm_cost_per_day"),
+                normalize_bot_cadence(config.get("decision_cadence") or "candle_close"),
+                normalize_bot_timeframe(config.get("timeframe")),
+                str(config.get("bot_type") or "ai"),
+                json.dumps(config["rule_params"]) if config.get("rule_params") else None,
                 now,
                 now,
             ),
@@ -7567,7 +7682,8 @@ def get_bot(bot_id: str) -> dict | None:
         row = conn.execute(
             """SELECT c.*, s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
-                      s.consecutive_errors
+                      s.consecutive_errors, s.run_id, s.llm_calls_reset_date,
+                      s.llm_cost_today
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                WHERE c.id = ?""",
@@ -7576,13 +7692,22 @@ def get_bot(bot_id: str) -> dict | None:
         if not row:
             return None
         d = dict(row)
-        for key in ("session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources"):
+        _zero_stale_daily_usage(d)
+        for key in ("session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources", "rule_params"):
             if d.get(key) and isinstance(d[key], str):
                 try:
                     d[key] = json.loads(d[key])
                 except (json.JSONDecodeError, TypeError):
                     pass
         return d
+
+
+def _zero_stale_daily_usage(d: dict) -> None:
+    """The daily AI counters reset lazily on the next call, so a row whose reset
+    date isn't today is showing yesterday's usage: report today's as zero."""
+    if d.get("llm_calls_reset_date") and d.get("llm_calls_reset_date") != _today_utc():
+        d["llm_calls_today"] = 0
+        d["llm_cost_today"] = 0.0
 
 
 def list_bots() -> list[dict]:
@@ -7597,7 +7722,11 @@ def list_bots() -> list[dict]:
                       c.created_at, c.updated_at,
                       s.pid, s.status AS runtime_status, s.last_heartbeat,
                       s.started_at, s.error_message, s.llm_calls_today,
-                      s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day
+                      s.consecutive_errors, s.realized_pnl, c.max_llm_calls_per_day,
+                      c.max_llm_cost_per_day, c.decision_cadence, c.timeframe, c.max_position_pct,
+                      c.max_concurrent_positions, s.run_id, s.llm_calls_reset_date,
+                      s.llm_cost_today, c.cooldown_seconds, s.funding_accrued,
+                      s.equity_state_started_at, c.bot_type
                FROM bot_configs c
                LEFT JOIN bot_status s ON c.id = s.bot_id
                ORDER BY c.created_at DESC"""
@@ -7623,6 +7752,7 @@ def list_bots() -> list[dict]:
             d["open_positions"] = int(digest.get("open_positions") or 0)
             d["closed_trades"] = int(digest.get("closed_trades") or 0)
             d["realized_pnl"] = float(d.get("realized_pnl") or 0.0)
+            _zero_stale_daily_usage(d)
             results.append(d)
         return results
 
@@ -7653,7 +7783,7 @@ def update_bot(bot_id: str, updates: dict) -> None:
         )
 
         # Build SET clause from updates
-        json_fields = {"session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources"}
+        json_fields = {"session_hours", "locked_pairs", "tools", "web_allowlist", "data_sources", "rule_params"}
         set_parts = []
         values = []
         for key, val in updates.items():
@@ -7700,6 +7830,7 @@ def delete_bot(bot_id: str) -> None:
         ).fetchone()
         if status_row and status_row["status"] in ("running",):
             raise ValueError("Cannot delete a running bot. Stop it first.")
+        conn.execute("DELETE FROM bot_decision_details WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_decisions WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_config_versions WHERE bot_id = ?", (bot_id,))
         conn.execute("DELETE FROM bot_status WHERE bot_id = ?", (bot_id,))
@@ -7714,7 +7845,8 @@ def clone_bot(bot_id: str, new_name: str) -> str:
     config = {k: v for k, v in bot.items() if k not in (
         "id", "created_at", "updated_at", "status", "runtime_status",
         "pid", "last_heartbeat", "started_at", "error_message",
-        "llm_calls_today", "consecutive_errors",
+        "llm_calls_today", "consecutive_errors", "run_id",
+        "llm_calls_reset_date", "llm_cost_today",
     )}
     config["name"] = new_name
     return create_bot(config)
@@ -7748,6 +7880,9 @@ def set_bot_status(
             values.append(_now_utc())
         if status == "stopped":
             parts.append("pid = NULL")
+            # A stopped bot has no current run: any process still alive for it
+            # sees it no longer owns the bot and exits (see set_bot_run_id).
+            parts.append("run_id = NULL")
         values.append(bot_id)
         conn.execute(
             f"UPDATE bot_status SET {', '.join(parts)} WHERE bot_id = ?",
@@ -7757,6 +7892,27 @@ def set_bot_status(
             "UPDATE bot_configs SET status = ? WHERE id = ?",
             (status, bot_id),
         )
+
+
+def set_bot_run_id(bot_id: str, run_id: str | None) -> None:
+    """Record the run that owns this bot. Written by the manager BEFORE it
+    spawns the process, so exactly one process ever owns a bot: a runner whose
+    run_id no longer matches (a stray copy after a retried Start, a wedged
+    process the monitor could not kill) stops on its own."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE bot_status SET run_id = ? WHERE bot_id = ?",
+            (run_id, bot_id),
+        )
+
+
+def get_bot_run_id(bot_id: str) -> str | None:
+    """The run id that currently owns this bot, or None when none does."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT run_id FROM bot_status WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        return (row["run_id"] if row else None) or None
 
 
 def set_bot_live_wallet(bot_id: str, wallet: str | None) -> None:
@@ -7835,7 +7991,8 @@ def increment_bot_llm_calls(bot_id: str) -> int:
             return 0
         if row["llm_calls_reset_date"] != today:
             conn.execute(
-                "UPDATE bot_status SET llm_calls_today = 1, llm_calls_reset_date = ? WHERE bot_id = ?",
+                "UPDATE bot_status SET llm_calls_today = 1, llm_cost_today = 0, "
+                "llm_calls_reset_date = ? WHERE bot_id = ?",
                 (today, bot_id),
             )
             return 1
@@ -7845,6 +8002,27 @@ def increment_bot_llm_calls(bot_id: str) -> int:
             (new_count, bot_id),
         )
         return new_count
+
+
+def add_bot_llm_cost(bot_id: str, cost_usd: float) -> float:
+    """Add an AI call's estimated cost to today's total and return it. Shares
+    the call counter's reset date, which increment_bot_llm_calls has already
+    moved to today for the call being recorded."""
+    today = _today_utc()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT llm_cost_today, llm_calls_reset_date FROM bot_status WHERE bot_id = ?",
+            (bot_id,),
+        ).fetchone()
+        if not row:
+            return 0.0
+        current = float(row["llm_cost_today"] or 0.0) if row["llm_calls_reset_date"] == today else 0.0
+        new_total = current + max(float(cost_usd or 0.0), 0.0)
+        conn.execute(
+            "UPDATE bot_status SET llm_cost_today = ?, llm_calls_reset_date = ? WHERE bot_id = ?",
+            (new_total, today, bot_id),
+        )
+        return new_total
 
 
 def increment_bot_errors(bot_id: str) -> int:
@@ -7874,6 +8052,9 @@ def reset_bot_errors(bot_id: str) -> None:
 # ── Bot Decisions ───────────────────────────────────────────────────
 
 
+BOT_DECISION_DETAILS_KEEP = 300
+
+
 def log_bot_decision(
     bot_id: str,
     event_trigger: dict | None,
@@ -7881,13 +8062,24 @@ def log_bot_decision(
     action_type: str,
     action_data: dict | None,
     verbosity: str = "standard",
-) -> None:
-    """Log a bot decision."""
+    *,
+    run_id: str | None = None,
+    cost_usd: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    details: dict | None = None,
+) -> int | None:
+    """Log a bot decision, tagged with the run that made it and its AI cost.
+
+    `details` ({model, prompt, response, parsed, risk_check}) is what the
+    decision was shown and answered; it's kept for the newest
+    BOT_DECISION_DETAILS_KEEP decisions per bot. Returns the decision id."""
     with get_db() as conn:
-        conn.execute(
+        cur = conn.execute(
             """INSERT INTO bot_decisions
-               (bot_id, event_trigger, reasoning, action_type, action_data, verbosity_level)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (bot_id, event_trigger, reasoning, action_type, action_data, verbosity_level,
+                run_id, cost_usd, tokens_in, tokens_out)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 bot_id,
                 json.dumps(event_trigger) if event_trigger else None,
@@ -7895,22 +8087,136 @@ def log_bot_decision(
                 action_type,
                 json.dumps(action_data) if action_data else None,
                 verbosity,
+                run_id,
+                cost_usd,
+                tokens_in,
+                tokens_out,
             ),
         )
+        decision_id = cur.lastrowid
+        if details and decision_id:
+            def _enc(value: object) -> str | None:
+                if value is None:
+                    return None
+                return value if isinstance(value, str) else json.dumps(value, default=str)
+
+            conn.execute(
+                """INSERT OR REPLACE INTO bot_decision_details
+                   (decision_id, bot_id, model, prompt, response, parsed, risk_check)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    decision_id,
+                    bot_id,
+                    details.get("model"),
+                    _enc(details.get("prompt")),
+                    details.get("response"),
+                    _enc(details.get("parsed")),
+                    _enc(details.get("risk_check")),
+                ),
+            )
+            conn.execute(
+                """DELETE FROM bot_decision_details
+                    WHERE bot_id = ? AND decision_id < (
+                        SELECT decision_id FROM bot_decision_details
+                         WHERE bot_id = ? ORDER BY decision_id DESC
+                         LIMIT 1 OFFSET ?)""",
+                (bot_id, bot_id, BOT_DECISION_DETAILS_KEEP - 1),
+            )
+        return decision_id
+
+
+def get_bot_decision(bot_id: str, decision_id: int) -> dict | None:
+    """One decision with what it was shown and answered (`details` is None
+    when it was logged before details were kept, or pruned since)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM bot_decisions WHERE bot_id = ? AND id = ?",
+            (bot_id, int(decision_id)),
+        ).fetchone()
+        if not row:
+            return None
+        detail = conn.execute(
+            """SELECT model, prompt, response, parsed, risk_check, created_at
+                 FROM bot_decision_details WHERE decision_id = ?""",
+            (int(decision_id),),
+        ).fetchone()
+    d = dict(row)
+    for key in ("event_trigger", "action_data"):
+        if d.get(key) and isinstance(d[key], str):
+            try:
+                d[key] = json.loads(d[key])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    if detail:
+        det = dict(detail)
+        for key in ("prompt", "parsed", "risk_check"):
+            if det.get(key) and isinstance(det[key], str):
+                try:
+                    det[key] = json.loads(det[key])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        d["details"] = det
+    else:
+        d["details"] = None
+    return d
+
+
+def get_fleet_decision_digest() -> dict[str, dict]:
+    """Per bot: its latest decision's time and type, and its first decision's
+    time (for health dots and performance windows), in one query."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT d.bot_id, d.timestamp AS last_decision_at, d.action_type AS last_action_type,
+                      f.first_decision_at
+                 FROM bot_decisions d
+                 JOIN (SELECT bot_id, MAX(id) AS max_id, MIN(timestamp) AS first_decision_at
+                         FROM bot_decisions GROUP BY bot_id) f
+                   ON d.id = f.max_id"""
+        ).fetchall()
+    return {str(r["bot_id"]): dict(r) for r in rows}
+
+
+def get_bot_ai_usage(bot_id: str, recent: int = 50) -> dict:
+    """AI spend over all of a bot's decisions, plus its average tokens per call
+    over the most recent `recent` priced decisions (for spend projections)."""
+    with get_db() as conn:
+        total = conn.execute(
+            """SELECT COUNT(cost_usd) AS priced_calls, COALESCE(SUM(cost_usd), 0) AS total_cost
+                 FROM bot_decisions WHERE bot_id = ?""",
+            (bot_id,),
+        ).fetchone()
+        avg = conn.execute(
+            """SELECT AVG(tokens_in) AS avg_in, AVG(tokens_out) AS avg_out, COUNT(*) AS n
+                 FROM (SELECT tokens_in, tokens_out FROM bot_decisions
+                        WHERE bot_id = ? AND tokens_in IS NOT NULL
+                        ORDER BY id DESC LIMIT ?)""",
+            (bot_id, int(recent)),
+        ).fetchone()
+    return {
+        "priced_calls": int(total["priced_calls"] or 0),
+        "total_cost_usd": float(total["total_cost"] or 0.0),
+        "avg_tokens_in": float(avg["avg_in"]) if avg["avg_in"] is not None else None,
+        "avg_tokens_out": float(avg["avg_out"]) if avg["avg_out"] is not None else None,
+        "sampled_calls": int(avg["n"] or 0),
+    }
 
 
 def get_bot_decisions(bot_id: str, limit: int = 50) -> list[dict]:
     """Get recent decisions for a bot."""
     with get_db() as conn:
         rows = conn.execute(
-            """SELECT * FROM bot_decisions
-               WHERE bot_id = ?
-               ORDER BY id DESC LIMIT ?""",
+            """SELECT d.*,
+                      EXISTS(SELECT 1 FROM bot_decision_details x WHERE x.decision_id = d.id)
+                          AS has_details
+                 FROM bot_decisions d
+                WHERE d.bot_id = ?
+                ORDER BY d.id DESC LIMIT ?""",
             (bot_id, limit),
         ).fetchall()
         results = []
         for row in rows:
             d = dict(row)
+            d["has_details"] = bool(d.get("has_details"))
             for key in ("event_trigger", "action_data"):
                 if d.get(key) and isinstance(d[key], str):
                     try:
@@ -8295,6 +8601,39 @@ def rebase_bot_equity_watermark(bot_id: str) -> None:
         )
 
 
+def get_open_followed_trades(strategy_id: str) -> list[dict]:
+    """A strategy's open trades (paper or live), for a signal-follower bot.
+    Bots' own trades never count."""
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT asset, direction, opened_at FROM trades
+                WHERE strategy_id = ? AND status = 'OPEN'
+                  AND COALESCE(source, '') NOT LIKE 'bot:%'""",
+            (strategy_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_recent_strategy_signals(coins: list[str], since: str) -> list[dict]:
+    """Recent entry/exit signals of paper and live strategies on these coins."""
+    if not coins:
+        return []
+    marks = ",".join("?" for _ in coins)
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT r.strategy_id, r.symbol, r.signal_type, r.ts, r.price,
+                       s.name, s.display_name, s.status
+                FROM scanner_signal_results r
+                JOIN strategies s ON s.id = r.strategy_id
+                WHERE r.matched = 1 AND r.signal_type IN ('entry', 'exit')
+                  AND r.ts >= ? AND UPPER(r.symbol) IN ({marks})
+                  AND s.status IN ('paper', 'live_graduated')
+                ORDER BY r.ts DESC LIMIT 200""",
+            (since, *coins),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_open_bot_positions(bot_id: str) -> list[dict]:
     """Return OPEN trades for this bot, shaped like the in-memory position dicts
     the runner uses: {trade_id, ticker, direction, qty, entry_price, ...}.
@@ -8347,10 +8686,10 @@ def get_open_bot_positions(bot_id: str) -> list[dict]:
 
 
 def get_bot_equity_state(bot_id: str) -> dict | None:
-    """Return {realized_pnl, peak_equity, equity_state_started_at} or None."""
+    """Return {realized_pnl, peak_equity, equity_state_started_at, funding_accrued} or None."""
     with get_db() as conn:
         row = conn.execute(
-            """SELECT realized_pnl, peak_equity, equity_state_started_at
+            """SELECT realized_pnl, peak_equity, equity_state_started_at, funding_accrued
                  FROM bot_status WHERE bot_id = ?""",
             (bot_id,),
         ).fetchone()
@@ -8542,6 +8881,89 @@ def get_bot_trade_stats(bot_id: str) -> dict:
     }
 
 
+def get_bot_trade_ledger(bot_id: str) -> list[dict]:
+    """Every trade a bot made, oldest first, in the shape performance and
+    chart views need: pair, side, size, prices, net P&L and fees."""
+    source = f"bot:{bot_id}"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, asset, symbol, direction, size, entry_price, fill_entry_price,
+                      exit_price, fill_exit_price, status, pnl_usd, opened_at, closed_at,
+                      signal_data
+                 FROM trades
+                WHERE source = ?
+             ORDER BY opened_at ASC""",
+            (source,),
+        ).fetchall()
+    ledger: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        sig = d.get("signal_data")
+        if sig and isinstance(sig, str):
+            try:
+                sig = json.loads(sig)
+            except (json.JSONDecodeError, TypeError):
+                sig = {}
+        sig = sig if isinstance(sig, dict) else {}
+        ledger.append({
+            "id": d["id"],
+            "pair": sig.get("pair") or d.get("symbol") or d.get("asset"),
+            "direction": d.get("direction") or "long",
+            "size": float(d.get("size") or 0),
+            "entry_price": d.get("fill_entry_price") or d.get("entry_price"),
+            "exit_price": d.get("fill_exit_price") or d.get("exit_price"),
+            "status": d.get("status"),
+            "pnl_usd": float(d["pnl_usd"]) if d.get("pnl_usd") is not None else None,
+            "opened_at": d.get("opened_at"),
+            "closed_at": d.get("closed_at"),
+            "fees_usd": float(sig.get("entry_fee_usd") or 0) + float(sig.get("exit_fee_usd") or 0),
+        })
+    return ledger
+
+
+def get_bot_trade_events_since(since: str, until: str | None = None) -> list[dict]:
+    """Bot trades opened or closed in (since, until], oldest first, one row per
+    event ({bot_id, id, event: opened|closed, pair, direction, prices, pnl})."""
+    until = until or "9999"
+    with get_db() as conn:
+        rows = conn.execute(
+            """SELECT id, source, direction, entry_price, fill_entry_price, exit_price,
+                      fill_exit_price, pnl_usd, opened_at, closed_at, status, asset, symbol,
+                      signal_data
+                 FROM trades
+                WHERE source LIKE 'bot:%'
+                  AND ((opened_at > ? AND opened_at <= ?) OR (closed_at > ? AND closed_at <= ?))""",
+            (since, until, since, until),
+        ).fetchall()
+    events: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        sig = d.get("signal_data")
+        if sig and isinstance(sig, str):
+            try:
+                sig = json.loads(sig)
+            except (json.JSONDecodeError, TypeError):
+                sig = {}
+        sig = sig if isinstance(sig, dict) else {}
+        base = {
+            "bot_id": str(d["source"]).split(":", 1)[1],
+            "id": d["id"],
+            "pair": sig.get("pair") or d.get("symbol") or d.get("asset"),
+            "direction": d.get("direction") or "long",
+            "entry_price": d.get("fill_entry_price") or d.get("entry_price"),
+        }
+        if d.get("opened_at") and since < d["opened_at"] <= until:
+            events.append({**base, "event": "opened", "at": d["opened_at"]})
+        if d.get("closed_at") and since < d["closed_at"] <= until:
+            events.append({
+                **base, "event": "closed", "at": d["closed_at"],
+                "exit_price": d.get("fill_exit_price") or d.get("exit_price"),
+                "pnl_usd": d.get("pnl_usd"),
+            })
+    events.sort(key=lambda e: e["at"])
+    return events
+
+
 def get_bot_trades(bot_id: str, limit: int = 50) -> list[dict]:
     """Get trades executed by a specific bot."""
     source = f"bot:{bot_id}"
@@ -8579,3 +9001,101 @@ def delete_bot_template(template_id: str) -> None:
             raise ValueError("Cannot delete built-in templates")
         conn.execute("DELETE FROM bot_templates WHERE id = ?", (template_id,))
 
+
+# ── Bot replays (Bot Factory phase 4) ─────────────────────────────────
+
+_REPLAY_JSON_FIELDS = ("config", "summary", "curve", "benchmark", "trades")
+
+
+def create_bot_replay(
+    *,
+    bot_id: str | None,
+    config: dict,
+    window_start: str,
+    window_end: str,
+    template_id: str | None = None,
+    arena_id: str | None = None,
+) -> str:
+    replay_id = f"RP{uuid4().hex[:10]}"
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO bot_replays (id, bot_id, template_id, arena_id, status, config,
+                   window_start, window_end)
+               VALUES (?, ?, ?, ?, 'running', ?, ?, ?)""",
+            (replay_id, bot_id, template_id, arena_id, json.dumps(config, default=str),
+             window_start, window_end),
+        )
+    return replay_id
+
+
+def finish_bot_replay(replay_id: str, *, result: dict | None = None, error: str | None = None) -> None:
+    result = result or {}
+    with get_db() as conn:
+        conn.execute(
+            """UPDATE bot_replays SET status = ?, error = ?, summary = ?, curve = ?, benchmark = ?,
+                   trades = ?, finished_at = ? WHERE id = ?""",
+            (
+                "failed" if error else "done", error,
+                json.dumps(result.get("summary")) if result.get("summary") is not None else None,
+                json.dumps(result.get("curve")) if result.get("curve") is not None else None,
+                json.dumps(result.get("benchmark")) if result.get("benchmark") is not None else None,
+                json.dumps(result.get("trades")) if result.get("trades") is not None else None,
+                _now_utc(), replay_id,
+            ),
+        )
+
+
+def _replay_row(row: sqlite3.Row, *, full: bool) -> dict:
+    out = dict(row)
+    for key in _REPLAY_JSON_FIELDS:
+        if key in out and isinstance(out[key], str):
+            try:
+                out[key] = json.loads(out[key])
+            except (TypeError, ValueError):
+                out[key] = None
+    if not full:
+        for key in ("curve", "benchmark", "trades", "config"):
+            out.pop(key, None)
+    return out
+
+
+def get_bot_replay(replay_id: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM bot_replays WHERE id = ?", (replay_id,)).fetchone()
+    return _replay_row(row, full=True) if row else None
+
+
+def list_bot_replays(
+    *, bot_id: str | None = None, template_id: str | None = None, arena_id: str | None = None, limit: int = 20,
+) -> list[dict]:
+    clauses, args = [], []
+    for column, value in (("bot_id", bot_id), ("template_id", template_id), ("arena_id", arena_id)):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            args.append(value)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    with get_db() as conn:
+        rows = conn.execute(
+            f"""SELECT id, bot_id, template_id, arena_id, status, error, window_start, window_end,
+                       summary, created_at, finished_at
+                  FROM bot_replays {where} ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+            (*args, int(limit)),
+        ).fetchall()
+    return [_replay_row(r, full=False) for r in rows]
+
+
+def get_replay_cached_answer(prompt_hash: str) -> dict | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT response FROM bot_replay_cache WHERE prompt_hash = ?", (prompt_hash,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def store_replay_answer(prompt_hash: str, model: str, response: str) -> None:
+    with get_db() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO bot_replay_cache (prompt_hash, model, response)
+               VALUES (?, ?, ?)""",
+            (prompt_hash, model, response),
+        )
