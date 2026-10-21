@@ -532,6 +532,32 @@ def test_scheduled_snapshots_keep_more_than_three_generations(tmp_path, monkeypa
     assert backups._retention_limit(None, "scheduled") == 2
 
 
+def test_backup_settings_apply_unless_an_env_var_overrides(monkeypatch):
+    """Settings > Data > Backups: daily count and total size, env vars still win."""
+    import forven.backups as backups
+
+    values = {"db_backup_keep_daily": 14, "db_backup_max_total_gb": 3}
+    monkeypatch.setattr(backups, "_backup_setting", lambda key: values.get(key))
+    monkeypatch.delenv("FORVEN_DB_BACKUP_RETENTION", raising=False)
+    monkeypatch.delenv("FORVEN_DB_BACKUP_MAX_TOTAL_BYTES", raising=False)
+
+    assert backups._retention_limit(None, "scheduled") == 14
+    # Only the daily schedule follows the setting; other reasons keep their windows.
+    assert backups._retention_limit(None, "pre-migration") == backups.REASON_BACKUP_RETENTION["pre-migration"]
+    assert backups._total_bytes_ceiling() == 3 * 1024**3
+
+    monkeypatch.setenv("FORVEN_DB_BACKUP_RETENTION", "2")
+    monkeypatch.setenv("FORVEN_DB_BACKUP_MAX_TOTAL_BYTES", "4000")
+    assert backups._retention_limit(None, "scheduled") == 2
+    assert backups._total_bytes_ceiling() == 4000
+
+    # 0 GB means automatic: a multiple of the live database, with a floor.
+    monkeypatch.delenv("FORVEN_DB_BACKUP_MAX_TOTAL_BYTES")
+    values["db_backup_max_total_gb"] = 0
+    monkeypatch.setattr(backups, "_live_db_bytes", lambda: 1000)
+    assert backups._total_bytes_ceiling() == backups.MIN_BACKUP_TOTAL_BYTES
+
+
 def test_backup_pruning_is_scoped_to_its_own_reason(tmp_path, monkeypatch):
     import forven.backups as backups
 

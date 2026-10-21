@@ -77,6 +77,21 @@ class InsufficientBackupSpace(RuntimeError):
     """Refused to snapshot because it would have left the volume dangerously full."""
 
 
+def _backup_setting(key: str) -> float | None:
+    """A Settings-page backup value (pipeline settings), or None when unset.
+
+    Read fail-soft: a backup must never fail because settings are unreadable.
+    """
+    try:
+        from forven.db import kv_get
+
+        settings = kv_get("forven:pipeline:settings", {}) or {}
+        raw = settings.get(key) if isinstance(settings, dict) else None
+        return None if raw is None or raw == "" else float(raw)
+    except Exception:
+        return None
+
+
 def _retention_limit(value: int | None = None, reason: str | None = None) -> int:
     if value is not None:
         return max(1, int(value))
@@ -86,6 +101,10 @@ def _retention_limit(value: int | None = None, reason: str | None = None) -> int
             return max(1, int(raw))
         except ValueError:
             pass
+    if str(reason or "") == "scheduled":
+        keep_daily = _backup_setting("db_backup_keep_daily")
+        if keep_daily is not None and keep_daily >= 1:
+            return int(keep_daily)
     return REASON_BACKUP_RETENTION.get(str(reason or ""), DEFAULT_DB_BACKUP_RETENTION)
 
 
@@ -138,6 +157,9 @@ def _total_bytes_ceiling() -> int:
             return max(0, int(raw))
         except ValueError:
             pass
+    max_gb = _backup_setting("db_backup_max_total_gb")
+    if max_gb is not None and max_gb > 0:
+        return int(max_gb * 1024**3)
     return max(
         MIN_BACKUP_TOTAL_BYTES,
         int(DEFAULT_BACKUP_TOTAL_DB_MULTIPLE * _live_db_bytes()),

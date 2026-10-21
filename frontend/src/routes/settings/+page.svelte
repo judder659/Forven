@@ -13,6 +13,7 @@
 
 	import SettingsHome from '$lib/components/settings/sections/SettingsHome.svelte';
 	import SettingsAreaView from '$lib/components/settings/SettingsAreaView.svelte';
+	import ChangedSettingsView from '$lib/components/settings/ChangedSettingsView.svelte';
 
 	const VALID_AREAS: ReadonlySet<string> = new Set(SETTINGS_AREAS.map((a) => a.id));
 
@@ -21,6 +22,8 @@
 	$: portfolioLayerOn = Boolean((settings as Record<string, unknown> | null)?.['portfolio_layer_enabled']);
 
 	let activeArea: SettingsAreaId = 'home';
+	// "#changed": every field that differs from its default, across all areas.
+	let showChanged = false;
 	$: areaMeta = SETTINGS_AREAS.find((a) => a.id === activeArea);
 	let settings: Record<string, unknown> | null = null;
 	let dashboard: Record<string, unknown> | null = null;
@@ -92,11 +95,18 @@
 	}
 
 	function handleHashChange(): void {
+		showChanged = window.location.hash === '#changed';
 		activeArea = parseHash(window.location.hash);
 		scrollToHashField();
 	}
 
 	function setArea(id: string): void {
+		if (id === 'changed') {
+			showChanged = true;
+			if (typeof window !== 'undefined') window.location.hash = '#changed';
+			return;
+		}
+		showChanged = false;
 		const nextArea = VALID_AREAS.has(id) ? (id as SettingsAreaId) : 'home';
 		activeArea = nextArea;
 		if (typeof window !== 'undefined' && window.location.hash !== `#${nextArea}`) {
@@ -105,6 +115,7 @@
 	}
 
 	onMount(() => {
+		showChanged = window.location.hash === '#changed';
 		activeArea = parseHash(window.location.hash);
 		scrollToHashField();
 		window.addEventListener('hashchange', handleHashChange);
@@ -209,8 +220,11 @@
 		</div>
 	{:else if settings}
 		<div class="flex gap-6">
-			<SettingsSidebar active={activeArea} onChange={setArea} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} />
+			<SettingsSidebar active={showChanged ? 'changed' : activeArea} onChange={setArea} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} />
 			<div class="flex-1 min-w-0">
+				{#if showChanged}
+					<ChangedSettingsView {settings} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} onOpenArea={setArea} />
+				{:else}
 				{#if areaMeta && activeArea !== 'home'}
 					<div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
 						<div>
@@ -236,6 +250,7 @@
 					{#key activeArea}
 						<SettingsAreaView area={activeArea} {settings} />
 					{/key}
+				{/if}
 				{/if}
 			</div>
 		</div>

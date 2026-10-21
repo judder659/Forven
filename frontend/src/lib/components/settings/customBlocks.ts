@@ -4,6 +4,7 @@
 // with a block shows even when it has no fields of its own.
 import type { Component } from 'svelte';
 import AgentsLinkBlock from './blocks/AgentsLinkBlock.svelte';
+import AssistantProfileBlock from './blocks/AssistantProfileBlock.svelte';
 import PipelineStanceBlock from './blocks/PipelineStanceBlock.svelte';
 import RealMoneyStatus from './blocks/RealMoneyStatus.svelte';
 import ResearchBlock from './blocks/ResearchBlock.svelte';
@@ -32,6 +33,7 @@ export const CUSTOM_BLOCKS: Record<string, CustomBlock> = {
   'lab-pipeline-preset': { component: PipelineStanceBlock, props: withSettings },
   'lab-research': { component: ResearchBlock, props: withSettings },
   'ai-agents-link': { component: AgentsLinkBlock },
+  'ai-assistant-profile': { component: AssistantProfileBlock },
   'system-throughput': { component: ThroughputDialBlock, props: withSettings },
   'notif-channels': { component: NotificationChannelsCard, props: withSettings },
   'system-updates': { component: UpdatePanel },

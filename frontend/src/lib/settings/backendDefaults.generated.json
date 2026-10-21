@@ -58,6 +58,8 @@
     "data_engine_settings.storage.min_free_disk_gb": 5.0,
     "data_engine_settings.storage.revision_keep_days": 180,
     "data_engine_settings.storage.trash_retention_days": 7,
+    "db_backup_keep_daily": 7,
+    "db_backup_max_total_gb": 0,
     "dethrone.paper_max_soak_days": 14,
     "dethrone.paper_min_closed_trades": 5,
     "dethrone.paper_min_soak_days": 7,

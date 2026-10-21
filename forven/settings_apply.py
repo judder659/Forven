@@ -266,6 +266,11 @@ _DEFAULT_PIPELINE_SETTINGS = {
     "retention_scanner_results_days": 30,
     "retention_gate_rejections_days": 30,
     "maintenance_vacuum_enabled": False,
+    # Database backups (forven.backups). The FORVEN_DB_BACKUP_* environment
+    # variables still win when set. 0 total size = automatic (6x the live DB,
+    # at least 2 GB).
+    "db_backup_keep_daily": 7,
+    "db_backup_max_total_gb": 0,
     "min_backtest_trades": 30,
     "min_sharpe_ratio": 0.5,
     "max_drawdown_pct": 40,
