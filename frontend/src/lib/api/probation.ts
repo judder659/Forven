@@ -83,6 +83,9 @@ export interface ProbationEntryReport {
 	trades_per_month: number | null;
 	paper_days: number | null;
 	confirmation: { matched: number; mismatched: number; closed: number };
+	/** Matched paper trades (and, for slow strategies, paper days) probation needs. */
+	need_trades?: number;
+	need_days?: number;
 	notes: string[];
 }
 

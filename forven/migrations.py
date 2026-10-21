@@ -935,6 +935,29 @@ def _m_2026_10_close_stale_dethrone_approvals(conn: sqlite3.Connection) -> None:
     log.info("Closed %d stale dethrone approval(s)", len(stale))
 
 
+def _m_2026_10_close_paper_live_promotion_approvals(conn: sqlite3.Connection) -> None:
+    """Close pending paper -> live promotion approvals.
+
+    Paper now reaches live only through live probation (forven.probation), so a
+    queued full-size go-live request has nothing left to decide. Marked expired;
+    history is kept. Idempotent.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "approvals" not in tables:
+        return
+    cur = conn.execute(
+        """UPDATE approvals
+           SET status = 'expired',
+               decision = 'Closed: paper goes live through probation (start it on the strategy page)',
+               decided_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'),
+               updated_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')
+           WHERE status = 'pending_approval'
+             AND approval_type = 'strategy_promotion_approval'
+             AND LOWER(COALESCE(requested_status, '')) IN ('live_graduated', 'deployed')"""
+    )
+    log.info("Closed %d paper-to-live promotion approval(s)", cur.rowcount or 0)
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -1002,6 +1025,10 @@ MIGRATIONS: list[Migration] = [
     Migration(
         name="2026_10_close_stale_dethrone_approvals",
         up=_m_2026_10_close_stale_dethrone_approvals,
+    ),
+    Migration(
+        name="2026_10_close_paper_live_promotion_approvals",
+        up=_m_2026_10_close_paper_live_promotion_approvals,
     ),
 ]
 

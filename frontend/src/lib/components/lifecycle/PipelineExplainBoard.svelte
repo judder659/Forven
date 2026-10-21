@@ -12,11 +12,12 @@
 	let error: string | null = null;
 	let expanded: Record<string, boolean> = {};
 
-	const STAGE_ORDER = ['quick_screen', 'gauntlet', 'paper', 'live_graduated'] as const;
+	const STAGE_ORDER = ['quick_screen', 'gauntlet', 'paper', 'probation', 'live_graduated'] as const;
 	const STAGE_TITLES: Record<string, string> = {
 		quick_screen: 'Quick Screen',
 		gauntlet: 'Gauntlet',
 		paper: 'Paper',
+		probation: 'Probation',
 		live_graduated: 'Live',
 	};
 
@@ -27,6 +28,7 @@
 		blocked_merit: { label: 'FAILED GATE', cls: 'text-red-400 border-red-900 bg-red-500/10' },
 		slot_contention: { label: 'SLOT CONTENTION', cls: 'text-orange-400 border-orange-900 bg-orange-500/10' },
 		awaiting_operator: { label: 'NEEDS YOU', cls: 'text-purple-400 border-purple-900 bg-purple-500/10' },
+		probation: { label: 'PROBATION', cls: 'text-amber-200 border-amber-700 bg-amber-500/10' },
 		live: { label: 'LIVE', cls: 'text-emerald-400 border-emerald-900 bg-emerald-500/10' },
 		unknown: { label: 'UNKNOWN', cls: 'text-sc-ink2 border-sc-line2 bg-sc-panel2' },
 	};
@@ -72,7 +74,7 @@
 
 	$: statusCounts = data?.counts?.by_status ?? {};
 	$: grouped = (data?.strategies ?? []).reduce<Record<string, PipelineExplainStrategy[]>>((acc, s) => {
-		(acc[s.stage] ??= []).push(s);
+		(acc[s.pipeline_stage ?? s.stage] ??= []).push(s);
 		return acc;
 	}, {});
 </script>
@@ -118,7 +120,7 @@
 		{/if}
 
 		<!-- Stage columns -->
-		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
 			{#each STAGE_ORDER as stage}
 				{@const items = grouped[stage] ?? []}
 				<section class="rounded-md border border-sc-line bg-sc-panel overflow-hidden" data-testid="explain-column-{stage}">
@@ -223,11 +225,8 @@
 
 											{#if s.evidence.paper}
 												<div class="text-[10px] text-sc-ink2 space-y-0.5">
-													{#if s.evidence.paper.paper_duration}
-														<div>Paper days: <span class="tabular-nums">{s.evidence.paper.paper_duration.current}/{s.evidence.paper.paper_duration.threshold}</span></div>
-													{/if}
-													{#if s.evidence.paper.paper_trades}
-														<div>Closed trades: <span class="tabular-nums">{s.evidence.paper.paper_trades.current}/{s.evidence.paper.paper_trades.threshold}</span></div>
+													{#if s.evidence.probation?.need_trades}
+														<div>Matched paper trades: <span class="tabular-nums">{s.evidence.probation.matched ?? 0}/{s.evidence.probation.need_trades}</span></div>
 													{/if}
 													{#if s.evidence.paper.last_trade_age_days != null}
 														<div>Last paper trade {fmtDays(s.evidence.paper.last_trade_age_days)} ago</div>

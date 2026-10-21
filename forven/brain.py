@@ -40,7 +40,7 @@ from forven.workspace import (
 )
 from forven.util import is_untestable_reason, normalize_stage, untestable_status_reason
 from forven.dethrone_cooldown import clear_dethrone_cooldown, dethrone_cooldown_active_until
-from forven import quick_screen_rule
+from forven import probation_rules, quick_screen_rule
 from forven.policy import evaluate_promotion, load_pipeline_config
 from forven.strategies.certification import certify_execution_strategy
 
@@ -1730,6 +1730,23 @@ def _transition_stage_impl(
         if normalized_target not in VALID_TRANSITIONS.get(current_stage, set()):
             raise ValueError(f"Invalid transition: {current_stage} -> {normalized_target}")
 
+        # PROBATION-ONLY: paper reaches live through live probation
+        # (forven.probation: probation_entry=True). Anything else asking for
+        # paper -> live (the paper graduation job, agents, fitness, a plain stage
+        # change) is refused here instead of queuing a full-size go-live; an
+        # operator may still skip probation with a forced override and GO LIVE.
+        if (
+            normalized_target == "live_graduated"
+            and current_stage == "paper"
+            and not force
+            and not probation_entry
+        ):
+            return _record_blocked_transition(
+                "Paper goes live through probation: start probation on the strategy page, "
+                "or skip it with an operator override and GO LIVE",
+                "probation_required",
+            )
+
         if (
             current_stage == "paper"
             and _requires_operator_dethrone_approval(current_stage, normalized_target)
@@ -1895,7 +1912,12 @@ def _transition_stage_impl(
             try:
                 from forven.exchange.risk import go_live_refusal
 
-                _admit_refusal = go_live_refusal(conn, strategy_id)
+                # PROBATION-CAP-1: a probation entrant trades at its start size.
+                _admit_weight = (
+                    float(probation_rules.settings(load_pipeline_config())["start_size_pct"]) / 100.0
+                    if probation_entry else None
+                )
+                _admit_refusal = go_live_refusal(conn, strategy_id, candidate_weight=_admit_weight)
             except Exception as exc:
                 log.warning("Live admission check errored for %s: %s", strategy_id, exc)
                 _admit_refusal = f"live admission check unavailable ({exc}); refusing go-live (fail closed)"
@@ -4163,12 +4185,10 @@ def run_strategy_review():
         else:
             log.info("Skipped promoting %s to paper: %s", s["id"], msg)
 
+    # PROBATION-ONLY: paper reaches live only through live probation
+    # (forven.probation); fitness no longer requests full-size go-lives.
     for s in candidates.get("promote_to_deploy", []):
-        ok, msg = promote_strategy(s["id"], "live_graduated")
-        if ok:
-            actions.append(f"Promoted {s['id']} to live_graduated (fitness={s['fitness']})")
-        else:
-            log.info("Skipped promoting %s to live_graduated: %s", s["id"], msg)
+        log.info("Not promoting %s to live on fitness: paper goes live through probation", s["id"])
 
     for s in candidates.get("retire", []):
         ok, msg = promote_strategy(s["id"], "retired")

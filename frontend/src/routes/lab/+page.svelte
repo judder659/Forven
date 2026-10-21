@@ -46,7 +46,7 @@
 	import { addToast } from '$lib/stores/processTracker';
 	import { buildExportFilename, copyJsonToClipboard, downloadJson } from '$lib/utils/strategyPortability';
 	import { forvenWsConnected } from '$lib/stores/forvenWebSocket';
-	import { PIPELINE_STAGES, graveyardTotal, stageTotals, summarizeFlows, type PipelineStage } from '$lib/utils/forge/flow';
+	import { RAIL_STAGES, graveyardTotal, stageTotals, summarizeFlows, type RailStage } from '$lib/utils/forge/flow';
 	import { STATUS_META, TONE_DOT, TONE_PILL, stageLabel, statusMeta, type ForgeStatusKey } from '$lib/utils/forge/status';
 	import { CAUSES, CAUSE_ORDER, archivedFromStage, classifyArchive, tallyCauses, type Cause, type CauseKey } from '$lib/utils/forge/causes';
 	import { forwardIndex, liveTotals, paperTotals, type ForwardRecord } from '$lib/utils/forge/forward';
@@ -849,16 +849,21 @@
 		if (entry) return humanizeStrategyType(entry.type) || entry.name || id;
 		return id;
 	};
-	$: stageCounts = PIPELINE_STAGES.reduce(
-		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => normalizeStage(row.stage) === stage).length }),
-		{} as Record<PipelineStage, number>,
+	/** The Forge column a row sits in: a live strategy on probation has its own. */
+	function railStage(row: ManagerRow, index: Map<string, PipelineExplainStrategy> = explainById): string {
+		const stage = normalizeStage(row.stage);
+		return stage === 'live_graduated' && index.get(row.id)?.pipeline_stage === 'probation' ? 'probation' : stage;
+	}
+	$: stageCounts = RAIL_STAGES.reduce(
+		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => railStage(row, explainById) === stage).length }),
+		{} as Record<RailStage, number>,
 	);
 	$: statusByStage = (() => {
-		const out = Object.fromEntries(PIPELINE_STAGES.map((s) => [s, {}])) as Record<PipelineStage, Partial<Record<ForgeStatusKey, number>>>;
+		const out = Object.fromEntries(RAIL_STAGES.map((s) => [s, {}])) as Record<RailStage, Partial<Record<ForgeStatusKey, number>>>;
 		for (const row of activeResults) {
 			const entry = explainById.get(row.id);
 			if (!entry) continue;
-			const stage = normalizeStage(row.stage) as PipelineStage;
+			const stage = railStage(row, explainById) as RailStage;
 			if (!out[stage]) continue;
 			const key = statusMeta(entry.status).key;
 			out[stage][key] = (out[stage][key] ?? 0) + 1;
@@ -899,7 +904,7 @@
 	$: topCause = windowCauses.find((c) => c.key !== 'other') ?? null;
 	$: topCauseScope = windowCovered ? `last ${flowWindow}` : `newest ${trashResults.length.toLocaleString('en-US')} loaded`;
 	$: headline = forgeHeadline({
-		live: stageCounts.live_graduated ?? 0,
+		live: (stageCounts.live_graduated ?? 0) + (stageCounts.probation ?? 0),
 		paper: stageCounts.paper ?? 0,
 		gauntlet: stageCounts.gauntlet ?? 0,
 		quickScreen: stageCounts.quick_screen ?? 0,
@@ -936,7 +941,7 @@
 			case 'blocked': return status === 'blocked_merit' || status === 'slot_contention';
 			case 'waiting': return status === 'waiting_evidence' || status === 'in_flight';
 			case 'ready': return status === 'ready';
-			case 'live': return status === 'live';
+			case 'live': return status === 'live' || status === 'probation';
 		}
 		return true;
 	}
@@ -972,7 +977,7 @@
 		void attentionIds;
 		const filtered = activeResults.filter((row) => {
 			if (symbolFilter !== 'all' && !rowSymbols(row).includes(symbolFilter)) return false;
-			if (stageFilter !== 'all' && normalizeStage(row.stage) !== stageFilter) return false;
+			if (stageFilter !== 'all' && railStage(row, explainById) !== stageFilter) return false;
 			if (!matchesStatus(row, statusFilter)) return false;
 			return matchesSearch(row, query);
 		});
@@ -1051,7 +1056,7 @@
 	$: graveyardCapped = !graveyardLoadAllOverride && graveyardStrategyLimitMode === 'capped' && trashResults.length >= graveyardStrategyLimit;
 
 	$: symbolOptions = ['all', ...new Set(activeResults.flatMap((row) => rowSymbols(row, forwardById)).sort())];
-	$: stageOptions = ['all', ...PIPELINE_STAGES];
+	$: stageOptions = ['all', ...RAIL_STAGES];
 	$: selectedRail = bucket === 'trash' ? 'graveyard' : stageFilter;
 
 	const STATUS_CHIPS: Array<{ key: StatusFilter; label: string }> = [
@@ -1590,7 +1595,7 @@
 										</div>
 									</td>
 									<td class="border-b border-sc-line px-2 py-2 align-top">
-										<span class={`inline-block rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] ${stageClass(row.stage)}`}>{stageLabel(stage)}</span>
+										<span class={`inline-block rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.06em] ${stageClass(row.stage)}`}>{stageLabel(entry?.pipeline_stage ?? stage)}</span>
 										<div class="mt-1 font-plex-mono text-[10.5px] text-sc-ink3" title="Days in this stage">{daysLabel(entry?.days_in_stage ?? daysInStage(row))} in stage</div>
 										<div class="font-plex-mono text-[10.5px] text-sc-ink4" title={`Created ${shortDateTime(row.created_at)}`}>{shortDate(row.created_at)}</div>
 									</td>

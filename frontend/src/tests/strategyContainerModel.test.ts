@@ -181,13 +181,27 @@ describe('strategy container lifecycle and verdict', () => {
 		{ from_state: 'backtesting', to_state: 'paper', created_at: '2026-09-27T03:50:31Z' },
 	] as never[];
 
-	it('places the strategy on the rail with the paper countdown', () => {
-		const rail = buildRail({ stage: 'paper', events, gauntletPassed: 5, gauntletTotal: 5, heldBackPassed: true, paper: { days: 2.4, needDays: 30, trades: 0, needTrades: 50 }, liveDays: null });
-		expect(rail.map((stage) => stage.state)).toEqual(['done', 'done', 'now', 'next']);
+	it('places the strategy on the rail with its progress toward probation', () => {
+		const rail = buildRail({ stage: 'paper', events, gauntletPassed: 5, gauntletTotal: 5, heldBackPassed: true, paper: { days: 2.4, needDays: 21, trades: 1, needTrades: 3 }, liveDays: null });
+		expect(rail.map((stage) => stage.key)).toEqual(['quick_screen', 'gauntlet', 'paper', 'probation', 'live_graduated']);
+		expect(rail.map((stage) => stage.state)).toEqual(['done', 'done', 'now', 'next', 'next']);
 		expect(rail[0].meta).toBe('Passed Sep 27, 2026');
 		expect(rail[1].meta).toBe('5/5 tests · held-back pass · Sep 27, 2026');
-		expect(rail[2].meta).toBe('Day 2 of 30 · 0 of 50 trades');
-		expect(rail[2].progress).toBeCloseTo(0.08);
+		expect(rail[2].meta).toBe('1 of 3 matched trades · day 2 of 21');
+		expect(rail[2].progress).toBeCloseTo(1 / 3);
+	});
+
+	it('puts a live strategy on probation on its own step', () => {
+		const rail = buildRail({
+			stage: 'live_graduated', events, gauntletPassed: 5, gauntletTotal: 5, heldBackPassed: true, paper: null, liveDays: 3,
+			probation: { sizePct: 25, liveTrades: 2, graduateTrades: 10 },
+		});
+		expect(rail.map((stage) => stage.state)).toEqual(['done', 'done', 'done', 'now', 'next']);
+		expect(rail[3].meta).toBe('25% size · 2 of 10 live trades');
+		expect(rail[3].progress).toBeCloseTo(0.2);
+		const full = buildRail({ stage: 'live_graduated', events, gauntletPassed: 5, gauntletTotal: 5, heldBackPassed: true, paper: null, liveDays: 3 });
+		expect(full.map((stage) => stage.state)).toEqual(['done', 'done', 'done', 'done', 'now']);
+		expect(full[4].meta).toBe('Day 3 · full size');
 	});
 
 	it('estimates the paper → live ETA from the backtest trade rates', () => {
@@ -226,16 +240,16 @@ describe('strategy container lifecycle and verdict', () => {
 		expect(findings[0].body).toContain('while buy & hold made −9.2%');
 		expect(findings[3].body).toContain('made 97% of net profit ($4,655 of $4,818)');
 		const verdict = summarizeVerdict(findings);
-		expect(verdict.label).toBe('Promising · not proven');
+		expect(verdict.label).toBe('Mixed backtest');
 		expect(verdict.headline).toBe('Profitable out of sample and on held-back data, but the edge is not statistically confirmed and its Sharpe falls outside its best window.');
 	});
 
-	it('calls a strategy that loses out of sample not viable', () => {
+	it('calls a strategy that loses out of sample a weak backtest', () => {
 		const findings = buildFindings({
 			inSample: null, outOfSample: readSlice({ ...OOS_BLOCK, total_return_pct: -0.05 }), heldBack: null, walkForward: null,
 			stressRows: [], dsr: null, concentration: null, exits: [], tradeCount: 0, stage: 'quick_screen', gate: null, paperNeed: { days: null, trades: null },
 		});
-		expect(summarizeVerdict(findings)).toMatchObject({ tone: 'fail', label: 'Not viable', headline: 'It loses money out of sample.' });
+		expect(summarizeVerdict(findings)).toMatchObject({ tone: 'fail', label: 'Weak backtest', headline: 'It loses money out of sample.' });
 	});
 	it('judges forward books separately and says when there are too few trades', () => {
 		const base = {
@@ -307,11 +321,11 @@ describe('strategy container lifecycle and verdict', () => {
 				tradeCount: 105, stage: 'paper', gate: null, paperNeed: { days: null, trades: null },
 			}).find((finding) => finding.key === 'costs');
 		const row = buildStressRows(evidence, { costMaxDegradationPct: 60 }).find((item) => item.key === 'cost_stress');
-		expect(row?.thresholdText).toBe('stressed Sharpe ≥ 0.30 · live gate ≤ 60% lost');
+		expect(row?.thresholdText).toBe('stressed Sharpe ≥ 0.30 · guide ≤ 60% lost');
 		expect(row?.tone).toBe('ok');
 		expect(judge(60)).toMatchObject({ tone: 'ok', title: 'Survives higher costs.' });
-		expect(judge(60)?.body).toBe('At 2× fees and slippage the Sharpe drops 42.6% to 0.31; the test needs at least 0.30. The paper → live gate also allows at most 60% of the Sharpe lost.');
-		expect(judge(40)).toMatchObject({ tone: 'caution', title: 'Higher costs would stop it at the live gate.' });
+		expect(judge(60)?.body).toBe('At 2× fees and slippage the Sharpe drops 42.6% to 0.31; the test needs at least 0.30. The guide is at most 60% of the Sharpe lost.');
+		expect(judge(40)).toMatchObject({ tone: 'caution', title: 'Higher costs take much of its edge.' });
 	});
 	it('marks where an archived strategy left the pipeline', () => {
 		const event = (id: string, from: string, to: string, at: string) =>
@@ -322,7 +336,7 @@ describe('strategy container lifecycle and verdict', () => {
 			events: [event('E1', 'quick_screen', 'gauntlet', '2026-03-02T00:00:00Z'), event('E2', 'gauntlet', 'archived', '2026-03-05T00:00:00Z')],
 			gauntletPassed: 2, gauntletTotal: 5, heldBackPassed: null, paper: null, liveDays: null,
 		});
-		expect(rail.map((stage) => stage.state)).toEqual(['done', 'stopped', 'next', 'next']);
+		expect(rail.map((stage) => stage.state)).toEqual(['done', 'stopped', 'next', 'next', 'next']);
 		expect(rail[1].meta).toBe('Archived here · Mar 5, 2026');
 	});
 });

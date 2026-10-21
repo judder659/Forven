@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import { PIPELINE_STAGES, type FlowSummary, type PipelineStage } from '$lib/utils/forge/flow';
+	import { RAIL_STAGES, type FlowSummary, type RailStage } from '$lib/utils/forge/flow';
 	import { STATUS_META, TONE_BAR, type ForgeStatusKey } from '$lib/utils/forge/status';
 	import type { BookTotals, LiveTotals } from '$lib/utils/forge/forward';
 	import type { CauseCount } from '$lib/utils/forge/causes';
 	import { fmtUsd, signClass } from '$lib/utils/strategyContainer/format';
 
 	/** Strategies in each stage right now (the Forge's own rows). */
-	export let counts: Record<PipelineStage, number>;
+	export let counts: Record<RailStage, number>;
 	/** Explainer status tallies per stage; empty while the explainer runs. */
-	export let statusByStage: Record<PipelineStage, Partial<Record<ForgeStatusKey, number>>>;
+	export let statusByStage: Record<RailStage, Partial<Record<ForgeStatusKey, number>>>;
 	export let flow: FlowSummary | null = null;
 	export let windowLabel = '24h';
 	export let paper: BookTotals | null = null;
@@ -25,16 +25,17 @@
 
 	const dispatch = createEventDispatcher<{ stage: string }>();
 
-	const LABELS: Record<PipelineStage, string> = {
+	const LABELS: Record<RailStage, string> = {
 		quick_screen: 'Quick screen',
 		gauntlet: 'Gauntlet',
 		paper: 'Paper',
+		probation: 'Probation',
 		live_graduated: 'Live',
 	};
-	const ORDER: ForgeStatusKey[] = ['awaiting_operator', 'blocked_merit', 'slot_contention', 'ready', 'in_flight', 'waiting_evidence', 'live', 'unknown'];
+	const ORDER: ForgeStatusKey[] = ['awaiting_operator', 'blocked_merit', 'slot_contention', 'ready', 'in_flight', 'waiting_evidence', 'probation', 'live', 'unknown'];
 
 	// Takes the tallies as an argument so the template re-runs it when they change.
-	function segments(byStage: typeof statusByStage, stage: PipelineStage) {
+	function segments(byStage: typeof statusByStage, stage: RailStage) {
 		const tally = byStage?.[stage] ?? {};
 		const total = ORDER.reduce((sum, key) => sum + (tally[key] ?? 0), 0);
 		return ORDER.filter((key) => (tally[key] ?? 0) > 0).map((key) => ({
@@ -61,9 +62,9 @@
 </script>
 
 <section class="overflow-hidden rounded-md border border-sc-line bg-sc-panel" data-testid="forge-pipeline">
-	<div class="grid grid-cols-2 md:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.05fr)]">
-		{#each PIPELINE_STAGES as stage, index (stage)}
-			{@const f = flow?.byStage[stage] ?? null}
+	<div class="grid grid-cols-2 md:grid-cols-[repeat(5,minmax(0,1fr))_minmax(0,1.05fr)]">
+		{#each RAIL_STAGES as stage, index (stage)}
+			{@const f = stage === 'probation' ? null : (flow?.byStage[stage] ?? null)}
 			{@const segs = segments(statusByStage, stage)}
 			<button
 				type="button"
@@ -74,10 +75,10 @@
 			>
 				<div class="flex items-center justify-between gap-2">
 					<span class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3 group-hover:text-sc-ink2">{LABELS[stage]}</span>
-					{#if index < PIPELINE_STAGES.length - 1 && f}
+					{#if index < RAIL_STAGES.length - 1 && f}
 						<span
 							class="hidden items-center gap-1 rounded-full border border-sc-line2 bg-sc-bg px-1.5 py-px font-plex-mono text-[10.5px] text-sc-ink2 md:inline-flex"
-							title={`${f.promoted} promoted from ${LABELS[stage].toLowerCase()} to ${LABELS[PIPELINE_STAGES[index + 1]].toLowerCase()} in the last ${windowLabel}`}
+							title={`${f.promoted} promoted from ${LABELS[stage].toLowerCase()} to ${LABELS[RAIL_STAGES[index + 1]].toLowerCase()} in the last ${windowLabel}`}
 						>{f.promoted}<span aria-hidden="true" class="text-sc-ink3">→</span></span>
 					{/if}
 				</div>
@@ -98,13 +99,19 @@
 					<div class="text-[11px] text-sc-ink4">{counts[stage] === 0 ? 'Empty right now' : statusReady ? 'Not assessed' : 'Reading the gates…'}</div>
 				{/if}
 				<div class="mt-0.5 grid gap-0.5 border-t border-sc-line pt-1.5 text-[11px] leading-snug">
-					{#if !f}
+					{#if stage === 'probation'}
+						<span class="text-sc-ink2">Live at reduced size</span>
+						{#if flow}<span class="text-sc-ink3"><b class="font-plex-mono font-medium text-sc-ink">{n(flow.byStage.live_graduated.entered)}</b> started in the last {windowLabel}</span>{/if}
+					{:else if !f}
 						<span class="text-sc-ink4">Loading flow…</span>
 					{:else if stage === 'quick_screen'}
 						<span class="text-sc-ink2"><b class="font-plex-mono font-medium text-sc-ink">{n(flow?.screened)}</b> screened{#if f.passRate !== null}<span class="text-sc-ink3"> · {pct(f.passRate)} pass</span>{/if}</span>
 						<span class="text-sc-ink3"><b class="font-plex-mono font-medium text-[#f2956f]">{n(f.archived)}</b> to graveyard</span>
+					{:else if stage === 'live_graduated'}
+						<span class="text-sc-ink2">Full size</span>
+						<span class="text-sc-ink3"><b class="font-plex-mono font-medium {f.archived > 0 ? 'text-[#f2956f]' : 'text-sc-ink2'}">{n(f.archived)}</b> to graveyard</span>
 					{:else}
-						<span class="text-sc-ink2"><b class="font-plex-mono font-medium text-sc-ink">{n(f.entered)}</b> {stage === 'live_graduated' ? 'graduated' : 'entered'}{#if stage !== 'live_graduated' && f.passRate !== null}<span class="text-sc-ink3"> · {pct(f.passRate)} pass</span>{/if}</span>
+						<span class="text-sc-ink2"><b class="font-plex-mono font-medium text-sc-ink">{n(f.entered)}</b> entered{#if f.passRate !== null}<span class="text-sc-ink3"> · {pct(f.passRate)} pass</span>{/if}</span>
 						<span class="text-sc-ink3"><b class="font-plex-mono font-medium {f.archived > 0 ? 'text-[#f2956f]' : 'text-sc-ink2'}">{n(f.archived)}</b> to graveyard</span>
 					{/if}
 					{#if stage === 'paper' && paper}

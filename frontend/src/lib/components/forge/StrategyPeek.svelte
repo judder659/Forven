@@ -13,7 +13,7 @@
 		blockerTone,
 		cleanReason,
 		stageLabel,
-		statusMetaForStage,
+		entryStatusMeta,
 		TONE_DOT,
 		TONE_PILL,
 		TONE_TEXT,
@@ -36,7 +36,7 @@
 
 	let panel: HTMLElement;
 
-	$: meta = statusMetaForStage(entry?.status, row.stage);
+	$: meta = entryStatusMeta(entry);
 	$: steps = (entry?.readiness_steps ?? []).filter((step) => step.status !== 'skipped');
 	$: tests = Object.entries(entry?.evidence?.validation_tests ?? {});
 	$: gauntlet = entry?.gauntlet ?? null;
@@ -98,7 +98,7 @@
 >
 	<header class="grid gap-2 border-b border-sc-line px-4 pb-3 pt-3.5">
 		<div class="flex items-center gap-2">
-			<span class={`rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${stageClass(row.stage)}`}>{stageLabel(row.stage)}</span>
+			<span class={`rounded border px-1.5 py-px font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] ${stageClass(row.stage)}`}>{stageLabel(entry?.pipeline_stage ?? row.stage)}</span>
 			{#if entry?.days_in_stage !== undefined && entry?.days_in_stage !== null}
 				<span class="text-[11px] text-sc-ink3">{daysLabel(entry.days_in_stage)} in stage</span>
 			{:else if bucket === 'trash'}
