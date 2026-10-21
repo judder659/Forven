@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mount, unmount } from 'svelte';
 import { get } from 'svelte/store';
-import SettingsLab from '../lib/components/settings/sections/SettingsLab.svelte';
+import SettingsAreaView from '../lib/components/settings/SettingsAreaView.svelte';
 import { originalValues, clearDirty } from '../lib/settings/dirty';
 
 let target: HTMLElement;
@@ -24,13 +24,14 @@ async function flush(): Promise<void> {
 	await Promise.resolve();
 }
 
-describe('SettingsLab section', () => {
+describe('Settings Backtesting area', () => {
 	it('renders the expected lab subsections from the manifest', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsLab, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'backtesting',
 				settings: {
 					research_settings: {},
 					backtest_duration_days: 45,
@@ -42,15 +43,17 @@ describe('SettingsLab section', () => {
 
 		const text = target.textContent || '';
 		expect(text).toContain('Research');
-		expect(text).toContain('Gauntlet defaults');
+		expect(text).toContain('Defaults');
+		expect(text).toContain('Window per pipeline stage');
 	});
 
 	it('seeds originalValues on mount from the flat settings blob', async () => {
 		target = document.createElement('div');
 		document.body.appendChild(target);
-		instance = mount(SettingsLab, {
+		instance = mount(SettingsAreaView, {
 			target,
 			props: {
+				area: 'backtesting',
 				settings: {
 					backtest_duration_days: 45,
 				},

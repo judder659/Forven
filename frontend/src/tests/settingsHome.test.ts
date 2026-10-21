@@ -53,9 +53,9 @@ describe('SettingsHome', () => {
 
 		const text = target.textContent || '';
 		expect(text).toContain('System');
-		expect(text).toContain('Mode');
+		expect(text).toContain('Real money');
 		expect(text).toContain('Kill Switch');
-		expect(text).toContain('Self-healing');
+		expect(text).toContain('Automation');
 	});
 
 	it('renders a recently-changed entry after getSettingsAuditLog resolves', async () => {

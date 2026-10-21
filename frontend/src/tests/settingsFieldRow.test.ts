@@ -47,7 +47,7 @@ describe('SettingsFieldRow', () => {
 		expect(target.textContent).toContain('Loss before new entries');
 		expect(target.textContent).toContain('$');
 		expect(target.textContent).toContain('Default: 200');
-		expect(target.textContent).toContain('risk.max_daily_loss');
+		expect(target.querySelector('[title="Setting ID: risk.max_daily_loss"]')).toBeTruthy();
 	});
 
 	it('shows dirty dot when value changes from original', async () => {

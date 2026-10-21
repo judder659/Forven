@@ -58,14 +58,17 @@
 
 	// ---- Daily-control tiles ----
 	$: systemStatus = (dashboard && (dashboard as any).status) as string | undefined;
-	$: executionMode = (dashboard && (dashboard as any).execution_mode) as string | undefined;
 	$: killSwitchActive = Boolean(
 		dashboard && (dashboard as any).risk && (dashboard as any).risk.kill_switch_active,
 	);
-	$: tradingMode = (settings.trading_mode as string | undefined) ?? executionMode ?? 'paper';
-	$: selfHealing = (settings.self_healing_enabled as boolean | undefined) ?? true;
 	$: onTestnet = settings.hyperliquid_testnet !== false;
 	$: mainnetArmed = Boolean(settings.mainnet_armed);
+	$: realMoney = !onTestnet && mainnetArmed;
+	$: liveStrategies = (dashboard && typeof (dashboard as any).live_strategy_count === 'number'
+		? (dashboard as any).live_strategy_count
+		: null) as number | null;
+	$: systemMode = (dashboard && (dashboard as any).system_mode) as string | undefined;
+	const SYSTEM_MODE_LABELS: Record<string, string> = { manual: 'Manual', semi_auto: 'Semi-auto', auto: 'Auto' };
 
 	// ---- Needs-config rules ----
 	type Issue = { key: string; label: string; area: string; id?: string };
@@ -82,7 +85,7 @@
 				issues.push({
 					key: 'hl-creds',
 					label: 'Hyperliquid is selected but no credentials are configured.',
-					area: 'trading',
+					area: 'hyperliquid',
 					id: 'hyperliquid.actual_wallet_address',
 				});
 			}
@@ -130,14 +133,13 @@
 
 		<button
 			type="button"
-			aria-label="Open trading mode settings (current: {tradingMode ?? 'unknown'})"
-			on:click={() => jumpTo('trading', 'trading-mode.trading_mode')}
+			aria-label="Open real-money status (network: {onTestnet ? 'testnet' : 'mainnet'})"
+			on:click={() => jumpTo('trading')}
 			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Mode</div>
-			<div class="mt-1 text-lg font-bold" class:text-red-400={tradingMode === 'live'} class:text-sc-ink={tradingMode !== 'live'}>
-				{tradingMode === 'live' ? 'Live' : 'Paper'}
-				<span class="text-sm font-semibold" class:text-red-400={!onTestnet} class:text-sc-ink3={onTestnet} data-testid="home-network">· {onTestnet ? 'Testnet' : 'Mainnet'}</span>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Real money</div>
+			<div class="mt-1 text-lg font-bold" class:text-red-400={realMoney} class:text-sc-ink={!realMoney} data-testid="home-network">
+				{onTestnet ? 'Testnet' : 'Mainnet'}{realMoney && liveStrategies != null ? ` · ${liveStrategies} live` : ''}
 			</div>
 			<div class="mt-1 text-xs text-sc-ink3">
 				{#if onTestnet}Orders go to Hyperliquid testnet.{:else}Mainnet orders {mainnetArmed ? 'are armed (real money)' : 'are refused until armed'}.{/if}
@@ -158,15 +160,15 @@
 
 		<button
 			type="button"
-			aria-label="Open self-healing settings (current: {selfHealing ? 'enabled' : 'disabled'})"
-			on:click={() => jumpTo('system', 'bot-operations.self_healing_enabled')}
+			aria-label="Open automation settings (system mode: {systemMode ?? 'unknown'})"
+			on:click={() => jumpTo('automation')}
 			class="bg-sc-panel px-4 py-3 text-left hover:bg-sc-panel2 transition-colors"
 		>
-			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Self-healing</div>
+			<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Automation</div>
 			<div class="mt-1 text-lg font-bold text-sc-ink">
-				{selfHealing ? 'Enabled' : 'Disabled'}
+				{systemMode ? SYSTEM_MODE_LABELS[systemMode] ?? systemMode : dashboard ? 'Unknown' : 'Loading…'}
 			</div>
-			<div class="mt-1 text-xs text-sc-ink3">Auto-recover from known errors.</div>
+			<div class="mt-1 text-xs text-sc-ink3">How much runs on its own.</div>
 		</button>
 	</div>
 
