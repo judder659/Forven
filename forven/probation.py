@@ -41,6 +41,12 @@ log = logging.getLogger("forven.probation")
 
 AUTOMATION_KV_KEY = "forven:probation:automation"
 READY_KV_KEY = "forven:probation:ready"
+# Bump when entry_check's checks or their sizing change, so a ready list written
+# by older code is recomputed instead of shown (after #246 a pre-restart list
+# still sized every strategy at full size and read "no room live").
+READY_FORMAT = 2
+# A list older than this is recomputed on read (the watchdog writes it hourly).
+READY_MAX_AGE_SECONDS = 2 * 3600
 SKIPS_KV_PREFIX = "forven:probation:skips:"
 ACTOR = "probation"
 _MAX_SKIPS_KEPT = 20
@@ -908,9 +914,39 @@ def overview(cfg: dict | None = None) -> dict[str, Any]:
     }
 
 
+def _ready_rules(k: dict) -> str:
+    """Fingerprint of the knobs a ready list was computed under."""
+    return json.dumps(k, sort_keys=True, default=str)
+
+
+def _ready_current(cached: dict | None, k: dict) -> bool:
+    if not isinstance(cached, dict):
+        return False
+    if cached.get("format") != READY_FORMAT or cached.get("rules") != _ready_rules(k):
+        return False
+    checked = _parse_ts(cached.get("checked_at"))
+    return checked is not None and (_now() - checked).total_seconds() <= READY_MAX_AGE_SECONDS
+
+
 def ready_cache() -> dict[str, Any]:
-    """The watchdog's last entry checks of every paper strategy (refreshed hourly)."""
-    return _db().kv_get(READY_KV_KEY, None) or {"checked_at": None, "strategies": []}
+    """The last entry checks of every paper strategy.
+
+    The hourly watchdog writes it. A list from older code, other knobs, or more
+    than two hours ago is recomputed here (checks only: nothing is started and
+    nobody is notified; the watchdog does both on its next run).
+    """
+    cached = _db().kv_get(READY_KV_KEY, None)
+    try:
+        cfg = config()
+        k = rules.settings(cfg)
+        if _ready_current(cached, k):
+            return cached
+        fresh = _ready_payload(_ready_entries(cfg), k, notified=(cached or {}).get("notified"))
+        _db().kv_set(READY_KV_KEY, fresh)
+        return fresh
+    except Exception as exc:  # noqa: BLE001 — a stale list beats none
+        log.warning("Probation ready list could not be recomputed: %s", exc)
+        return cached or {"checked_at": None, "strategies": []}
 
 
 def stage_badges(strategy_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
@@ -1033,15 +1069,15 @@ def _tick_one(sid: str, rec: dict, cfg: dict, k: dict, auto: dict, out: dict) ->
         out["stepped"].append(sid)
 
 
-def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
+def _ready_entries(cfg: dict) -> list[dict[str, Any]]:
+    """Entry checks of every paper strategy, as the ready list stores them."""
     with _db().get_db() as conn:
         rows = conn.execute(
             "SELECT id, display_id, name, symbol, timeframe FROM strategies "
             "WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading') "
             "ORDER BY COALESCE(stage_changed_at, created_at)"
         ).fetchall()
-    previous = {s["strategy_id"]: s for s in ((_db().kv_get(READY_KV_KEY, None) or {}).get("strategies") or [])}
-    ready: list[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     for row in rows:
         sid = str(row["id"])
         try:
@@ -1049,7 +1085,7 @@ def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
         except Exception as exc:  # noqa: BLE001
             log.debug("Probation entry check failed for %s: %s", sid, exc)
             continue
-        entry = {
+        entries.append({
             "strategy_id": sid,
             "display_id": row["display_id"] or sid,
             "name": row["name"],
@@ -1064,8 +1100,33 @@ def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
             "slow": report["slow"],
             "paper_days": report["paper_days"],
             "checked_at": _iso(),
-        }
-        if report["eligible"] and auto["auto_entry"]:
+        })
+    return entries
+
+
+def _ready_payload(entries: list[dict], k: dict, *, notified: object = None) -> dict[str, Any]:
+    entries.sort(key=lambda e: (not e["eligible"], len(e["failing"])))
+    return {
+        "checked_at": _iso(),
+        "format": READY_FORMAT,
+        "rules": _ready_rules(k),
+        # Strategies already told they are ready, so a recompute on read never
+        # swallows the watchdog's "ready" notification.
+        "notified": sorted({str(x) for x in notified}) if isinstance(notified, list) else [],
+        "strategies": entries,
+    }
+
+
+def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
+    previous = _db().kv_get(READY_KV_KEY, None) or {}
+    if "notified" in previous:
+        notified = {str(x) for x in previous.get("notified") or []}
+    else:  # a list from before the notified set: who was eligible then was told
+        notified = {str(s["strategy_id"]) for s in previous.get("strategies") or [] if s.get("eligible")}
+    ready: list[dict[str, Any]] = []
+    for entry in _ready_entries(cfg):
+        sid = entry["strategy_id"]
+        if entry["eligible"] and auto["auto_entry"]:
             try:
                 start(sid, actor=ACTOR, cfg=cfg)
                 out["started"].append(sid)
@@ -1075,10 +1136,12 @@ def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
                 entry["failing"].append({"key": "start", "label": "Start refused", "detail": str(exc)})
         if entry["eligible"]:
             out["ready"].append(sid)
-            if not previous.get(sid, {}).get("eligible"):
+            if sid not in notified:
                 _notify(sid, f"Ready for probation: {_label(sid)}",
                         "Its paper trades match its backtest. Start probation on its page or on the Live trades page.",
                         kind="ready")
         ready.append(entry)
-    ready.sort(key=lambda e: (not e["eligible"], len(e["failing"])))
-    _db().kv_set(READY_KV_KEY, {"checked_at": _iso(), "strategies": ready})
+    # Remember who was told while still ready; one that drops out is told again
+    # when it becomes ready again.
+    still = sorted(e["strategy_id"] for e in ready if e["eligible"])
+    _db().kv_set(READY_KV_KEY, _ready_payload(ready, k, notified=still))
