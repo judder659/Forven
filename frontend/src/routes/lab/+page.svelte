@@ -2,6 +2,8 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import { getProbationBadges, type ProbationBadges } from '$lib/api/probation';
+	import ProbationBadge from '$lib/components/probation/ProbationBadge.svelte';
 	import {
 		getForvenStrategiesQuery,
 		getNowWorking,
@@ -573,6 +575,16 @@
 		forwardLoaded = true;
 	}
 
+	let probationBadges: ProbationBadges = {};
+
+	async function loadProbationBadges() {
+		try {
+			probationBadges = await getProbationBadges();
+		} catch {
+			// A list without badges still renders.
+		}
+	}
+
 	async function refreshAll() {
 		// The explainer is the slowest call, so it starts first and nothing waits on it.
 		void loadExplain();
@@ -582,6 +594,7 @@
 			loadHealth(),
 			loadOverview(),
 			loadForward(),
+			loadProbationBadges(),
 		]);
 	}
 
@@ -1544,8 +1557,11 @@
 												title={`${row.name} — open the strategy page`}
 											>{titleOf(row)}</a>
 											<div class="mt-0.5 truncate font-plex-mono text-[10.5px] text-sc-ink3">{row.id} · {row.symbol}{#if multiCoin}<span class="text-sc-ink2" title={`Also paper-trades ${multiCoin.coins.slice(1).join(', ')}`}>{` +${multiCoin.coins.length - 1}`}</span>{/if} · {row.timeframe}</div>
-											{#if multiCoin || row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
+											{#if probationBadges[row.id] || multiCoin || row.hypothesis_id || row.source === 'ai_dropzone' || !row.has_backtest_results || row.recovery_status}
 												<div class="mt-1 flex flex-wrap gap-1">
+													{#if probationBadges[row.id]}
+														<ProbationBadge state={probationBadges[row.id].state} sizePct={probationBadges[row.id].size_pct} compact />
+													{/if}
 													{#if multiCoin}
 														<span
 															class="inline-flex items-center gap-1 rounded border border-[#5ccac4]/40 px-1.5 font-plex-cond text-[10.5px] uppercase tracking-[0.06em] text-[#5ccac4]"

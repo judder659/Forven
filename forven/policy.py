@@ -12,7 +12,7 @@ from typing import Any
 from forven import live_evidence, multi_coin, paper_door, paper_pool
 from forven.baseline_hurdle import baseline_hurdle_gate_reason
 from forven.db import create_approval, get_db, kv_get, kv_set, log_activity, log_gate_rejection
-from forven import quick_screen_rule
+from forven import probation_rules, quick_screen_rule
 from forven.dethrone_cooldown import dethrone_cooldown_active_until
 
 from forven.gauntlet.legitimacy import validate_robustness_payload
@@ -348,6 +348,12 @@ DEFAULT_PIPELINE_CONFIG = {
         ],
         "decay_kill_switch_pct": 0.30,
     },
+    # Live probation (2026-10 probation plan): a short paper confirmation, then
+    # real money at a fraction of normal size that grows with the live record,
+    # and automatic demotion when live results leave the backtest's range.
+    # Thresholds only; what Forven does on its own is switched separately
+    # (forven.probation automation, typed confirmation).
+    "probation": dict(probation_rules.DEFAULTS),
     # Absolute anti-bypass floors clamped onto the promotion gates. FULLY EDITABLE —
     # these bound how far a relaxed preset / custom config / automated caller can
     # soften the path, but the operator can change them from Settings. Set a floor to

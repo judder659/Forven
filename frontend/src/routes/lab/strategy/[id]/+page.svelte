@@ -93,6 +93,7 @@
 	import MonthlyHeatmap from '$lib/components/strategy/container/MonthlyHeatmap.svelte';
 	import TradeTable from '$lib/components/strategy/container/TradeTable.svelte';
 	import LifecycleRail from '$lib/components/strategy/container/LifecycleRail.svelte';
+	import ProbationPanel from '$lib/components/probation/ProbationPanel.svelte';
 	import VerdictCard from '$lib/components/strategy/container/VerdictCard.svelte';
 	import StandingCard from '$lib/components/strategy/container/StandingCard.svelte';
 	import CoinBreakdown from '$lib/components/strategy/container/CoinBreakdown.svelte';
@@ -4961,6 +4962,13 @@
 
 				{#if container && !loading && !error}
 					<LifecycleRail stages={railStages} tooltips={stageTooltips} gateLabel={railGate.label} gateHeadline={railGate.headline} gateDetail={railGate.detail} terminalNote={railGate.terminal} />
+					{#if currentLifecycleStage === 'paper' || currentLifecycleStage === 'live_graduated'}
+						<ProbationPanel
+							strategyId={container.strategy.id}
+							refreshKey={`${currentLifecycleStage}|${container.strategy.state_changed_at ?? ''}`}
+							on:changed={() => loadContainer()}
+						/>
+					{/if}
 				{/if}
 				{#if container && !loading && !error && isExecutingStage(currentLifecycleStage)}
 					<ExecutionCheckPanel

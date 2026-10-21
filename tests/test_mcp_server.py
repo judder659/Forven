@@ -43,6 +43,8 @@ EXPECTED_TOOL_NAMES = {
     "forven_get_paper_readiness",
     "forven_start_paper_session",
     "forven_run_gauntlet_candidate",
+    "forven_get_probation",
+    "forven_reduce_probation_risk",
 }
 
 

@@ -13,7 +13,7 @@
 		blockerTone,
 		cleanReason,
 		stageLabel,
-		statusMeta,
+		statusMetaForStage,
 		TONE_DOT,
 		TONE_PILL,
 		TONE_TEXT,
@@ -36,7 +36,7 @@
 
 	let panel: HTMLElement;
 
-	$: meta = statusMeta(entry?.status);
+	$: meta = statusMetaForStage(entry?.status, row.stage);
 	$: steps = (entry?.readiness_steps ?? []).filter((step) => step.status !== 'skipped');
 	$: tests = Object.entries(entry?.evidence?.validation_tests ?? {});
 	$: gauntlet = entry?.gauntlet ?? null;

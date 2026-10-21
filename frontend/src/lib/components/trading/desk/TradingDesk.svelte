@@ -37,6 +37,7 @@
 	import { getDeskFills, getFleet, getJournal, getMarketContext, type DeskFill, type DeskMode, type JournalEvent, type MarketContext } from '$lib/api/desk';
 	import { forvenDashboard, forvenRisk } from '$lib/stores/forven';
 	import { forvenLivePrices, forvenWsConnected } from '$lib/stores/forvenWebSocket';
+	import { getProbationOverview, type ProbationOverview } from '$lib/api/probation';
 	import { setPageContext } from '$lib/stores/pageContext';
 	import { buildAttention, type SideTab } from '$lib/utils/tradingDesk/attention';
 	import { cap1, fmtPct, fmtPx, fmtQty, fmtUsd, num, parseTs } from '$lib/utils/tradingDesk/format';
@@ -56,6 +57,7 @@
 	import DeskStatusLine from './DeskStatusLine.svelte';
 	import DeskStrategyRail from './DeskStrategyRail.svelte';
 	import DeskWhyPanel from './DeskWhyPanel.svelte';
+	import DeskProbation from '$lib/components/probation/DeskProbation.svelte';
 
 	export let mode: DeskMode;
 	export let dashboard: ForvenDashboardResponse | null = null;
@@ -66,6 +68,8 @@
 
 	let sessions: PaperTradingSession[] = [];
 	let fleet: LiveFleet | null = null;
+	let probation: ProbationOverview | null = null;
+	$: probationById = new Map((probation?.strategies ?? []).map((row) => [row.strategy_id, row]));
 	let journal: JournalEvent[] = [];
 	let journalDays = 30;
 	let fills: DeskFill[] = [];
@@ -225,6 +229,7 @@
 		const tasks: Array<Promise<unknown>> = [loadJournal(), loadFills(), loadMarket()];
 		tasks.push(getSchedulerJobs().then((result) => { jobs = result; }).catch(() => undefined));
 		if (mode === 'live' && blotTab === 'performance') tasks.push(loadEquity());
+		if (mode === 'live') tasks.push(getProbationOverview().then((result) => { probation = result; }).catch(() => undefined));
 		await Promise.allSettled(tasks);
 	}
 
@@ -620,6 +625,7 @@
 			<DeskStatusLine {mode} dashboard={dash} {jobs} wsConnected={$forvenWsConnected} now={clock} />
 			<DeskAccountStrip {mode} dashboard={dash} {risk} {fleet} {sessions} {openPnl} openLegs={allLegs.length} {openLong} {openShort} {riskAtStops} {maxBookRiskPct} now={clock} />
 			<DeskAttention {mode} items={attention} on:show={(event) => selectStrategy(event.detail.strategyId, event.detail.tab)} />
+			{#if mode === 'live'}<DeskProbation overview={probation} />{/if}
 
 			<div class="grid gap-2.5 lg:grid-cols-[272px_minmax(0,1fr)] 2xl:grid-cols-[292px_minmax(0,1fr)_372px]">
 				<DeskStrategyRail
@@ -629,6 +635,7 @@
 					filter={railFilter}
 					{archived}
 					{archivedLoading}
+					probation={probationById}
 					selectedArchivedId={archivedDetail?.strategy.id ?? null}
 					now={clock}
 					on:select={(event) => selectSession(event.detail)}

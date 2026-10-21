@@ -32,6 +32,8 @@ from forven.task_timeouts import coerce_stale_recovery_minutes, recommended_agen
 log = logging.getLogger("forven.scheduler")
 
 
+_PROBATION_WATCHDOG_JOB_ID = "forven-probation-watchdog"
+
 _DEFAULT_JOB_IDS = {
     "forven-strategy-creation",
     "forven-testing-cycle",
@@ -51,6 +53,7 @@ _DEFAULT_JOB_IDS = {
     "forven-exec-quality-watchdog",
     "forven-testnet-harness",
     "forven-live-graduation-scan",
+    "forven-probation-watchdog",
     "forven-scanner-signal",
     "forven-scanner-hourly",
     "forven-recalibration",
@@ -743,6 +746,39 @@ def migrate_data_sla_collector() -> bool:
     if changed:
         log.info("Migrated data jobs to the SLA collector: %s", "; ".join(changed))
     return bool(changed)
+
+
+def _add_probation_watchdog_job() -> None:
+    """Live probation watchdog, hourly. Finishes pending demotions and refreshes
+    the ready list always; demotes, steps sizes, graduates and admits only as far
+    as the probation automation switches allow."""
+    add_job(
+        job_id=_PROBATION_WATCHDOG_JOB_ID,
+        name="Live Probation Watchdog",
+        schedule_type="interval",
+        schedule_expr="3600000",
+        command="probation-watchdog",
+        timezone_str="UTC",
+        payload={"kind": "probation_tick"},
+    )
+
+
+def migrate_probation_watchdog() -> bool:
+    """Add the probation watchdog on installs seeded before it existed.
+
+    Adding just this row keeps reconcile_forven_jobs from seeing a missing
+    default, which would trigger the full reseed and reset every job's
+    schedule and enabled flag.
+    """
+    with get_db() as conn:
+        present = conn.execute(
+            "SELECT 1 FROM scheduler_jobs WHERE id = ?", (_PROBATION_WATCHDOG_JOB_ID,)
+        ).fetchone()
+    if present is not None:
+        return False
+    _add_probation_watchdog_job()
+    log.info("Added the %s scheduler job", _PROBATION_WATCHDOG_JOB_ID)
+    return True
 
 
 def _sync_data_collector_cadence() -> None:
@@ -1852,6 +1888,16 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # Live-graduation recommender — daily paper→live candidate scan; queues
         # operator approvals only (arming stays in the typed GO-LIVE flow) and
         # no-ops unless live_graduation_recommender_enabled is set
+        # Live probation watchdog (forven.probation): demotions, size steps,
+        # graduation and admission, as far as the automation switches allow.
+        if kind == "probation_tick":
+            from forven.probation import tick as probation_tick
+            result = await _run_sync_job(probation_tick)
+            if not isinstance(result, dict):
+                return "ok", None
+            parts = [f"{len(result.get(key) or [])} {key}" for key in ("started", "stepped", "graduated", "demoting", "demoted") if result.get(key)]
+            return "ok", (", ".join(parts) if parts else f"{len(result.get('ready') or [])} ready for probation")
+
         if kind == "live_graduation_scan":
             from forven.live_graduation import run_live_graduation_scan
             result = await _run_sync_job(run_live_graduation_scan)
@@ -3341,6 +3387,9 @@ def seed_forven_jobs():
         payload={"kind": "live_graduation_scan"},
     )
 
+    # 5.5d. Live probation watchdog — hourly.
+    _add_probation_watchdog_job()
+
     # 5.6. Adaptive regime recalibration — Every 30 minutes
     add_job(
         job_id="forven-recalibration",
@@ -3653,6 +3702,7 @@ def reconcile_forven_jobs() -> dict[str, int]:
     # would reset the operator's schedules and enabled flags on the first boot
     # after the Data Manager rebuild ships. Idempotent.
     migrate_data_sla_collector()
+    migrate_probation_watchdog()
     # PORT-GATE-1: expected ids are dynamic — the portfolio layer's jobs count
     # as defaults only while its master switch is on, so disabling the layer
     # reaps its jobs here and re-enabling restores them via the reseed below.
