@@ -198,7 +198,9 @@ def test_seed_from_finer_series_rebuilds_older_history(monkeypatch, tmp_path):
 
         seeded = seed_from_finer_series(symbol, "4h", 365)
         assert seeded and seeded["source_timeframe"] in {"2h", "1h"}
-        assert coverage_days(symbol, "4h") >= 365
+        # The footer stores whole dates, so a seed reaching back exactly 365 days can
+        # read as 364 when the last bar falls on the day before today (00:00-04:00 UTC).
+        assert coverage_days(symbol, "4h") >= 364
 
         stored = load_parquet(symbol, "4h")
         recent = stored[pd.to_datetime(stored["timestamp"], utc=True) >= native["timestamp"].iloc[0]]

@@ -269,6 +269,14 @@ def _validate_custom_module(workdir: Path) -> dict:
     if validation_errors:
         return {"ok": False, "error": "class validation: " + "; ".join(validation_errors)}
 
+    # Discovery never registers an imported/ module by its TYPE_NAME (only namespaced
+    # keys), so certification below would always read "no runtime class registered".
+    # Intake validates the same file from custom/, where it is registered by name;
+    # register it in this one-shot child too, so a graveyard re-entry check of an
+    # agent-registered strategy certifies it the way intake did.
+    if package == "imported":
+        registry.register_type(str(type_name), strategy_cls)
+
     probe = strategy_cls("__probe__", {})
     default_params = probe.default_params
     asset = probe.asset if hasattr(probe, "asset") else "BTC"
