@@ -114,6 +114,42 @@ class TestHealthState:
         state.mark_notified("key")
         assert state.was_recently_alerted("key", cooldown_seconds=60)
 
+    def test_active_alerts_clear_when_component_recovers(self):
+        state = HealthState()
+        state.update_component(ComponentStatus("scheduler", State.RED, message="stale"))
+        state.record_alert(HealthAlert(Severity.CRITICAL, "scheduler", "Scheduler heartbeat stale"))
+        assert [a.component for a in state.get_active_alerts(Severity.CRITICAL)] == ["scheduler"]
+
+        state.update_component(ComponentStatus("scheduler", State.GREEN, message="ok"))
+        assert state.get_active_alerts(Severity.CRITICAL) == []
+        # The history feed keeps the record.
+        assert len(state.get_alerts(Severity.CRITICAL)) == 1
+
+    def test_active_critical_needs_red(self):
+        state = HealthState()
+        state.record_alert(HealthAlert(Severity.CRITICAL, "data_collector", "overdue"))
+        state.update_component(ComponentStatus("data_collector", State.AMBER))
+        assert state.get_active_alerts(Severity.CRITICAL) == []
+        state.record_alert(HealthAlert(Severity.WARNING, "data_collector", "late"))
+        assert [a.message for a in state.get_active_alerts(Severity.WARNING)] == ["late"]
+
+    def test_active_alerts_newest_per_component(self):
+        state = HealthState()
+        state.update_component(ComponentStatus("scheduler", State.RED))
+        state.record_alert(HealthAlert(Severity.CRITICAL, "scheduler", "first"))
+        state.record_alert(HealthAlert(Severity.CRITICAL, "scheduler", "second"))
+        active = state.get_active_alerts(Severity.CRITICAL)
+        assert [a.message for a in active] == ["second"]
+
+    def test_active_alerts_follow_data_checks(self):
+        state = HealthState()
+        state.update_data_check(DataCheck("candle:BTC:1h", passed=False, severity=Severity.CRITICAL))
+        state.record_alert(HealthAlert(Severity.CRITICAL, "candle:BTC:1h", "stale"))
+        state.record_alert(HealthAlert(Severity.CRITICAL, "mystery", "unknown source"))
+        assert {a.component for a in state.get_active_alerts()} == {"candle:BTC:1h", "mystery"}
+        state.update_data_check(DataCheck("candle:BTC:1h", passed=True))
+        assert [a.component for a in state.get_active_alerts()] == ["mystery"]
+
 
 # ---------------------------------------------------------------------------
 # Data models serialization

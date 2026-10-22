@@ -184,6 +184,50 @@ class HealthState:
             alerts = [a for a in alerts if a.severity == severity]
         return alerts[:limit]
 
+    def is_alert_active(self, alert: HealthAlert) -> bool:
+        """True while the condition behind ``alert`` still holds.
+
+        Component alerts stay active while the component is still at least as
+        bad as the alert said (CRITICAL needs RED, WARNING needs AMBER or RED).
+        Data-check alerts stay active while the check still fails. INFO alerts
+        (recoveries) are never active. An alert whose source is unknown stays
+        active, so a stray alert is never silently hidden.
+        """
+        if alert.severity == Severity.INFO:
+            return False
+        component = self._components.get(alert.component)
+        if component is not None:
+            if alert.severity == Severity.CRITICAL:
+                return component.state == State.RED
+            return component.state != State.GREEN
+        check = self._data_checks.get(alert.component)
+        if check is not None:
+            return not check.passed
+        return True
+
+    def get_active_alerts(
+        self, severity: Severity | None = None, limit: int = 100
+    ) -> list[HealthAlert]:
+        """Newest alert per component whose condition still holds.
+
+        The alert history keeps every record for the Diagnostics feed; this is
+        what a "something is wrong now" banner should show, so an alert drops
+        out by itself once its component recovers.
+        """
+        seen: set[str] = set()
+        active: list[HealthAlert] = []
+        for alert in self._alerts:
+            if severity is not None and alert.severity != severity:
+                continue
+            if alert.component in seen:
+                continue
+            seen.add(alert.component)
+            if self.is_alert_active(alert):
+                active.append(alert)
+                if len(active) >= limit:
+                    break
+        return active
+
     def was_recently_alerted(self, key: str, cooldown_seconds: float = 300) -> bool:
         last = self._last_alerted.get(key)
         if last is None:

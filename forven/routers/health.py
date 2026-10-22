@@ -48,8 +48,12 @@ def get_health_status():
 def get_health_alerts(
     severity: str | None = Query(None, description="Filter by severity: critical, warning, info"),
     limit: int = Query(100, ge=1, le=500),
+    active: bool = Query(
+        False,
+        description="Only the newest alert per component whose condition still holds",
+    ),
 ):
-    """Return recent health alerts."""
+    """Return recent health alerts (or only the still-active ones)."""
     monitor = get_health_monitor()
     if monitor is None:
         return {"alerts": [], "count": 0}
@@ -61,7 +65,10 @@ def get_health_alerts(
         except ValueError:
             pass
 
-    alerts = monitor.state.get_alerts(severity=sev, limit=limit)
+    if active:
+        alerts = monitor.state.get_active_alerts(severity=sev, limit=limit)
+    else:
+        alerts = monitor.state.get_alerts(severity=sev, limit=limit)
     return {
         "alerts": [a.to_dict() for a in alerts],
         "count": len(alerts),

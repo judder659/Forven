@@ -19,6 +19,7 @@ afterEach(() => {
 	}
 	target?.remove();
 	apiMock.getCriticalHealthAlerts.mockReset();
+	localStorage.clear();
 });
 
 async function flush(): Promise<void> {
@@ -116,5 +117,38 @@ describe('CriticalAlertsBanner', () => {
 
 		expect(target.querySelector('[data-testid="critical-alerts-banner"]')).toBeTruthy();
 		expect(target.querySelector('[data-testid="critical-alerts-toggle"]')).toBeNull();
+	});
+
+	it('dismiss removes the banner until a new alert arrives', async () => {
+		const first = alert('scheduler', 'Scheduler heartbeat stale');
+		apiMock.getCriticalHealthAlerts.mockResolvedValue({ alerts: [first], count: 1 });
+		mountBanner();
+		await flush();
+
+		target.querySelector<HTMLButtonElement>('[data-testid="critical-alerts-dismiss"]')!.click();
+		await flush();
+		expect(target.querySelector('[data-testid="critical-alerts-banner"]')).toBeNull();
+
+		// Still gone after a reload of the page.
+		unmount(instance!);
+		target.remove();
+		mountBanner();
+		await flush();
+		expect(target.querySelector('[data-testid="critical-alerts-banner"]')).toBeNull();
+
+		// A new alert brings it back, showing only the new one.
+		unmount(instance!);
+		target.remove();
+		apiMock.getCriticalHealthAlerts.mockResolvedValue({
+			alerts: [alert('exchange', 'Breaker open', '2026-06-11T00:00:00+00:00'), first],
+			count: 2,
+		});
+		mountBanner();
+		await flush();
+		const banner = target.querySelector('[data-testid="critical-alerts-banner"]');
+		expect(banner?.textContent).toContain('Breaker open');
+		expect(
+			target.querySelector('[data-testid="critical-alerts-count"]')?.textContent,
+		).toContain('1 alert');
 	});
 });

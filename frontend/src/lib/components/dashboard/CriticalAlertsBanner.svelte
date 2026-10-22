@@ -4,6 +4,10 @@
 	 * (GET /api/health/alerts?severity=critical). Renders nothing when there
 	 * are no critical alerts or when the endpoint is unavailable — the banner
 	 * must never add noise or break the dashboard.
+	 *
+	 * The endpoint only returns alerts whose condition still holds, so the
+	 * banner clears by itself on recovery. Dismiss hides the current alerts;
+	 * any new alert brings the banner back.
 	 */
 	import { onDestroy, onMount } from 'svelte';
 	import {
@@ -13,13 +17,47 @@
 
 	const REFRESH_MS = 30_000;
 	const FETCH_LIMIT = 25;
+	const DISMISSED_KEY = 'forven.criticalAlerts.dismissed';
 
-	let alerts: HealthAlertItem[] = [];
+	let fetched: HealthAlertItem[] = [];
+	let dismissed = new Set<string>(readDismissed());
 	let expanded = false;
 	let timer: ReturnType<typeof setInterval> | null = null;
 
+	$: alerts = fetched.filter((a) => !dismissed.has(alertKey(a)));
 	$: latest = alerts[0] ?? null;
 	$: restCount = Math.max(0, alerts.length - 1);
+
+	function alertKey(a: HealthAlertItem): string {
+		return `${a.component}|${a.message}|${a.timestamp}`;
+	}
+
+	function readDismissed(): string[] {
+		try {
+			const raw = localStorage.getItem(DISMISSED_KEY);
+			const parsed = raw ? JSON.parse(raw) : [];
+			return Array.isArray(parsed) ? parsed.map(String) : [];
+		} catch {
+			return [];
+		}
+	}
+
+	function saveDismissed(keys: Set<string>): void {
+		try {
+			localStorage.setItem(DISMISSED_KEY, JSON.stringify([...keys]));
+		} catch {
+			// Storage unavailable: dismissal still holds for this page view.
+		}
+	}
+
+	function dismiss(): void {
+		// Keep only keys for alerts still being reported, so the stored list
+		// never grows past the current set.
+		const next = new Set(fetched.map(alertKey));
+		dismissed = next;
+		expanded = false;
+		saveDismissed(next);
+	}
 
 	function formatRelative(iso: string): string {
 		const ts = Date.parse(iso);
@@ -35,7 +73,7 @@
 	async function load(): Promise<void> {
 		try {
 			const res = await getCriticalHealthAlerts(FETCH_LIMIT);
-			alerts = res.alerts;
+			fetched = res.alerts;
 		} catch {
 			// Endpoint unavailable — keep last-known alerts; never surface a
 			// fetch error as a fake critical banner.
@@ -87,9 +125,18 @@
 					aria-expanded={expanded}
 					data-testid="critical-alerts-toggle"
 				>
-					{expanded ? 'Hide' : `+${restCount} more`}
+					{expanded ? 'Show less' : `+${restCount} more`}
 				</button>
 			{/if}
+			<button
+				type="button"
+				class="rounded-md {restCount > 0 ? '' : 'ml-auto'} px-2 py-0.5 border border-red-900 text-red-400 hover:bg-red-500/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 whitespace-nowrap"
+				on:click={dismiss}
+				title="Hide these alerts. A new alert shows the banner again."
+				data-testid="critical-alerts-dismiss"
+			>
+				Dismiss
+			</button>
 		</div>
 		{#if expanded && restCount > 0}
 			<ul
