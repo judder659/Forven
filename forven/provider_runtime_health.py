@@ -25,6 +25,12 @@ _KEY = "forven:provider-health-runtime"
 _DOWN_KINDS = {"quota", "auth"}
 _DEGRADED_KINDS = {"rate_limit", "transient", "fallback"}
 
+# A single timeout or rate-limit between successful calls is normal provider
+# noise. The health check only calls a degraded provider AMBER once this many
+# failure events arrive with no successful call in between; otherwise the
+# health status flaps between healthy and degraded on every one-off timeout.
+DEGRADED_STREAK_THRESHOLD = 3
+
 
 def _load() -> dict:
     store = kv_get(_KEY, {})
@@ -72,6 +78,8 @@ def record_provider_event(
             "since": prev.get("since", now) if prev.get("state") == state else now,
             "last_event_at": now,
             "last_ok_at": now if state == "ok" else prev.get("last_ok_at"),
+            # Failure events since the last successful call.
+            "fail_streak": 0 if state == "ok" else int(prev.get("fail_streak") or 0) + 1,
         }
         kv_set(_KEY, store)
     except Exception:  # pragma: no cover — never break a call path on a health write
@@ -194,3 +202,20 @@ def clear_provider_health(provider: str | None = None) -> None:
     store = _load()
     store.pop(str(provider).strip().lower(), None)
     kv_set(_KEY, store)
+
+
+def is_persistently_degraded(entry: dict) -> bool:
+    """True when a degraded entry has failed repeatedly, not just once.
+
+    Entries written before ``fail_streak`` existed count as persistent so an
+    old degraded record is never silently hidden.
+    """
+    if entry.get("state") != "degraded":
+        return False
+    streak = entry.get("fail_streak")
+    if streak is None:
+        return True
+    try:
+        return int(streak) >= DEGRADED_STREAK_THRESHOLD
+    except (TypeError, ValueError):
+        return True
