@@ -322,6 +322,42 @@ describe('forge attention', () => {
 		expect(items[0]).toMatchObject({ actionLabel: 'Start probation', tone: 'ok' });
 	});
 
+	it('leaves paper strategies that are only waiting on their paper results off the list', () => {
+		const wait = { key: 'wait', label: 'Wait' };
+		const slot = { key: 'review_slot', label: 'Review slot' };
+		const blocker = (reason: string, kind: string, action: { key: string; label: string }) => ({ reason, code: 'x', kind, source: 'probation_gate', action });
+		const losing = blocker('Paper at breakeven or better: paper result -2.04% since it entered paper', 'merit', wait);
+		const items = buildAttention({
+			activeIds: new Set(['S10', 'S11', 'S12', 'S13', 'S14']),
+			explain: [
+				explainEntry({ id: 'S10', status: 'blocked_merit', blockers: [losing] }),
+				explainEntry({
+					id: 'S11',
+					status: 'blocked_merit',
+					blockers: [blocker('Paper trades match the backtest: 1 of 3 paper trades match', 'evidence', wait), losing],
+				}),
+				// Losing on paper AND no room live: the room only matters once paper recovers.
+				explainEntry({ id: 'S12', status: 'slot_contention', blockers: [losing, blocker('Room on the live account: S1227 holds SOL', 'contention', slot)] }),
+				// Every other check passes but there is no room live: the operator can make room.
+				explainEntry({ id: 'S13', status: 'slot_contention', blockers: [blocker('Room on the live account: S1227 holds SOL', 'contention', slot)] }),
+				// Waiting will never fix a backtest edge too thin for costs.
+				explainEntry({
+					id: 'S14',
+					status: 'blocked_merit',
+					blockers: [losing, blocker('Edge covers costs: 1.3x (need 2x)', 'merit', { key: 'review_strategy', label: 'Review' })],
+				}),
+			],
+			fleet: null,
+			nowWorking: [],
+			rows: [],
+			health: null,
+			nameOf: (id) => id,
+		});
+		expect(items.map((item) => item.key)).toEqual(['slot:S13', 'blocked:S14']);
+		expect(items[0]).toMatchObject({ tone: 'caution', detail: 'Room on the live account: S1227 holds SOL' });
+		expect(items[1].detail).toBe('Edge covers costs: 1.3x (need 2x)');
+	});
+
 	it('humanizes task types', () => {
 		expect(taskLabel('forven-testing-cycle')).toBe('Testing cycle');
 		expect(taskLabel('forven-data-refresh')).toBe('Data refresh');

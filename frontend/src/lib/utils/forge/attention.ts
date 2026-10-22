@@ -2,7 +2,7 @@
 // else in the factory resolves on its own (evidence accumulates, validation runs
 // finish, sweeps archive failures), so it stays off this list on purpose.
 
-import type { PipelineExplainStrategy } from '$lib/api/lifecycle';
+import type { PipelineExplainBlocker, PipelineExplainStrategy } from '$lib/api/lifecycle';
 import type { LiveFleet } from '$lib/api/dashboard';
 import type { NowWorkingRow } from '$lib/api/forven';
 import type { HealthStatusResponse } from '$lib/api/types';
@@ -82,6 +82,22 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 				meta: `${entry.id} · ${stageLabel(entry.stage)}`,
 				detail: 'Ready for probation: every check passes',
 				actionLabel: 'Start probation',
+				href: containerHref(entry.id),
+			});
+		} else if (entry.stage === 'paper' && (entry.status === 'blocked_merit' || entry.status === 'slot_contention')) {
+			// A paper strategy short of probation keeps paper trading on its own.
+			// Only a blocker that waiting cannot fix is the operator's to decide.
+			const actionable = paperActionableBlockers(entry);
+			if (!actionable) continue;
+			items.push({
+				key: `${entry.status === 'slot_contention' ? 'slot' : 'blocked'}:${entry.id}`,
+				kind: 'blocked',
+				tone: entry.status === 'slot_contention' ? 'caution' : 'fail',
+				strategyId: entry.id,
+				title: nameOf(entry.id),
+				meta: `${entry.id} · ${stageLabel(entry.stage)}`,
+				detail: cleanReason(actionable.map((b) => b.reason).join('; ')) || 'Missed a quality bar',
+				actionLabel: 'Decide',
 				href: containerHref(entry.id),
 			});
 		} else if (entry.status === 'blocked_merit') {
@@ -178,6 +194,23 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 	}
 
 	return items.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]);
+}
+
+/**
+ * The paper blockers worth the operator's time, or null when the strategy is
+ * only waiting on its paper results (losing paper, too few matching trades,
+ * a cooldown). Room on the live account only matters once nothing else waits,
+ * so a slot conflict beside a wait stays off the list too. With no blocker
+ * detail at all, the status is trusted as is.
+ */
+function paperActionableBlockers(entry: PipelineExplainStrategy): PipelineExplainBlocker[] | null {
+	const blockers = entry.blockers ?? [];
+	if (blockers.length === 0) {
+		return [{ reason: entry.gate_reason ?? '', code: '', kind: 'merit', source: '', action: null }];
+	}
+	const waits = blockers.filter((b) => b.action?.key === 'wait');
+	const actionable = blockers.filter((b) => b.action?.key !== 'wait' && !(waits.length > 0 && b.kind === 'contention'));
+	return actionable.length > 0 ? actionable : null;
 }
 
 function capitalize(text: string): string {
