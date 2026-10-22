@@ -479,6 +479,32 @@ def _count_exchange_positions(payload: dict | None) -> int:
     return count
 
 
+def _count_sub_account_holdings(testnet: bool) -> tuple[int, int]:
+    """Positions and open orders held on book/named sub-accounts (not the master).
+
+    The startup summary used to read only the master wallet, so with direction
+    books or named wallets on it reported "0 open orders" while the books held
+    their stop orders. Best-effort: an unreadable account is skipped, since this
+    only feeds the summary counts (reconcile reads every account on its own).
+    """
+    try:
+        from forven.exchange import books
+
+        addresses = {addr for _label, addr in books.active_book_addresses() if addr}
+    except Exception:
+        return 0, 0
+    positions = 0
+    orders = 0
+    for addr in sorted(addresses):
+        try:
+            positions += _count_exchange_positions(get_positions(testnet=testnet, account_address=addr))
+            payload = get_open_orders(testnet=testnet, account_address=addr)
+            orders += len(payload) if isinstance(payload, list) else 0
+        except Exception as exc:
+            log.debug("Startup recovery: could not read sub-account %s: %s", addr, exc)
+    return positions, orders
+
+
 def _normalize_exchange_account_snapshot(
     account_snapshot: dict | None,
     *,
@@ -944,6 +970,9 @@ def run_startup_recovery_preflight(state: dict) -> dict[str, object]:
 
     position_count = _count_exchange_positions(positions_payload)
     open_order_count = len(open_orders_payload) if isinstance(open_orders_payload, list) else 0
+    sub_positions, sub_orders = _count_sub_account_holdings(testnet)
+    position_count += sub_positions
+    open_order_count += sub_orders
     discrepancy_count = len(recon.get("discrepancies", []) or []) if isinstance(recon, dict) else 0
     summary = (
         f"Startup recovery checked Hyperliquid {network}: "

@@ -1164,3 +1164,40 @@ def test_startup_recovery_preflight_resolves_inverse_orphan_when_exchange_is_fla
     assert trade is not None
     assert trade["status"] == "OPEN"
     assert trade["exit_price"] is None
+
+
+def test_startup_recovery_counts_sub_account_orders(monkeypatch):
+    """Book/named sub-accounts' positions and stop orders count in the summary,
+    not just the master wallet's."""
+    from forven.exchange import books
+
+    state: dict[str, object] = {}
+    sub = "0xsub"
+
+    def positions(testnet=True, account_address=None):
+        if account_address == sub:
+            return {"positions": [{"position": {"coin": "ETH", "szi": "0.1"}}]}
+        return {"positions": []}
+
+    def orders(testnet=True, account_address=None):
+        return [{"oid": 1}, {"oid": 2}] if account_address == sub else []
+
+    monkeypatch.setattr(daemon, "get_execution_mode", lambda: "paper")
+    monkeypatch.setattr(daemon, "_get_testnet", lambda: True)
+    monkeypatch.setattr(daemon, "_exchange_credentials_status", lambda: (True, None))
+    monkeypatch.setattr(daemon, "sync_from_trades", lambda: 0)
+    monkeypatch.setattr(daemon, "get_positions", positions)
+    monkeypatch.setattr(daemon, "get_open_orders", orders)
+    monkeypatch.setattr(daemon, "get_account_value", lambda testnet=True, require_connection=False: None)
+    monkeypatch.setattr(
+        daemon,
+        "reconcile_all_books",
+        lambda testnet=True, **kwargs: {"sqlite_open": 1, "exchange_open": 1, "synced": True, "discrepancies": []},
+    )
+    monkeypatch.setattr(books, "active_book_addresses", lambda settings=None: [("long", None), ("short", sub)])
+
+    recovery = daemon.run_startup_recovery_preflight(state)
+
+    assert recovery["recovery_open_order_count"] == 2
+    assert recovery["recovery_position_count"] == 1
+    assert "1 exchange positions, 2 open orders" in recovery["recovery_summary"]
