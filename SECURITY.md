@@ -31,9 +31,8 @@ The most security-relevant configuration choices are documented in
   `FORVEN_BIND_HOST` to a non-loopback address, the app requires `FORVEN_API_KEY`
   (and ideally `FORVEN_OPERATOR_KEY`) or it refuses to start. Never expose it to
   the internet without auth and a TLS-terminating proxy.
-- **The agent shell tool is disabled by default** (`FORVEN_ENABLE_SHELL_TOOL=0`).
-  Enabling it lets LLM-driven, web-influenced content run shell commands — only
-  enable it if you understand the prompt-injection risk.
+- **Agents have no shell tool.** They read web content, so they only get
+  structured tools.
 - **Live/mainnet trading is unsupported and off by default.** Reaching a
   real-money order requires multiple deliberate opt-ins; see
   [`DISCLAIMER.md`](DISCLAIMER.md).

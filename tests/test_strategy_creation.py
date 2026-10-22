@@ -172,7 +172,7 @@ def test_creation_settings_are_clamped(forven_db):
         {"research_settings": {"strategy_creation_daily_budget": 10_000, "strategy_creation_max_in_flight": 0}}
     )
 
-    assert settings == {"daily_budget": 500, "max_in_flight": 1}
+    assert settings == {"daily_budget": 500, "max_in_flight": 1, "outside_idea_share_pct": 20}
 
 
 # ── submit_idea ─────────────────────────────────────────────────────────────────

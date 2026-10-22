@@ -9049,7 +9049,7 @@ def post_backtesting_run(body: dict):
                     f"Max Iterations: {max_iterations}\n\n"
                     f"{trace_block}"
                     "Goal: Discover, implement, and backtest profitable strategies. "
-                    "Use forven_list_datasets to find data, then forven_create_strategy "
+                    "Use list_local_datasets to find data, then forven_create_strategy "
                     "and forven_run_backtest to iterate."
                 ),
                 priority=10,

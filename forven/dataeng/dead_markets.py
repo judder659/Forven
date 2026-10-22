@@ -150,5 +150,5 @@ def dead_market_error(reason: str) -> str:
     """Agent-facing rejection text for a dead market."""
     return (
         f"{reason}. A strategy on it can never be tested. Pick a market whose data is "
-        "current (forven_list_datasets lists them)."
+        "current (list_local_datasets lists them)."
     )

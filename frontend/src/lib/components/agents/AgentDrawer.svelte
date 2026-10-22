@@ -475,9 +475,9 @@
 					<section class="rounded-md border border-sc-line bg-sc-panel px-3.5 py-3">
 						<div class="flex flex-wrap items-baseline justify-between gap-2">
 							<h3 class="m-0 text-[12.5px] font-medium text-sc-ink">Built-in tools</h3>
-							<a class="text-[12px] text-sc-ink2 hover:text-sc-ink" href={`/agents/toolsets?agent=${encodeURIComponent(agent.id)}`}>Open the tool matrix →</a>
+							<a class="text-[12px] text-sc-ink2 hover:text-sc-ink" href={`/agents/toolsets?agent=${encodeURIComponent(agent.id)}`}>See what it can use →</a>
 						</div>
-						<p class="m-0 mt-1 text-[12px] text-sc-ink3">Which tools this agent may call in each context (task, chat, research), with per-tool overrides.</p>
+						<p class="m-0 mt-1 text-[12px] text-sc-ink3">Which tools this agent can call for each kind of job: building strategies, research, routine work, and when you ask.</p>
 					</section>
 					<section class="rounded-md border border-sc-line bg-sc-panel">
 						<div class="flex items-center justify-between gap-2 border-b border-sc-line px-3.5 py-2.5">

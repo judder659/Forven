@@ -64,6 +64,11 @@ _DEFAULT_RESEARCH_SETTINGS: dict[str, Any] = {
     # tasks queued per UTC day, and creation tasks allowed in flight at once.
     "strategy_creation_daily_budget": 40,
     "strategy_creation_max_in_flight": 2,
+    # Percent of those autonomous tasks that are outside-idea tasks: Strat Dev
+    # finds a public trading claim (YouTube, Reddit, blogs, GitHub, forums) and
+    # tests it as stated. 0 turns them off; so does switching external research
+    # off. The share is exact per UTC day (20 = every fifth task).
+    "outside_idea_share_pct": 20,
     # Strategies agents may register per UTC day, across all their tasks (0 = no
     # cap). One creation task can register several candidates; before this cap
     # agents registered about 400 a day and three in four never traded enough to

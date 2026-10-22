@@ -1801,11 +1801,11 @@ class ForvenBot(commands.Bot):
                         # Read / search
                         "read_file",
                         # Action tools
-                        "run_backtest", "run_shell", "write_file",
+                        "run_backtest", "write_file",
                         # Brain tools
                         "assign_agent_task", "promote_strategy", "create_strategy",
                         # Backtesting tools
-                        "forven_run_backtest", "forven_list_datasets", "forven_get_results",
+                        "forven_run_backtest", "list_local_datasets", "forven_get_results",
                     }
                     chat_tools = [t for t in AGENT_TOOLS + BRAIN_TOOLS + BACKTESTING_TOOLS if t["name"] in _chat_tool_names]
                     if chat_tools:
@@ -1814,13 +1814,12 @@ class ForvenBot(commands.Bot):
                             "You have tools to look things up AND take actions when asked:\n"
                             "- **read_file**: Read workspace files\n"
                             "- **run_backtest**: Run a backtest for a specific Strategy Container\n"
-                            "- **run_shell**: Execute shell commands\n"
                             "- **write_file**: Create or update files\n"
                             "- **assign_agent_task**: Assign a task to an agent\n"
                             "- **promote_strategy**: Promote a specific Strategy Container to the next lifecycle stage\n"
                             "- **create_strategy**: Create a new Strategy Container (S0000X)\n"
                             "- **forven_run_backtest**: Run a backtest via the Forven pipeline\n"
-                            "- **forven_list_datasets**: List available datasets\n"
+                            "- **list_local_datasets**: List available datasets and their ids\n"
                             "- **forven_get_results**: Retrieve backtest results\n\n"
                             "Use these tools proactively when the user asks you to do something. "
                             "Don't just describe what could be done — actually do it."
@@ -1861,12 +1860,11 @@ class ForvenBot(commands.Bot):
                         "- **promote_strategy**: Change Strategy Container lifecycle status (Ideation -> Test -> Paper -> Live -> Archived)\n"
                         "- **create_strategy**: Create a new Strategy Container record (S0000X) in the database\n\n"
                         "## Research & Analysis\n"
-                        "- **run_shell**: Execute commands (backtests, data checks)\n"
                         "- **read_file**: Read workspace files (LESSONS.md, evolution_journal.md, memory/)\n"
                         "- **write_file**: Write/append to workspace files (update lessons, log findings, evolve strategies)\n"
                         "- **run_backtest**: Run a strategy backtest and get fitness score\n\n"
                         "## Backtesting (Forven)\n"
-                        "- **forven_list_datasets**: List available backtesting datasets\n"
+                        "- **list_local_datasets**: List available backtesting datasets and their ids\n"
                         "- **forven_create_strategy**: Create a strategy on Forven Backtesting\n"
                         "- **forven_run_backtest**: Run a backtest with realistic fees\n"
                         "- **forven_run_optimization**: Run parameter optimization\n"

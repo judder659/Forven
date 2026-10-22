@@ -57,7 +57,6 @@ def test_no_detached_process_anywhere_in_spawn_paths():
         "forven/sandbox/__init__.py",
         "forven/sandbox/strategy_worker.py",
         "forven/strategies/backtest.py",
-        "forven/agents/tools_core.py",
         "forven/agents/mcp_client.py",
         "forven/bot_factory/manager.py",
         "forven/lab_worker_service.py",
@@ -73,12 +72,9 @@ def test_no_detached_process_anywhere_in_spawn_paths():
 
 
 def test_windows_kill_and_shell_spawns_pass_no_window():
-    """taskkill / agent-shell / MCP stdio spawns all carry CREATE_NO_WINDOW."""
+    """Backtest and MCP stdio spawns carry CREATE_NO_WINDOW."""
     backtest = (REPO_ROOT / "forven" / "strategies" / "backtest.py").read_text(encoding="utf-8")
     assert 'CREATE_NO_WINDOW' in backtest
-
-    tools_core = (REPO_ROOT / "forven" / "agents" / "tools_core.py").read_text(encoding="utf-8")
-    assert tools_core.count("CREATE_NO_WINDOW") >= 2  # shell tool + taskkill killer
 
     mcp_client = (REPO_ROOT / "forven" / "agents" / "mcp_client.py").read_text(encoding="utf-8")
     assert "CREATE_NO_WINDOW" in mcp_client

@@ -193,7 +193,7 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
                 (task_display_id, strategy_id),
             )
         fix = (
-            "move it to a market whose data is current (forven_list_datasets lists them)"
+            "move it to a market whose data is current (list_local_datasets lists them)"
             if untestable_reason.startswith(("untestable:dead_market", "untestable:not_a_market"))
             else "fix the code"
         )
@@ -384,7 +384,9 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
         # (correctly) rejects families with no registered runtime class as
         # orphans, and agents filed the mismatch as an infra bug (2026-07-06,
         # oi_expansion_momentum). The contract must match the gate.
-        "Run a strategy backtest. strategy_type must be a REGISTERED runtime family: "
+        "Quick backtest of a strategy family with parameters you pass (asset + strategy_type + "
+        "params); nothing needs saving first. For a saved strategy (an S-id) use "
+        "forven_run_backtest. strategy_type must be a REGISTERED runtime family: "
         "a pre-built param family or a custom class registered under "
         "forven/strategies/custom/. A family with no registered class is rejected as "
         "an orphan (it would silently produce zero signals) — register the class "
@@ -864,7 +866,11 @@ def _tool_lint_code(code: str) -> str:
 
 @register_tool(
     name="optimize_strategy",
-    description="Run parameter optimization (grid search + WFA) on a strategy. Returns best params and validation status.",
+    description=(
+        "Optimize a saved strategy's parameters with Forven's own grid (grid search + walk-forward), "
+        "reading its search space from the strategy. Returns best params and validation status. "
+        "To search ranges you choose on a specific dataset, use forven_run_optimization."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -971,16 +977,7 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
     client = get_client()
 
     try:
-        if tool_name == "forven_list_datasets":
-            result = client.list_datasets(
-                symbol_filter=params.get("symbol_filter", ""),
-                timeframe_filter=params.get("timeframe_filter", ""),
-            )
-            if isinstance(result, dict) and isinstance(result.get("datasets"), list):
-                from forven.dataeng.dead_markets import drop_dead_datasets
-
-                result["datasets"] = drop_dead_datasets(result["datasets"])
-        elif tool_name == "forven_create_strategy":
+        if tool_name == "forven_create_strategy":
             started_at = time.monotonic()
             strategy_type = params.get("strategy_type") or params.get("type", "backtest")
             strategy_name = params.get("name", "")
@@ -1128,22 +1125,6 @@ def _make_jbt_handler(name: str):
 
 
 register_tool(
-    name="forven_list_datasets",
-    description=(
-        "List available backtesting datasets on Forven Backtesting. Returns datasets with "
-        "symbol, timeframe, row count, and date ranges. Use to discover what data is available."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "symbol_filter": {"type": "string", "description": "Filter by symbol e.g. 'BTC'"},
-            "timeframe_filter": {"type": "string", "description": "Filter by timeframe e.g. '1h', '4h'"},
-        },
-        "required": [],
-    },
-)(_make_jbt_handler("forven_list_datasets"))
-
-register_tool(
     name="forven_create_strategy",
     description=(
         "Create a tradable strategy from an existing Forven strategy family (e.g. orb, macd, "
@@ -1179,9 +1160,10 @@ register_tool(
 register_tool(
     name="forven_run_backtest",
     description=(
-        "Run a backtest on Forven Backtesting with realistic fees (4.5 bps) and slippage (2 bps)."
-        "Returns full performance metrics: Sharpe, Sortino, win rate, profit factor, max drawdown, "
-        "total return, trade count."
+        "Backtest a saved strategy (strategy_id) on a dataset (dataset_id from list_local_datasets) "
+        "with realistic fees (4.5 bps) and slippage (2 bps). Returns full performance metrics: "
+        "Sharpe, Sortino, win rate, profit factor, max drawdown, total return, trade count. "
+        "For a quick test of a family and params without saving, use run_backtest."
     ),
     input_schema={
         "type": "object",
@@ -1206,8 +1188,10 @@ register_tool(
 register_tool(
     name="forven_run_optimization",
     description=(
-        "Run parameter optimization on Forven Backtesting. Finds optimal parameter values using Optuna. "
-        "Max 200 trials. Returns best parameters and metric improvement."
+        "Optimize a saved strategy over parameter ranges you choose, on one dataset (dataset_id from "
+        "list_local_datasets), using Optuna. Max 200 trials. Returns best parameters and metric "
+        "improvement. To use the strategy's own search space with walk-forward checks, use "
+        "optimize_strategy."
     ),
     input_schema={
         "type": "object",

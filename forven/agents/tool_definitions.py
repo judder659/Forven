@@ -29,7 +29,7 @@ from forven.roster import BRAIN_AGENT_IDS as BRAIN_AGENT_IDS  # noqa: PLC0414 - 
 
 _BRAIN_PERM_NAMES = {"assign_agent_task", "promote_strategy", "create_strategy", "factory_reset"}
 _BACKTESTING_PERM_NAMES = {
-    "forven_list_datasets", "forven_create_strategy", "forven_run_backtest",
+    "forven_create_strategy", "forven_run_backtest",
     "forven_run_optimization", "forven_run_verdict", "forven_get_results",
 }
 
@@ -145,10 +145,9 @@ _BACKTESTING_TOOL_NAMES = _BACKTESTING_PERM_NAMES
 CHAT_ASK_TOOL_NAMES: frozenset[str] = frozenset({
     "read_file",            # inspect strategy code / workspace files
     "recall_similar_situation",  # Brain's situational recall
-    "list_local_datasets",  # what OHLCV data is on disk
+    "list_local_datasets",  # datasets on disk, with their dataset ids
     "get_local_ohlcv",      # read cached candles
     "list_hypothesis_artifacts",  # research artifact lookup
-    "forven_list_datasets",      # backtesting datasets available
     "forven_get_results",        # read backtest/optimization results
 })
 

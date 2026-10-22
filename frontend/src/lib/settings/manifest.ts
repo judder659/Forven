@@ -3392,6 +3392,22 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     order: 2,
   },
   {
+    id: 'research.outside_idea_share_pct',
+    label: 'Ideas taken from outside sources',
+    unit: '%',
+    default: 20,
+    type: 'number',
+    area: 'ai',
+    subsection: 'system-throughput',
+    backendSection: 'research',
+    backendPath: 'research_settings.outside_idea_share_pct',
+    description:
+      'Share of the daily strategy ideas where Strat Dev finds a public trading claim (YouTube, Reddit, blogs, GitHub, forums) and tests it as stated. Each one links to its source. Uses the sources switched on under Research sources. 0 = off (0-100).',
+    usedBy: ['forven.strategy_creation', 'forven.agents.tools_research'],
+    advanced: true,
+    order: 3,
+  },
+  {
     id: 'research.agent_registration_daily_cap',
     label: 'Strategies agents may register per day',
     unit: 'strategies/day',
@@ -3405,7 +3421,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
       'Strategies agents may register per UTC day across all their tasks. Once reached, agents are told to stop registering and no new creation tasks start until 00:00 UTC. Your own registrations do not count. 0 = no cap (the old behaviour).',
     usedBy: ['forven.strategies.candidate_checks', 'forven.strategy_creation'],
     advanced: true,
-    order: 3,
+    order: 4,
   },
 
   // Resource tuning (advanced)
