@@ -101,7 +101,7 @@ def test_inspect_happy_path(monkeypatch):
         "forven.agents.tools_research._resolve_source_registry",
         lambda t: {"subs": ["algotrading"], "rate_limit_per_min": 30},
     )
-    with patch("forven.research_sources.reddit.inspect_reddit_thread") as m:
+    with patch("forven.research_sources.reddit.inspect_reddit_thread_with_auth") as m:
         m.return_value = {"ok": True, "source": "reddit", "content": "hello", "title": "T", "selftext": "", "top_comments": [], "url": "u"}
         res = json_loads(_tool_inspect_reddit_thread({"permalink": "/r/algotrading/comments/x/"}))
     assert res["ok"] is True
