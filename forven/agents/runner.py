@@ -29,9 +29,15 @@ from forven.provider_runtime_health import (
     record_provider_ok,
 )
 from forven.research_context import build_research_context, coerce_research_contract
-from forven.task_timeouts import DEFAULT_AGENT_TASK_TIMEOUT_SECONDS, resolve_agent_task_timeout_seconds
+from forven.task_timeouts import (
+    AGENT_TASK_PROGRESS_KV_PREFIX,
+    DEFAULT_AGENT_TASK_TIMEOUT_SECONDS,
+    resolve_agent_task_max_seconds,
+    resolve_agent_task_timeout_seconds,
+)
 from forven.workspace import append_workspace, read_workspace
 
+from .progress import note_progress, run_with_progress_watchdog
 from .context import (
     _current_agent_id as _legacy_current_agent_id,
     reset_tool_context,
@@ -585,6 +591,9 @@ def _creation_task_unregistered(state: "ExecutionState | None") -> bool:
     return not str(row["strategy_id"] or "").strip()
 
 
+_MAX_REGISTRATION_NUDGES = 3
+
+
 def _register_nudge(rounds_left: int, *, ending: bool = False) -> str:
     """The message that steers a creation task to register before it runs out."""
     lead = (
@@ -630,7 +639,10 @@ async def _call_with_tools_single(
     last_nonempty_text = ""
     _recent_tool_calls: list[tuple[str, str]] = []
     nudged_for_tool = bool(state and state.checkpoint.get("has_tools"))
-    nudged_for_registration = False
+    # Some models (MiniMax-M3.1-Flash, 2026-10-20) end a turn with "...then I
+    # register" and no tool call, repeatedly. One nudge left ~55% of creation
+    # tasks blocked, so allow a few, each still bounded by MAX_TOOL_ROUNDS.
+    registration_nudges_left = _MAX_REGISTRATION_NUDGES
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _accum(usage: dict):
@@ -674,6 +686,7 @@ async def _call_with_tools_single(
         response = await impl.call(model_id, messages, system, active_tools, token)
         _accum(response.usage)
         record_response(provider, model_id, response.usage)
+        note_progress()
 
         if transcript is not None:
             transcript.write(
@@ -693,11 +706,11 @@ async def _call_with_tools_single(
             # blocked: give it one more chance to register (or say why it cannot).
             if (
                 active_tools
-                and not nudged_for_registration
+                and registration_nudges_left > 0
                 and round_num < MAX_TOOL_ROUNDS - 1
                 and _creation_task_unregistered(state)
             ):
-                nudged_for_registration = True
+                registration_nudges_left -= 1
                 impl.append_assistant(messages, response)
                 messages.append({"role": "user", "content": _register_nudge(MAX_TOOL_ROUNDS - round_num - 1, ending=True)})
                 continue
@@ -755,6 +768,7 @@ async def _call_with_tools_single(
             if state:
                 state.save(provider=provider, model_id=model_id, inflight=True, has_tools=True)
             result = await _execute_tool(tc.name, tc.input)
+            note_progress()
             tool_results.append((tc.id, str(result)[:5000]))
             if transcript is not None:
                 transcript.write(
@@ -955,6 +969,30 @@ def _resolve_task_timeout_seconds(task_type: str) -> int:
     raw_settings = kv_get("forven:settings", {})
     settings = raw_settings if isinstance(raw_settings, dict) else {}
     return resolve_agent_task_timeout_seconds(task_type, settings=settings)
+
+
+def _resolve_task_max_seconds(task_type: str) -> int:
+    raw_settings = kv_get("forven:settings", {})
+    settings = raw_settings if isinstance(raw_settings, dict) else {}
+    return resolve_agent_task_max_seconds(task_type, settings=settings)
+
+
+def _agent_task_heartbeat(task_id: int):
+    """Stamp a running task's last progress time for the scheduler's reaper."""
+    from forven.db import kv_set_best_effort
+
+    key = f"{AGENT_TASK_PROGRESS_KV_PREFIX}{int(task_id)}"
+    return lambda: kv_set_best_effort(key, datetime.now(timezone.utc).isoformat())
+
+
+def _clear_agent_task_heartbeat(task_id: int) -> None:
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "DELETE FROM kv WHERE key = ?", (f"{AGENT_TASK_PROGRESS_KV_PREFIX}{int(task_id)}",)
+            )
+    except Exception:
+        log.debug("Could not clear progress heartbeat for task %s", task_id, exc_info=True)
 
 
 def _emit_brain_callback_drop_alert(agent_id: str, task_title: str, backlog: int) -> None:
@@ -1290,16 +1328,23 @@ async def run_agent_task(agent: dict, task: dict) -> dict:
         f"agent:{agent_id}",
         f"Task started: {task.get('title', '') or format_prefixed_id('T', int(task_id))}",
     )
+    # The configured timeout is how long the run may go without progress; a
+    # run that keeps progressing (slow or local model) may go on up to the
+    # ceiling, bounded anyway by its tool rounds.
     timeout_seconds = _resolve_task_timeout_seconds(task_type)
+    max_seconds = _resolve_task_max_seconds(task_type)
 
     try:
-        return await asyncio.wait_for(
+        return await run_with_progress_watchdog(
             _run_agent_task_inner(agent, task, agent_id, task_id, strategy_id, task_type),
-            timeout=timeout_seconds,
+            stall_seconds=timeout_seconds,
+            max_seconds=max_seconds,
+            label="AI/provider timeout",
+            heartbeat=_agent_task_heartbeat(task_id),
         )
-    except asyncio.TimeoutError:
-        log.error("Agent %s task %d TIMED OUT after %ds", agent_id, task_id, timeout_seconds)
-        detail = f"AI/provider timeout after {timeout_seconds}s"
+    except asyncio.TimeoutError as exc:
+        detail = str(exc) or f"AI/provider timeout after {timeout_seconds}s"
+        log.error("Agent %s task %d TIMED OUT: %s", agent_id, task_id, detail)
         if load_execution(task_id, agent_id).checkpoint.get("inflight"):
             return block_task(task_id, detail + "; tool outcome uncertain — automatic replay blocked")
         if _requeue_agent_task(
@@ -1324,17 +1369,19 @@ async def run_agent_task(agent: dict, task: dict) -> dict:
         if task_type == "phantom_repair" and strategy_id:
             from forven.phantom_recovery import mark_phantom_recovery_exhausted
 
-            mark_phantom_recovery_exhausted(strategy_id, reason=f"Hard timeout after {timeout_seconds}s")
+            mark_phantom_recovery_exhausted(strategy_id, reason=f"Hard timeout: {detail}")
         with get_db() as conn:
             conn.execute(
                 "UPDATE agent_tasks SET status='failed', error=?, completed_at=? WHERE id=?",
-                (f"Hard timeout after {timeout_seconds}s", datetime.now(timezone.utc).isoformat(), task_id),
+                (f"Hard timeout: {detail}", datetime.now(timezone.utc).isoformat(), task_id),
             )
         log_activity(
             "error", f"agent:{agent_id}",
-            f"Task timed out after {timeout_seconds}s: {task.get('title', '')}",
+            f"Task timed out ({detail}): {task.get('title', '')}",
         )
-        return {"error": f"Task timed out after {timeout_seconds}s"}
+        return {"error": f"Task timed out: {detail}"}
+    finally:
+        _clear_agent_task_heartbeat(task_id)
 
 
 async def _run_agent_task_inner(

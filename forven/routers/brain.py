@@ -276,6 +276,66 @@ def _decision_row_to_dict(row: Any) -> dict[str, Any]:
     return out
 
 
+def _legacy_outcome(item: dict[str, Any], linked: int, task: Any) -> str:
+    """Best-effort outcome for a row the cycle never settled.
+
+    Rows written before cycles recorded their own outcome stayed NULL forever,
+    which the page showed as "pending" even for cycles that timed out or did
+    nothing. Read-only: the stored column is left untouched.
+    """
+    if linked:
+        return "pending"  # spawned tasks: the strategy backfill may still settle it
+    if task is None:
+        return "pending"
+    status = str(task["status"] or "")
+    if status in ("pending", "claimed", "running"):
+        return "running"
+    if item.get("action_taken"):
+        return "no_action" if status == "done" else "failed"
+    if status == "done":
+        return "retried"  # an earlier attempt of a cycle a later attempt finished
+    return "timed_out" if "timeout" in str(task["error"] or "").lower() else "failed"
+
+
+def _attach_outcome_display(conn: Any, items: list[dict[str, Any]]) -> None:
+    """Add ``linked_task_count`` and ``outcome_display`` to each decision row."""
+    ids = [int(i["id"]) for i in items]
+    if not ids:
+        return
+    marks = ",".join("?" for _ in ids)
+    linked = {
+        int(r["brain_decision_id"]): int(r["n"])
+        for r in conn.execute(
+            f"SELECT brain_decision_id, COUNT(*) AS n FROM agent_tasks "
+            f"WHERE brain_decision_id IN ({marks}) GROUP BY brain_decision_id",
+            ids,
+        ).fetchall()
+    }
+    task_ids = {}
+    for item in items:
+        cycle = str(item.get("cycle_id") or "")
+        if not item.get("outcome_observed") and cycle[:1] == "B" and cycle[1:].isdigit():
+            task_ids[int(item["id"])] = int(cycle[1:])
+    tasks: dict[int, Any] = {}
+    if task_ids:
+        tmarks = ",".join("?" for _ in task_ids)
+        tasks = {
+            int(r["id"]): r
+            for r in conn.execute(
+                f"SELECT id, status, error FROM tasks WHERE id IN ({tmarks})",
+                list(set(task_ids.values())),
+            ).fetchall()
+        }
+    for item in items:
+        count = linked.get(int(item["id"]), 0)
+        item["linked_task_count"] = count
+        if item.get("outcome_observed"):
+            item["outcome_display"] = item["outcome_observed"]
+        else:
+            task = tasks.get(task_ids.get(int(item["id"]), -1))
+            item["outcome_display"] = _legacy_outcome(item, count, task)
+
+
 @router.get("/decisions")
 def list_decisions(
     cycle_id: str | None = None,
@@ -325,8 +385,11 @@ def list_decisions(
         )
         rows = conn.execute(list_sql, [*params, limit, offset]).fetchall()
 
+        items = [_decision_row_to_dict(r) for r in rows]
+        _attach_outcome_display(conn, items)
+
     return {
-        "items": [_decision_row_to_dict(r) for r in rows],
+        "items": items,
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -357,6 +420,7 @@ def get_decision_endpoint(decision_id: int) -> dict[str, Any]:
             "ORDER BY created_at ASC, id ASC",
             (int(decision_id),),
         ).fetchall()
+        _attach_outcome_display(conn, [decision])
     decision["linked_tasks"] = [{k: r[k] for k in r.keys()} for r in task_rows]
     return decision
 

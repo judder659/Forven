@@ -53,7 +53,6 @@ log = logging.getLogger("forven.bot")
 _BRAIN_RATE_LIMIT_BACKOFF_SECONDS = (60, 120, 300)
 _BRAIN_TRANSIENT_BACKOFF_SECONDS = (120, 300, 900)
 _MAX_BRAIN_PROVIDER_RETRIES = 3
-_BRAIN_TASK_TIMEOUT_SECONDS = 180
 _TASK_WORKER_HEARTBEAT_KEY = "bot:task_worker:last_seen"
 
 
@@ -1828,9 +1827,12 @@ class ForvenBot(commands.Bot):
 
                     brain_context_tokens = set_tool_context("brain", f"B{int(task['id']):04d}")
                     try:
-                        response = await asyncio.wait_for(
+                        from forven.runtime_worker import _run_with_progress_watchdog
+
+                        # Same stall-based limit as the headless worker: slow or
+                        # local models get the time they need while they progress.
+                        response = await _run_with_progress_watchdog(
                             _call_with_tools(provider, model, messages, context, tools=chat_tools or None),
-                            timeout=_BRAIN_TASK_TIMEOUT_SECONDS,
                         )
                     finally:
                         reset_tool_context(brain_context_tokens)
@@ -1919,9 +1921,12 @@ class ForvenBot(commands.Bot):
                     messages = [{"role": "user", "content": message}]
                     brain_context_tokens = set_tool_context("brain", f"B{int(task['id']):04d}")
                     try:
-                        response = await asyncio.wait_for(
+                        from forven.runtime_worker import _run_with_progress_watchdog
+
+                        # Same stall-based limit as the headless worker: slow or
+                        # local models get the time they need while they progress.
+                        response = await _run_with_progress_watchdog(
                             _call_with_tools(provider, model, messages, context, tools=brain_tools),
-                            timeout=_BRAIN_TASK_TIMEOUT_SECONDS,
                         )
                     finally:
                         reset_tool_context(brain_context_tokens)
@@ -1962,7 +1967,7 @@ class ForvenBot(commands.Bot):
 
             except Exception as e:
                 if isinstance(e, asyncio.TimeoutError):
-                    error_detail = f"Brain task timeout after {_BRAIN_TASK_TIMEOUT_SECONDS:.2f}s"
+                    error_detail = str(e) or "Brain task timeout"
                 else:
                     error_detail = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
                 log.error("Brain task %d failed: %s", task["id"], error_detail, exc_info=True)

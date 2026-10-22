@@ -149,7 +149,7 @@
 				<dt class={DT}>Created</dt>
 				<dd class="m-0 text-sc-ink">{formatTimestamp(detail.created_at)}</dd>
 				<dt class={DT}>Outcome</dt>
-				<dd class="m-0 text-sc-ink">{detail.outcome_observed ?? 'pending'}{detail.outcome_at ? ` @ ${formatTimestamp(detail.outcome_at)}` : ''}</dd>
+				<dd class="m-0 text-sc-ink">{(detail.outcome_display ?? detail.outcome_observed ?? 'pending').replace('_', ' ')}{detail.outcome_at ? ` @ ${formatTimestamp(detail.outcome_at)}` : ''}</dd>
 				<dt class={DT}>Prompt hash</dt>
 				<dd class="m-0 break-all font-plex-mono text-[12px] text-sc-ink">{detail.prompt_hash ?? '—'}</dd>
 			</dl>

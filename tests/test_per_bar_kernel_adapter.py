@@ -231,7 +231,14 @@ class _RandomPerBar(_PerBarSMA):
 
     def generate_signal(self, df: pd.DataFrame) -> Signal:
         import random
-        return Signal(entry_signal=(random.random() > 0.5), price=float(df["close"].iloc[-1]))
+        # Randomize entry, exit AND direction: the guard compares two calls at 6 bars, and
+        # a coin-flip entry alone matched on all 6 by chance 1 run in 64 (flaky CI).
+        return Signal(
+            entry_signal=(random.random() > 0.5),
+            exit_signal=(random.random() > 0.5),
+            direction=random.choice(["long", "short"]),
+            price=float(df["close"].iloc[-1]),
+        )
 
 
 class _StatefulPerBar(_PerBarSMA):

@@ -79,6 +79,7 @@ _TRANSIENT_DB_HINTS = (
 )
 _DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_READ_TIMEOUT_SECONDS = 120.0
+_LOCAL_READ_TIMEOUT_SECONDS = 600.0
 _DEFAULT_WRITE_TIMEOUT_SECONDS = 30.0
 _DEFAULT_POOL_TIMEOUT_SECONDS = 30.0
 _LMSTUDIO_DEFAULT_BASE_URL = "http://127.0.0.1:1234"
@@ -149,11 +150,16 @@ def _write_lmstudio_debug_event(event_type: str, payload: dict) -> None:
         log.exception("failed to write LM Studio debug event")
 
 
-def build_provider_timeout() -> httpx.Timeout:
-    """Use a short connect timeout so provider outages fail fast without wedging workers."""
+def build_provider_timeout(*, local: bool = False) -> httpx.Timeout:
+    """Use a short connect timeout so provider outages fail fast without wedging workers.
+
+    ``local`` is for a model served on the operator's own hardware (LM Studio):
+    a home PC can take minutes to produce one long answer, and there is no
+    remote outage to fail fast on, so it gets a longer read timeout.
+    """
     return httpx.Timeout(
         connect=_DEFAULT_CONNECT_TIMEOUT_SECONDS,
-        read=_DEFAULT_READ_TIMEOUT_SECONDS,
+        read=_LOCAL_READ_TIMEOUT_SECONDS if local else _DEFAULT_READ_TIMEOUT_SECONDS,
         write=_DEFAULT_WRITE_TIMEOUT_SECONDS,
         pool=_DEFAULT_POOL_TIMEOUT_SECONDS,
     )
@@ -1358,7 +1364,7 @@ async def _call_lmstudio(
             },
         )
         try:
-            async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
+            async with httpx.AsyncClient(timeout=build_provider_timeout(local=True)) as client:
                 resp = await client.post(endpoint, json=body, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
