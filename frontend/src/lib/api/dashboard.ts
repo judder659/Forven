@@ -698,9 +698,10 @@ export interface HealthAlertsResponse {
 	count: number;
 }
 
+/** Critical alerts whose condition still holds (newest per component). */
 export async function getCriticalHealthAlerts(limit = 25): Promise<HealthAlertsResponse> {
 	const payload = asRecord(
-		await fetchApi<unknown>(`/health/alerts?severity=critical&limit=${limit}`)
+		await fetchApi<unknown>(`/health/alerts?severity=critical&active=true&limit=${limit}`)
 	) ?? {};
 	const alerts = asArray(payload.alerts)
 		.map((row) => {
