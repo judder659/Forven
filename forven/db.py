@@ -6036,7 +6036,12 @@ def reap_long_running_agent_tasks(timeout_minutes: int = 30) -> int:
     now_iso = _now()
     now_dt = datetime.now(timezone.utc)
 
-    from forven.task_timeouts import REAPER_GRACE_MINUTES, resolve_agent_task_timeout_seconds
+    from forven.task_timeouts import (
+        AGENT_TASK_PROGRESS_KV_PREFIX,
+        REAPER_GRACE_MINUTES,
+        resolve_agent_task_max_seconds,
+        resolve_agent_task_timeout_seconds,
+    )
 
     raw_settings = kv_get("forven:settings", {})
     settings = raw_settings if isinstance(raw_settings, dict) else {}
@@ -6045,6 +6050,10 @@ def reap_long_running_agent_tasks(timeout_minutes: int = 30) -> int:
         timeout_seconds = resolve_agent_task_timeout_seconds(str(task_type or ""), settings=settings)
         task_minutes = max(1, ((int(timeout_seconds) + 59) // 60) + max(0, int(REAPER_GRACE_MINUTES)))
         return min(task_minutes, int(timeout_minutes))
+
+    def _task_ceiling_minutes(task_type: object) -> int:
+        ceiling_seconds = resolve_agent_task_max_seconds(str(task_type or ""), settings=settings)
+        return max(1, ((int(ceiling_seconds) + 59) // 60) + max(0, int(REAPER_GRACE_MINUTES)))
 
     def _parse_task_ts(value: object) -> datetime | None:
         raw = str(value or "").strip()
@@ -6064,15 +6073,36 @@ def reap_long_running_agent_tasks(timeout_minutes: int = 30) -> int:
             "WHERE status='running'",
         ).fetchall()
 
+        # A run's timeout is how long it may go WITHOUT PROGRESS: the runner
+        # stamps a progress heartbeat while it works, so a slow (e.g. local)
+        # model that is still working is not reaped. Every run is still reaped
+        # past its total safety ceiling.
+        progress_at: dict[str, datetime] = {}
+        if running_rows:
+            keys = [f"{AGENT_TASK_PROGRESS_KV_PREFIX}{int(r['id'])}" for r in running_rows]
+            marks = ",".join("?" for _ in keys)
+            for kv_row in conn.execute(
+                f"SELECT key, updated_at FROM kv WHERE key IN ({marks})", keys
+            ).fetchall():
+                stamped = _parse_task_ts(kv_row["updated_at"])
+                if stamped is not None:
+                    progress_at[str(kv_row["key"])] = stamped
+
         orphaned_rows: list[tuple[sqlite3.Row, int]] = []
         for row in running_rows:
             started_at = _parse_task_ts(row["started_at"]) or _parse_task_ts(row["created_at"])
             if started_at is None:
                 continue
+            last_activity = max(
+                started_at,
+                progress_at.get(f"{AGENT_TASK_PROGRESS_KV_PREFIX}{int(row['id'])}", started_at),
+            )
             effective_timeout_minutes = _task_timeout_minutes(row["type"])
-            cutoff_dt = now_dt - timedelta(minutes=effective_timeout_minutes)
-            if started_at < cutoff_dt:
+            ceiling_minutes = _task_ceiling_minutes(row["type"])
+            if last_activity < now_dt - timedelta(minutes=effective_timeout_minutes):
                 orphaned_rows.append((row, effective_timeout_minutes))
+            elif started_at < now_dt - timedelta(minutes=ceiling_minutes):
+                orphaned_rows.append((row, ceiling_minutes))
 
         if not orphaned_rows:
             return 0

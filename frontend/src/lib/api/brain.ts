@@ -162,6 +162,9 @@ export interface BrainDecisionRow {
 	outcome_at: string | null;
 	prompt_hash: string | null;
 	created_at: string;
+	/** Outcome to show: the stored one, else derived for rows the cycle never settled. */
+	outcome_display?: string | null;
+	linked_task_count?: number;
 }
 
 export interface BrainDecisionsListResponse {

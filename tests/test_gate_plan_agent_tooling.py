@@ -194,7 +194,8 @@ def test_creation_task_is_nudged_to_register_before_ending(forven_db, monkeypatc
         for messages in provider.seen for message in messages
     )
     assert nudged is expect_nudge
-    assert provider.calls == (2 if expect_nudge else 1)
+    # A model that keeps ending without registering is nudged a bounded number of times.
+    assert provider.calls == (1 + runner._MAX_REGISTRATION_NUDGES if expect_nudge else 1)
 
 
 def test_register_nudge_names_the_tool_and_the_way_out():

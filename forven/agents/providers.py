@@ -289,7 +289,7 @@ def _sse_data(line: str) -> str | None:
     return payload or None
 
 
-async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = True):
+async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = True, local: bool = False):
     stream_body = {**body, "stream": True}
     if include_usage:
         stream_body["stream_options"] = {"include_usage": True}
@@ -302,7 +302,7 @@ async def _stream_openai_chat(endpoint, headers, body, *, include_usage: bool = 
     extra_content: dict = {}
     finish_reason = ""
 
-    async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
+    async with httpx.AsyncClient(timeout=build_provider_timeout(local=local)) as client:
         async with client.stream("POST", endpoint, json=stream_body, headers=headers) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -763,7 +763,7 @@ class LMStudioProvider(ToolCallProvider):
             "tools": self._openai_tools, "tool_choice": "auto",
         }
         endpoint = f"{self._get_base_url()}/v1/chat/completions"
-        async for ev in _stream_openai_chat(endpoint, headers, body, include_usage=False):
+        async for ev in _stream_openai_chat(endpoint, headers, body, include_usage=False, local=True):
             yield ev
 
     async def call(self, model_id, messages, system, tools, token):
@@ -786,7 +786,7 @@ class LMStudioProvider(ToolCallProvider):
         }
         endpoint = f"{self._get_base_url()}/v1/chat/completions"
 
-        async with httpx.AsyncClient(timeout=build_provider_timeout()) as client:
+        async with httpx.AsyncClient(timeout=build_provider_timeout(local=True)) as client:
             resp = await client.post(endpoint, json=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
