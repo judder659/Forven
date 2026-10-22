@@ -21,8 +21,7 @@ from forven.model_routing import get_primary_provider_model
 from forven.db import (
     get_db, kv_get, kv_set, log_activity,
     live_equity_baseline_kv_key,
-    get_open_trades, append_strategy_event,
-    append_audit_summary,
+    get_open_trades, append_audit_summary,
     create_approval,
     create_strategy_container,
     create_task_container,
@@ -150,8 +149,6 @@ def _is_slot_contention_reason(reason: str | None) -> bool:
     """True when a promotion-gate rejection is transient slot-contention (self-clearing)."""
     text = str(reason or "").lower()
     return any(marker in text for marker in _SLOT_CONTENTION_MARKERS)
-
-
 
 
 def _gauntlet_entry_guardrails(strategy_id: str, metrics: dict) -> tuple[bool, str]:
@@ -435,7 +432,6 @@ def _to_float(value, default: float | None = None) -> float | None:
     return parsed
 
 
-
 class BrainTaskAction(BaseModel):
     """A deterministic task-assignment action emitted by the Brain."""
 
@@ -516,23 +512,6 @@ def _approval_required_task_types() -> set[str]:
     if _coerce_bool_setting(payload.get("code_strategy_requires_approval"), False):
         required.add("code_strategy")
     return required
-
-
-def _is_strategy_developer(agent: dict) -> bool:
-    """Return True when an agent row is a strategy-developer.
-
-    The canonical signal is `role == 'strategy-developer'`. We also accept
-    the canonical core id 'strategy-developer' as a fallback so the swarm
-    keeps firing even if the role column ever gets corrupted (as happened
-    when scripts/recover_agent_roles.py wrote ROLE.md prose into `role`).
-    """
-    if not isinstance(agent, dict):
-        return False
-    role = str(agent.get("role") or "").strip().lower()
-    if role == "strategy-developer":
-        return True
-    agent_id = str(agent.get("id") or "").strip().lower()
-    return agent_id == "strategy-developer"
 
 
 def _normalize_strategy_owner(value: str | None) -> str | None:
@@ -1317,40 +1296,6 @@ def _queue_failure_post_mortem(
     task_id_int: int | None = int(task_id) if str(task_id).isdigit() else None
     task_display_id = format_prefixed_id("T", task_id_int) if task_id_int is not None else None
     return task_id_int, task_display_id
-
-
-def _record_strategy_handoff_event(
-    strategy_id: str,
-    from_owner: str | None,
-    to_owner: str,
-    from_status: str | None,
-    to_status: str | None,
-    reason: str,
-    actor: str = "brain",
-) -> None:
-    """Persist strategy ownership handoff lifecycle event."""
-    try:
-        append_strategy_event(
-            strategy_id=strategy_id,
-            from_state=from_status,
-            to_state=to_status,
-            actor=actor,
-            reason=reason,
-            owner_from=from_owner,
-            owner_to=to_owner,
-            details={
-                "reason": reason,
-                "from_owner": from_owner,
-                "to_owner": to_owner,
-                "controller": "brain",
-            },
-            idempotency_key=f"brain-handoff:{strategy_id}:{from_owner}:{to_owner}:{to_status}",
-            # Canonical lifecycle path: authorized to record a stage-change event
-            # (the out-of-band tripwire in append_strategy_event refuses unauthorized ones).
-            _lifecycle_authorized=True,
-        )
-    except Exception as exc:
-        log.warning("Failed to append strategy handoff event for %s: %s", strategy_id, exc)
 
 
 _TERMINAL_TASK_STAGES = {"archived", "rejected", "backtest_failed", "trash"}
@@ -2776,52 +2721,6 @@ def _transition_stage_impl(
         "display_id": new_display,
         "owner": new_owner,
         "post_mortem_task": post_mortem_task_display_id,
-    }
-
-
-def handoff_strategy_to_next_owner(
-    strategy_id: str,
-    from_owner: str | None = None,
-    to_owner: str | None = None,
-    to_status: str | None = None,
-    reason: str | None = None,
-    actor: str = "brain",
-) -> dict[str, str | None]:
-    """Compatibility wrapper: transition by stage while preserving old signature."""
-    with get_db() as conn:
-        row = conn.execute(
-            "SELECT id, stage, status, owner FROM strategies WHERE id = ?",
-            (strategy_id,),
-        ).fetchone()
-        if not row:
-            raise ValueError(f"Strategy not found: {strategy_id}")
-
-    current_stage = _normalize_stage(row["stage"] or row["status"]) or "quick_screen"
-    current_owner = _normalize_strategy_owner(row["owner"]) or STAGE_TO_AGENT.get(current_stage) or "brain"
-    expected_owner = _normalize_strategy_owner(from_owner) if from_owner is not None else current_owner
-    if expected_owner != current_owner:
-        raise ValueError(f"Ownership changed (expected {from_owner}, found {current_owner})")
-
-    requested_stage = _normalize_stage(to_status)
-    if requested_stage is None and to_owner:
-        requested_stage = _stage_from_owner(to_owner)
-    if requested_stage is None:
-        requested_stage = NEXT_STAGE.get(current_stage)
-    if requested_stage is None:
-        raise ValueError(f"No valid next stage from {current_stage}")
-
-    result = transition_stage(
-        strategy_id=strategy_id,
-        target_stage=requested_stage,
-        reason=reason or f"Brain routed {strategy_id} {current_stage} -> {requested_stage}",
-        actor=actor,
-    )
-    return {
-        "strategy_id": strategy_id,
-        "from_owner": current_owner,
-        "to_owner": result.get("owner"),
-        "from_status": current_stage,
-        "to_status": requested_stage,
     }
 
 

@@ -2043,48 +2043,6 @@ async def send(channel_name: str, message: str, channel_id: str | None = None, a
     log.info("Sent message to %s (%s): %s...", channel_name or target_id, target_id, message[:50])
 
 
-async def send_thread(channel_name: str, title: str, message: str, channel_id: str | None = None, embeds: list[dict] | None = None, agent_id: str | None = None):
-    """Send a message into a newly created thread in a named channel."""
-    target_id = channel_id or _channel_id(channel_name)
-    if not target_id:
-        raise ValueError(f"Unknown channel: {channel_name}")
-
-    # Discord library uses discord.Embed objects
-    discord_embeds = []
-    if embeds:
-        for e in embeds:
-            de = discord.Embed(
-                title=e.get("title"),
-                description=e.get("description"),
-                color=e.get("color", discord.Color.default())
-            )
-            discord_embeds.append(de)
-
-    async def _send_thread_with_bot(selected_bot: ForvenBot):
-        await selected_bot.wait_until_ready_custom()
-        channel = selected_bot.get_channel(int(target_id))
-        if not channel:
-            channel = await selected_bot.fetch_channel(int(target_id))
-
-        if not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
-            raise TypeError(f"Channel {target_id} does not support threading")
-
-        thread = await channel.create_thread(name=title, type=discord.ChannelType.public_thread)
-        if len(message) > 2000:
-            await selected_bot._send_response(thread, message)
-            if discord_embeds:
-                for i in range(0, len(discord_embeds), 10):
-                    await thread.send(embeds=discord_embeds[i:i+10])
-        else:
-            await thread.send(content=message, embeds=discord_embeds[:10] if discord_embeds else None)
-            if discord_embeds and len(discord_embeds) > 10:
-                for i in range(10, len(discord_embeds), 10):
-                    await thread.send(embeds=discord_embeds[i:i+10])
-
-    await _send_thread_with_bot(get_bot())
-    log.info("Created thread '%s' in %s and sent message/embeds", title, channel_name or target_id)
-
-
 # Per-channel circuit-breaker for a persistent Discord 403 ("Missing Access").
 # A forbidden channel is an operator-side permission gap, not a transient error:
 # without a breaker, every notification re-POSTs -> 403 -> warning -> raise, which
@@ -2446,26 +2404,10 @@ async def start_bot():
         _release_bot_lock()
 
 
-
-async def _run_agent_bot_safe(agent_id: str, token: str, delay: float = 0):
-    """Deprecated multi-bot entrypoint retained as a no-op."""
-    log.info("Ignoring legacy per-agent bot start for %s; gateway bot handles Discord delivery.", agent_id)
-
-
 async def _run_all_bots():
     token = get_bot_token()
     main_bot = get_bot()
     await main_bot.start(token)
-
-
-async def start_agent_bot(agent_id: str, token: str):
-    """Deprecated multi-bot runtime hook retained as a no-op."""
-    log.info("Ignoring legacy agent bot restart for %s; gateway bot handles Discord delivery.", agent_id)
-
-
-async def _sync_agent_bots():
-    """Deprecated multi-bot sync hook retained as a no-op."""
-    return None
 
 
 def reload_agent_bot(agent_id: str):

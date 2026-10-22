@@ -505,58 +505,6 @@ def get_data_ingestion_runs(
     return combined[offset : offset + limit]
 
 
-def get_cached_data_ingestion_runs(
-    symbol: str | None = None,
-    status: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[dict]:
-    from forven.data import get_active_ingestion_runs, peek_cached_datasets
-
-    active = get_active_ingestion_runs()
-    datasets = peek_cached_datasets()
-    legacy = []
-
-    for idx, ds in enumerate(datasets):
-        completed_at = ds.get("end_ts") or ds.get("start_ts")
-        dataset_symbol = _to_ui_symbol(ds.get("symbol"))
-        legacy.append(
-            {
-                "id": f"dataset-{idx}-{dataset_symbol}-{ds['timeframe']}",
-                "symbol": dataset_symbol,
-                "timeframe": ds["timeframe"],
-                "source": ds.get("source", "local"),
-                "status": "completed",
-                "bars_fetched": ds.get("row_count", 0),
-                "bars_new": ds.get("row_count", 0),
-                "error": None,
-                "started_at": completed_at or datetime.now(timezone.utc).isoformat(),
-                "completed_at": completed_at,
-            }
-        )
-
-    normalized_active: list[dict[str, object]] = []
-    for run in active:
-        if not isinstance(run, dict):
-            continue
-        current = dict(run)
-        current["symbol"] = _to_ui_symbol(current.get("symbol"))
-        normalized_active.append(current)
-
-    combined = normalized_active + legacy
-    if symbol:
-        combined = [row for row in combined if row["symbol"] == symbol]
-    if status:
-        combined = [row for row in combined if row["status"] == status]
-
-    def _sort_key(row):
-        value = row.get("completed_at") or row.get("started_at")
-        return core._to_datetime_sort_key(value)
-
-    combined.sort(key=_sort_key, reverse=True)
-    return combined[offset : offset + limit]
-
-
 def post_data_ingestion_submit(
     symbol: str,
     timeframe: str,

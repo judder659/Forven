@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from forven.gauntlet.models import WorkflowStepDefinition, normalize_step_key
+from forven.gauntlet.models import WorkflowStepDefinition
 
 # v3: timeframe_sweep now runs BEFORE quick_screen_gate so the gate judges the
 # strategy on the timeframe where its edge actually lives (best-of-N) instead of the
@@ -45,11 +45,3 @@ def ordered_steps() -> tuple[WorkflowStepDefinition, ...]:
 
 def ordered_step_keys() -> list[str]:
     return [step.step_key for step in WORKFLOW_STEPS]
-
-
-def get_step_definition(step_key: object) -> WorkflowStepDefinition:
-    normalized = normalize_step_key(step_key)
-    try:
-        return _STEP_BY_KEY[normalized]
-    except KeyError as exc:
-        raise KeyError(f"unknown gauntlet step: {step_key!r}") from exc

@@ -644,26 +644,6 @@ async def _on_startup():
                     pass
 
 
-def _parse_bool_query(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    lowered = str(value).strip().lower()
-    if lowered in {"1", "true", "yes", "on", "y"}:
-        return True
-    if lowered in {"0", "false", "no", "off", "n"}:
-        return False
-    return default
-
-
-def _parse_int_query(value: str | None, default: int = 0) -> int:
-    try:
-        if value is None:
-            return default
-        return int(str(value).strip())
-    except Exception:
-        return default
-
-
 _AUTH_OAUTH_SESSIONS: dict[str, dict[str, dict[str, object]]] = {}
 _AUTH_OAUTH_CALLBACKS: dict[str, dict[str, str]] = {}
 _AUTH_OAUTH_RESULTS: dict[str, dict[str, dict[str, object]]] = {}
@@ -4845,10 +4825,6 @@ def put_model_policy(body: ModelPolicyUpdateBody):
     return _update_model_policy(body)
 
 
-def put_legacy_model_policy(body: ModelPolicyUpdateBody):
-    return _update_model_policy(body)
-
-
 def get_agent(agent_id: str):
     agent = _lookup_agent(agent_id)
     if not agent:
@@ -7367,31 +7343,6 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
     }
 
 
-def _collect_backtest_execution_controls(payload: object) -> dict[str, object]:
-    fields = (
-        "trade_mode",
-        "allow_shorting",
-        "stop_loss_pct",
-        "take_profit_pct",
-        "trailing_stop_pct",
-        "time_stop_bars",
-        "sizing_mode",
-        "fixed_size",
-        "risk_per_trade",
-        "atr_stop_multiplier",
-        "kelly_multiplier",
-        "kelly_lookback",
-    )
-    controls: dict[str, object] = {}
-    for field_name in fields:
-        if isinstance(payload, dict):
-            value = payload.get(field_name)
-        else:
-            value = getattr(payload, field_name, None)
-        controls[field_name] = value
-    return controls
-
-
 def _collect_honored_backtest_execution_controls(payload: object) -> dict[str, object]:
     fields = (
         "sizing_mode",
@@ -9132,4 +9083,3 @@ async def websocket_endpoint(ws: WebSocket):
     from forven.api_domains import live_ws
 
     await live_ws.websocket_endpoint(ws)
-

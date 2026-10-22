@@ -7,7 +7,6 @@ import io
 import json
 import logging
 import os
-import shutil
 import threading
 import time
 from datetime import datetime, timezone
@@ -24,7 +23,7 @@ except Exception:  # pragma: no cover - optional local dependency
     pa = None
     pq = None
 
-from forven.config import FORVEN_DB, FORVEN_HOME, WORKSPACE_DIR
+from forven.config import FORVEN_DB, FORVEN_HOME
 
 try:
     import ccxt  # type: ignore
@@ -3557,16 +3556,3 @@ def export_symbol_zip(symbol: str, format: str = "csv") -> tuple[bytes, str]:
             data, _, filename = export_dataset_bytes(fs_symbol, timeframe, fmt)
             zf.writestr(filename, data)
     return out.getvalue(), f"{fs_symbol}_{fmt}.zip"
-
-
-def reset_ai_memory_artifacts() -> None:
-    chroma_dir = FORVEN_HOME / "chromadb"
-    if chroma_dir.exists():
-        shutil.rmtree(chroma_dir, ignore_errors=True)
-    for filename in ("LESSONS.md", "evolution_journal.md"):
-        path = WORKSPACE_DIR / filename
-        if path.exists():
-            try:
-                path.unlink()
-            except Exception:
-                pass

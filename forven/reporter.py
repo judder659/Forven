@@ -123,20 +123,6 @@ async def post_daily_summary(summary_text: str) -> None:
     )
 
 
-async def post_weekly_summary(summary_text: str) -> None:
-    """Send the weekly digest through the notification service."""
-    week = datetime.now(timezone.utc).strftime("Week %W, %Y")
-    await asyncio.to_thread(
-        emit_notification,
-        "digest_weekly",
-        source="weekly_review",
-        title=f"Weekly Performance Report - {week}",
-        summary=f"Weekly review digest for {week}",
-        body=summary_text,
-        metadata={"digest_kind": "weekly"},
-    )
-
-
 def _emit_agent_task_notification(
     agent_id: str,
     title: str,

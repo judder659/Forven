@@ -882,13 +882,6 @@ def get_regime_program(program_id: str) -> LabRegimeProgram | None:
     return _row_to_program_model(row)
 
 
-def get_regime_program_by_key(program_key: str) -> LabRegimeProgram | None:
-    init_lab_db()
-    with get_lab_db() as conn:
-        row = conn.execute("SELECT * FROM lab_regime_program WHERE program_key = ?", (program_key,)).fetchone()
-    return _row_to_program_model(row)
-
-
 def get_active_regime_program() -> LabRegimeProgram | None:
     init_lab_db()
     with get_lab_db() as conn:
@@ -2653,21 +2646,6 @@ def get_blacklisted_strategy_ids() -> set[str]:
             (now_iso,),
         ).fetchall()
     return {str(row["strategy_id"]) for row in rows}
-
-
-def clear_strategy_blacklist(strategy_id: str | None = None) -> int:
-    """Clear blacklist entries. If strategy_id is None, clear all."""
-    init_lab_db()
-    with get_lab_db() as conn:
-        if strategy_id:
-            cursor = _execute_lab_write(
-                conn,
-                "DELETE FROM lab_strategy_blacklist WHERE strategy_id = ?",
-                (strategy_id,),
-            )
-        else:
-            cursor = _execute_lab_write(conn, "DELETE FROM lab_strategy_blacklist")
-    return int(cursor.rowcount or 0)
 
 
 def get_blacklist_summary() -> dict:

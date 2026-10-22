@@ -520,28 +520,6 @@ def _empty_file(path: Path) -> bool:
         return True
 
 
-def _stream_coverage_start(path: Path, shift_seconds: int) -> pd.Timestamp | None:
-    """First covered (bucket-close-shifted) timestamp of a stream parquet, ns UTC.
-
-    Used to gate coverage-only fills so pre-coverage bars stay NaN (parity with
-    the legacy engine). None when the file has no readable timestamps."""
-    try:
-        with duckdb.connect(":memory:") as con:
-            row = con.execute("SELECT min(timestamp) FROM read_parquet(?)", [str(path)]).fetchone()
-    except Exception:
-        return None
-    if not row or row[0] is None:
-        return None
-    ts = pd.Timestamp(row[0])
-    if ts.tzinfo is None:
-        ts = ts.tz_localize("UTC")
-    else:
-        ts = ts.tz_convert("UTC")
-    if shift_seconds > 0:
-        ts = ts + pd.Timedelta(seconds=shift_seconds)
-    return ts
-
-
 def _enrich_with_duckdb(df: pd.DataFrame, specs: list[_EnrichmentSpec]) -> pd.DataFrame:
     output_columns = [column for spec in specs for column in spec.output_columns]
     base = df.drop(columns=[column for column in output_columns if column in df.columns], errors="ignore").copy()

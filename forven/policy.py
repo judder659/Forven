@@ -2737,7 +2737,6 @@ def _verdict_payload_failed(payload: object) -> bool:
     return False
 
 
-
 def verify_backtest_persisted(strategy_id: str) -> tuple[bool, str, dict]:
     """Verify that backtest results exist in SQLite before allowing lifecycle transitions."""
     from forven.db import get_db
@@ -5555,9 +5554,6 @@ def _evaluate_paper_gate(strategy_id: str, config: dict, *, dry_run: bool = Fals
 
     return True, f"Passed paper forward-proof gate (live graduated cap: {allocation_cap:.0f}% allocation)"
 
-def _evaluate_deploy_gate(strategy_id: str, config: dict) -> tuple[bool, str]:
-    """Backward-compatible alias for older callers expecting deploy gate."""
-    return _evaluate_paper_gate(strategy_id, config)
 
 def compute_live_metrics(pnls: list[float]) -> dict:
     """Shared utility to compute performance metrics from a PnL list."""

@@ -2158,11 +2158,6 @@ async def async_market_loop(state: dict):
                 log.warning("Liquidation capture shutdown timed out")
 
 
-def market_scan_loop(state: dict):
-    """Compatibility shim for direct synchronous consumers."""
-    asyncio.run(async_market_loop(state))
-
-
 def _daemon_startup_bookkeeping(install_signal_handlers: bool) -> dict | None:
     """Shared prelude for both the sync `run()` entry point and the async
     in-process variant used by `forven.api`. Returns the initial state dict

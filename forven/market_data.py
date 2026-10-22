@@ -531,11 +531,6 @@ def fetch_binance_prices(coins) -> dict[str, float]:
     return out
 
 
-def fetch_binance_price(coin: str) -> float | None:
-    """Latest Binance spot price for one coin, or None."""
-    return fetch_binance_prices([coin]).get(_binance_symbol(coin).split("/")[0])
-
-
 def resolve_market_data_source() -> str:
     """The configured market-data exchange for paper data/prices. Default 'binance'
     (the lead exchange); the operator can set 'hyperliquid' to revert."""

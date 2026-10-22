@@ -280,22 +280,3 @@ def collect_hl_funding_snapshot() -> dict:
         summary["assets"], summary["rows_added"], summary["failed"],
     )
     return summary
-
-
-def load_hl_funding_series(hl_coin: str):
-    """Stored HL hourly funding for one coin as a UTC-indexed Series, or None."""
-    import pandas as pd
-
-    path = _hl_funding_path(hl_coin)
-    if not path.exists():
-        return None
-    try:
-        df = pd.read_parquet(path)
-        if df.empty or "funding_rate" not in df.columns:
-            return None
-        ts = pd.to_datetime(df["timestamp"], utc=True)
-        series = pd.Series(df["funding_rate"].astype(float).values, index=ts).sort_index()
-        return series[~series.index.duplicated(keep="last")]
-    except Exception:
-        log.debug("HL funding load failed for %s", hl_coin, exc_info=True)
-        return None

@@ -422,24 +422,3 @@ def _policy_slot_fallbacks(slot_key: str) -> list[tuple[str, str]]:
         if isinstance(entry, dict) and entry.get("provider") and entry.get("model_id"):
             out.append((str(entry["provider"]).strip().lower(), str(entry["model_id"]).strip()))
     return out
-
-
-def resolve_agent_route(agent_id: str, provider: str, model: str) -> list[tuple[str, str]]:
-    """Fail-closed route for an agent: its model + its per-agent fallback chain.
-
-    The per-agent fallback list is stored under ``fallback_chains['agent:<id>']``
-    (Routing tab). Falls back, after the agent's own chain, to the operator's
-    global backup so a configured backup still applies.
-    """
-    fallbacks = _policy_slot_fallbacks(f"agent:{agent_id}")
-    # Append the global backup (provider+model) as a final hop if configured.
-    try:
-        from forven.config import get_backup_ai_model, get_backup_ai_provider
-
-        bp = str(get_backup_ai_provider() or "").strip().lower()
-        bm = str(get_backup_ai_model() or "").strip()
-        if bp and bp != "none" and bm and (bp, bm) not in fallbacks:
-            fallbacks = [*fallbacks, (bp, bm)]
-    except Exception:
-        pass
-    return resolve_route(f"agent:{agent_id}", provider, model, fallbacks=fallbacks)

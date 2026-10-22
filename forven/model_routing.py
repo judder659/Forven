@@ -446,12 +446,6 @@ def get_primary_provider_model() -> tuple[str, str]:
     return "openai", _DEFAULT_MODEL_ROUTING["default_models"]["openai"]
 
 
-def get_active_config() -> dict[str, str]:
-    """Backward-compatible active provider/model view for legacy callers."""
-    provider, model = get_primary_provider_model()
-    return {"provider": provider, "model": model}
-
-
 def _provider_has_credentials(provider: str) -> bool:
     """Whether ``provider`` has resolvable credentials (so a call could succeed).
 
