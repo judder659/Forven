@@ -181,10 +181,10 @@ PAGES: list[dict] = [
     },
     {
         "route": "/agents/toolsets",
-        "name": "Toolset matrix",
+        "name": "What agents can use",
         "kind": "agents",
-        "summary": "Per-agent × per-context tool-grant matrix.",
-        "actions": ["Grant or revoke tools per agent and context"],
+        "summary": "Read-only list of each agent's tools by kind of job (building strategies, research, routine work, when you ask).",
+        "actions": ["See which tools an agent can call", "Remove saved tool exceptions"],
     },
     {
         "route": "/brain",
@@ -372,7 +372,7 @@ HOWTOS: dict[str, dict] = {
             "Agent Hub (/agents): the roster tab lists every agent; set each one's provider/model.",
             "Providers & Keys tab: add API keys or OAuth for providers; watch spend and health.",
             "Routing & Fallbacks tab sets the global model policy.",
-            "Tool grants per agent live at /agents/toolsets.",
+            "Each agent's tools are listed at /agents/toolsets (read-only; safety rules decide them).",
             "My own model is whatever the 'brain' agent is set to — change it there.",
         ],
         "routes": ["/agents", "/agents/toolsets"],

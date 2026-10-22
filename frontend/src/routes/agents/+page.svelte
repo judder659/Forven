@@ -567,7 +567,7 @@
 						</button>
 					{/each}
 					<span class="mx-3 my-1 hidden border-t border-sc-line lg:block" aria-hidden="true"></span>
-					<a href="/agents/toolsets" class="whitespace-nowrap rounded-md px-3 py-1.5 text-[12.5px] text-sc-ink3 transition-colors hover:bg-sc-hover hover:text-sc-ink">Tool permissions ↗</a>
+					<a href="/agents/toolsets" class="whitespace-nowrap rounded-md px-3 py-1.5 text-[12.5px] text-sc-ink3 transition-colors hover:bg-sc-hover hover:text-sc-ink">What agents can use ↗</a>
 					<a href="/integrations/mcp" class="whitespace-nowrap rounded-md px-3 py-1.5 text-[12.5px] text-sc-ink3 transition-colors hover:bg-sc-hover hover:text-sc-ink">MCP servers ↗</a>
 				</nav>
 				<div class="min-w-0">

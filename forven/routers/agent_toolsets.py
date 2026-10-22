@@ -1,14 +1,14 @@
-"""Per-agent per-context toolset overrides API (Phase 5 / P5-T08).
+"""Per-agent toolset API behind the read-only "What agents can use" page.
 
 Endpoints:
-- ``GET /api/agents/{id}/toolsets`` — full overrides + effective toolset for
+- ``GET /api/agents/{id}/toolsets`` — saved overrides + effective toolset for
   every context.
-- ``PUT /api/agents/{id}/toolsets/{context}`` — atomic replace overrides for
-  a single context.
-- ``GET /api/agents/{id}/toolsets/preview?context=...`` — effective tool list
-  the agent would see in that context.
+- ``DELETE /api/agents/{id}/toolsets/{context}`` — remove the saved overrides
+  for one context.
 
-Override rules can target an exact tool name, ``mcp:<server>``, ``mcp:*``, or
+Overrides can no longer be written from the app (the editor was removed in the
+2026-10 agent tools audit: no install was found using it). Rows saved earlier
+still apply until removed. Override rules can target an exact tool name, ``mcp:<server>``, ``mcp:*``, or
 ``category:<cat>``. Resolution: name > mcp:server > mcp:* > category > default.
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 
 from forven.agents.tool_definitions import _ensure_tools_imported
 from forven.agents.tool_registry import (
@@ -30,15 +29,6 @@ from forven.db import get_db
 
 
 router = APIRouter(tags=["agent-toolsets"], dependencies=[Depends(require_operator_access)])
-
-
-class OverrideRule(BaseModel):
-    tool_name: str = Field(..., min_length=1, max_length=200)
-    enabled: bool
-
-
-class ToolsetOverridesBody(BaseModel):
-    overrides: list[OverrideRule]
 
 
 def _ensure_agent_exists(agent_id: str) -> None:
@@ -92,43 +82,6 @@ def get_agent_toolsets(agent_id: str) -> dict[str, Any]:
     }
 
 
-@router.put("/api/agents/{agent_id}/toolsets/{context}")
-def put_agent_toolset_context(
-    agent_id: str,
-    context: str,
-    body: ToolsetOverridesBody,
-) -> dict[str, Any]:
-    """Atomic replace of all overrides for ``(agent_id, context)``."""
-    _ensure_agent_exists(agent_id)
-    _validate_context(context)
-    with get_db() as conn:
-        conn.execute(
-            "DELETE FROM agent_toolset_overrides WHERE agent_id = ? AND context = ?",
-            (str(agent_id), str(context)),
-        )
-        for rule in body.overrides:
-            conn.execute(
-                """
-                INSERT INTO agent_toolset_overrides
-                (agent_id, context, tool_name, enabled, updated_by)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    str(agent_id),
-                    str(context),
-                    str(rule.tool_name).strip(),
-                    1 if rule.enabled else 0,
-                    "operator",
-                ),
-            )
-    return {
-        "agent_id": agent_id,
-        "context": context,
-        "overrides": _list_overrides(agent_id, context),
-        "effective": compute_effective_toolset(agent_id, context),
-    }
-
-
 @router.delete("/api/agents/{agent_id}/toolsets/{context}")
 def delete_agent_toolset_context(agent_id: str, context: str) -> dict[str, Any]:
     """Reset overrides for ``(agent_id, context)`` — all tools fall back to default."""
@@ -145,16 +98,4 @@ def delete_agent_toolset_context(agent_id: str, context: str) -> dict[str, Any]:
         "context": context,
         "deleted": deleted,
         "effective": compute_effective_toolset(agent_id, context),
-    }
-
-
-@router.get("/api/agents/{agent_id}/toolsets/preview")
-def preview_agent_toolset(agent_id: str, context: str) -> dict[str, Any]:
-    _ensure_agent_exists(agent_id)
-    _validate_context(context)
-    _ensure_tools_imported()
-    return {
-        "agent_id": agent_id,
-        "context": context,
-        "tools": compute_effective_toolset(agent_id, context),
     }

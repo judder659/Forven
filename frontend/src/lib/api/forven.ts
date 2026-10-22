@@ -2102,22 +2102,6 @@ export async function getAgentToolsets(agentId: string): Promise<AgentToolsetsRe
 	return fetchApi(`/agents/${encodeURIComponent(agentId)}/toolsets`);
 }
 
-export async function putAgentToolsetOverrides(
-	agentId: string,
-	context: string,
-	overrides: Array<{ tool_name: string; enabled: boolean }>,
-): Promise<{
-	agent_id: string;
-	context: string;
-	overrides: ToolsetOverrideRule[];
-	effective: ToolsetEffectiveEntry[];
-}> {
-	return fetchApi(`/agents/${encodeURIComponent(agentId)}/toolsets/${encodeURIComponent(context)}`, {
-		method: 'PUT',
-		body: JSON.stringify({ overrides }),
-	});
-}
-
 export async function deleteAgentToolsetOverrides(
 	agentId: string,
 	context: string,

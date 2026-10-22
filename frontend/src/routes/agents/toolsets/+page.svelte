@@ -5,15 +5,27 @@
 		deleteAgentToolsetOverrides,
 		getAgentToolsets,
 		getForvenAgents,
-		putAgentToolsetOverrides,
 		type AgentToolsetsResponse,
 		type ForvenAgent,
 		type ToolDefinition,
-		type ToolsetEffectiveEntry,
 		type ToolsetOverrideRule,
 	} from '$lib/api/forven';
 
-	type RowState = 'default' | 'enable' | 'disable';
+	// The kinds of work an agent does, in the order shown. Each is a tools
+	// context in forven.agents.tool_registry; forven.agents.runner picks it from
+	// the task type. 'recovery' is not listed: no task runs in it.
+	const JOBS: Array<{ context: string; label: string; help: string }> = [
+		{ context: 'develop', label: 'Building strategies', help: 'Idea and strategy-building tasks.' },
+		{ context: 'research', label: 'Research', help: 'Research and analysis tasks.' },
+		{
+			context: 'scheduled',
+			label: 'Routine work',
+			help: 'Everything else Forven runs on its own: backtests, risk checks, post-mortems, Brain cycles.',
+		},
+		{ context: 'interactive', label: 'When you ask', help: 'Your chat and tasks you start by hand.' },
+	];
+
+	type ToolRow = { tool: ToolDefinition; summary: string; jobs: Record<string, boolean>; everywhere: boolean };
 
 	let agents: ForvenAgent[] = [];
 	let agentsLoading = true;
@@ -21,43 +33,61 @@
 	let selectedAgentId = '';
 	let toolsets: AgentToolsetsResponse | null = null;
 	let loading = false;
-	let saving = false;
+	let clearing = false;
 	let error: string | null = null;
 	let actionMessage: string | null = null;
-	let activeContext = '';
-	let categoryFilter: string | 'all' = 'all';
 	let nameFilter = '';
-	// Tools outside the agent's base permissions never reach the override step,
-	// so they are hidden unless asked for and cannot be overridden.
-	let showUnavailable = false;
-	let overrideMap: Map<string, RowState> = new Map();
-	let savedOverrideMap: Map<string, RowState> = new Map();
-	let dirty = false;
 
-	$: contexts = toolsets ? toolsets.valid_contexts : [];
-	$: categories = toolsets ? ['all', ...toolsets.categories] : ['all'];
-	$: tools = toolsets ? toolsets.all_tools : ([] as ToolDefinition[]);
-	$: activeContextData = toolsets && activeContext ? toolsets.contexts[activeContext] : null;
-	$: effectiveByName = buildEffectiveLookup(activeContextData?.effective ?? []);
-	$: unavailableCount = tools.filter((t) => !effectiveByName.has(t.name)).length;
-	$: filteredTools = tools.filter(
-		(t) =>
-			(showUnavailable || effectiveByName.has(t.name)) &&
-			(categoryFilter === 'all' || t.category === categoryFilter) &&
-			(!nameFilter.trim() || t.name.toLowerCase().includes(nameFilter.trim().toLowerCase())),
-	);
-	$: contextOverrideCount = activeContextData ? activeContextData.overrides.length : 0;
-	$: filteredEnabledCount = filteredTools.filter((t) => effectiveByName.get(t.name)?.enabled).length;
-	$: filteredDisabledCount = filteredTools.filter((t) => effectiveByName.get(t.name)?.enabled === false).length;
+	$: rows = toolsets ? buildRows(toolsets) : [];
+	$: filteredRows = rows.filter((row) => {
+		const needle = nameFilter.trim().toLowerCase();
+		return !needle || row.tool.name.toLowerCase().includes(needle) || row.summary.toLowerCase().includes(needle);
+	});
+	$: savedOverrides = toolsets ? collectOverrides(toolsets) : [];
+	$: selectedAgent = agents.find((a) => String(a.id) === selectedAgentId);
 
-	function contextOverrideCountFor(ctx: string): number {
-		return toolsets?.contexts[ctx]?.overrides.length ?? 0;
+	function firstSentence(text: string | undefined): string {
+		const clean = String(text || '').trim();
+		// A sentence ends at . ! ? before a capital letter or the end, so 'e.g. orb' doesn't.
+		const match = clean.match(/^.*?[.!?](?=\s+[A-Z]|$)/);
+		return (match ? match[0] : clean).trim();
 	}
 
-	function buildEffectiveLookup(effective: ToolsetEffectiveEntry[]): Map<string, ToolsetEffectiveEntry> {
-		const map = new Map<string, ToolsetEffectiveEntry>();
-		for (const entry of effective) map.set(entry.name, entry);
-		return map;
+	function buildRows(data: AgentToolsetsResponse): ToolRow[] {
+		const out: ToolRow[] = [];
+		for (const tool of data.all_tools) {
+			const jobs: Record<string, boolean> = {};
+			let available = false;
+			for (const job of JOBS) {
+				const entry = data.contexts[job.context]?.effective.find((e) => e.name === tool.name);
+				// No entry: the tool is outside this agent's permissions.
+				if (entry) available = true;
+				jobs[job.context] = Boolean(entry?.enabled);
+			}
+			if (!available) continue;
+			out.push({
+				tool,
+				summary: firstSentence(tool.description),
+				jobs,
+				everywhere: JOBS.every((job) => jobs[job.context]),
+			});
+		}
+		// Tools usable everywhere first, then the rest; alphabetical within each.
+		return out.sort((a, b) =>
+			a.everywhere === b.everywhere ? a.tool.name.localeCompare(b.tool.name) : a.everywhere ? -1 : 1,
+		);
+	}
+
+	function collectOverrides(data: AgentToolsetsResponse): Array<ToolsetOverrideRule & { context: string }> {
+		const out: Array<ToolsetOverrideRule & { context: string }> = [];
+		for (const [context, value] of Object.entries(data.contexts)) {
+			for (const rule of value.overrides) out.push({ ...rule, context });
+		}
+		return out;
+	}
+
+	function jobLabel(context: string): string {
+		return JOBS.find((job) => job.context === context)?.label ?? context;
 	}
 
 	async function loadAgents() {
@@ -88,13 +118,8 @@
 		if (!agentId) return;
 		loading = true;
 		error = null;
-		dirty = false;
 		try {
 			toolsets = await getAgentToolsets(agentId);
-			if (!activeContext || !toolsets.valid_contexts.includes(activeContext)) {
-				activeContext = toolsets.valid_contexts[0] || '';
-			}
-			rebuildOverrideMap();
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 			toolsets = null;
@@ -103,138 +128,43 @@
 		}
 	}
 
-	function rebuildOverrideMap() {
-		const map = new Map<string, RowState>();
-		const ctxData = activeContextData;
-		if (ctxData) {
-			for (const rule of ctxData.overrides) {
-				map.set(rule.tool_name, rule.enabled ? 'enable' : 'disable');
-			}
-		}
-		overrideMap = map;
-		savedOverrideMap = new Map(map);
-		dirty = false;
-	}
-
-	function rowState(toolName: string): RowState {
-		return overrideMap.get(toolName) || 'default';
-	}
-
-	function isRowDirty(toolName: string): boolean {
-		return (overrideMap.get(toolName) || 'default') !== (savedOverrideMap.get(toolName) || 'default');
-	}
-
-	function cycleRow(toolName: string) {
-		const current = rowState(toolName);
-		const next: RowState = current === 'default' ? 'enable' : current === 'enable' ? 'disable' : 'default';
-		const map = new Map(overrideMap);
-		if (next === 'default') map.delete(toolName);
-		else map.set(toolName, next);
-		overrideMap = map;
-		dirty = true;
-	}
-
-	function confirmDiscard(): boolean {
-		if (!dirty) return true;
-		return window.confirm('Discard unsaved override changes?');
-	}
-
 	async function handleSelectAgent(id: string) {
 		if (id === selectedAgentId) return;
-		if (!confirmDiscard()) return;
 		selectedAgentId = id;
+		actionMessage = null;
 		await loadToolsets(id);
 	}
 
-	async function handleSelectContext(ctx: string) {
-		if (ctx === activeContext) return;
-		if (!confirmDiscard()) return;
-		activeContext = ctx;
-		rebuildOverrideMap();
-	}
-
-	function effectiveLabel(tool: ToolDefinition): string {
-		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'not available to this agent';
-		return `${eff.enabled ? 'enabled' : 'disabled'} via ${eff.source}`;
-	}
-
-	function effectiveClass(tool: ToolDefinition): string {
-		const eff = effectiveByName.get(tool.name);
-		if (!eff) return 'text-sc-ink4';
-		return eff.enabled ? 'text-emerald-400' : 'text-red-400';
-	}
-
-	function rowChipClass(state: RowState): string {
-		switch (state) {
-			case 'enable':
-				return 'border-emerald-900 bg-emerald-500/10 text-emerald-400';
-			case 'disable':
-				return 'border-red-900 bg-red-500/10 text-red-400';
-			default:
-				return 'border-sc-line2 text-sc-ink2';
-		}
-	}
-
-	function rowChipLabel(state: RowState): string {
-		switch (state) {
-			case 'enable':
-				return 'Override: enable';
-			case 'disable':
-				return 'Override: disable';
-			default:
-				return 'Use default';
-		}
-	}
-
-	async function saveOverrides() {
-		if (!selectedAgentId || !activeContext) return;
-		saving = true;
+	async function clearOverrides() {
+		if (!selectedAgentId || savedOverrides.length === 0) return;
+		clearing = true;
 		error = null;
 		actionMessage = null;
 		try {
-			const overrides: Array<{ tool_name: string; enabled: boolean }> = [];
-			for (const [name, state] of overrideMap.entries()) {
-				if (state === 'default') continue;
-				overrides.push({ tool_name: name, enabled: state === 'enable' });
+			const contexts = [...new Set(savedOverrides.map((rule) => rule.context))];
+			let deleted = 0;
+			for (const context of contexts) {
+				deleted += (await deleteAgentToolsetOverrides(selectedAgentId, context)).deleted;
 			}
-			await putAgentToolsetOverrides(selectedAgentId, activeContext, overrides);
-			actionMessage = `Saved ${overrides.length} override(s) for ${activeContext}.`;
+			actionMessage = `Removed ${deleted} saved exception${deleted === 1 ? '' : 's'}. This agent now uses the standard rules.`;
 			await loadToolsets(selectedAgentId);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {
-			saving = false;
-		}
-	}
-
-	async function resetContext() {
-		if (!selectedAgentId || !activeContext) return;
-		if (!window.confirm(`Reset all overrides for ${activeContext}? This cannot be undone.`)) return;
-		saving = true;
-		error = null;
-		actionMessage = null;
-		try {
-			const res = await deleteAgentToolsetOverrides(selectedAgentId, activeContext);
-			actionMessage = `Reset ${res.deleted} override(s) for ${activeContext}.`;
-			await loadToolsets(selectedAgentId);
-		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
-		} finally {
-			saving = false;
+			clearing = false;
 		}
 	}
 
 	onMount(loadAgents);
 </script>
 
-<svelte:head><title>Agent Toolsets | Forven</title></svelte:head>
+<svelte:head><title>What agents can use | Forven</title></svelte:head>
 
 <div class="flex h-full min-h-0 overflow-hidden">
 	<aside class="w-64 border-r border-sc-line bg-sc-panel overflow-y-auto">
 		<header class="px-4 py-4 border-b border-sc-line">
 			<a href={selectedAgentId ? `/agents?agent=${encodeURIComponent(selectedAgentId)}` : '/agents'} class="text-[12px] text-sc-ink3 hover:text-sc-ink">← Agents</a>
-			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink mt-1">Toolset matrix</h1>
+			<h1 class="text-[22px] font-semibold tracking-[-0.01em] text-sc-ink mt-1">What agents can use</h1>
 		</header>
 		{#if agentsLoading}
 			<div class="px-4 py-3 text-xs text-sc-ink3">Loading agents...</div>
@@ -248,12 +178,12 @@
 					<li>
 						<button
 							type="button"
-							disabled={loading || saving}
+							disabled={loading || clearing}
 							class="w-full text-left px-4 py-2 hover:bg-sc-panel2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed {selectedAgentId === agent.id ? 'bg-sc-panel2 text-sc-ink border-l-2 border-l-sc-ink pl-[14px]' : 'text-sc-ink2'}"
 							on:click={() => void handleSelectAgent(String(agent.id))}
 						>
-							<div class="text-sm font-mono">{agent.id}</div>
-							<div class="text-[11px] text-sc-ink3">{agent.name || agent.role || ''}</div>
+							<div class="text-sm">{agent.name || agent.id}</div>
+							<div class="text-[11px] text-sc-ink3 font-mono">{agent.id}</div>
 						</button>
 					</li>
 				{/each}
@@ -263,133 +193,81 @@
 
 	<section class="flex-1 overflow-y-auto p-6 space-y-4">
 		{#if !selectedAgentId}
-			<div class="text-sc-ink3">Select an agent to view its toolset.</div>
+			<div class="text-sc-ink3">Select an agent to see its tools.</div>
 		{:else if loading}
-			<div class="text-sc-ink3">Loading toolset for {selectedAgentId}...</div>
+			<div class="text-sc-ink3">Loading tools for {selectedAgent?.name || selectedAgentId}...</div>
 		{:else if error}
 			<div class="border border-red-900 bg-red-500/5 text-red-400 text-xs px-3 py-2">{error}</div>
 		{:else if !toolsets}
-			<div class="text-sc-ink3">No toolset data.</div>
+			<div class="text-sc-ink3">No tool data.</div>
 		{:else}
 			<header class="space-y-2">
-				<div class="flex items-end justify-between gap-3">
-					<div>
-						<div class="font-plex-cond text-[11px] font-medium uppercase tracking-[0.08em] text-sc-ink3">Agent</div>
-						<h2 class="text-[14px] font-semibold text-sc-ink">{toolsets.agent_id}</h2>
-					</div>
-					<div class="flex items-center gap-2">
-						<button
-							type="button"
-							disabled={saving || !dirty}
-							class="terminal-button-primary text-[12px] disabled:opacity-40"
-							on:click={() => void saveOverrides()}
-						>
-							{saving ? 'Saving...' : 'Save changes'}
-						</button>
-						<button
-							type="button"
-							disabled={saving || contextOverrideCount === 0}
-							class="terminal-button text-[12px] disabled:opacity-40"
-							on:click={() => void resetContext()}
-						>
-							Reset context
-						</button>
-					</div>
-				</div>
+				<h2 class="text-[16px] font-semibold text-sc-ink">{selectedAgent?.name || toolsets.agent_id}</h2>
 				<p class="text-xs text-sc-ink3 max-w-3xl">
-					Per-context overrides for this agent. Resolution order:
-					exact tool name &gt; <code>mcp:&lt;server&gt;</code> &gt; <code>mcp:*</code> &gt;
-					<code>category:&lt;cat&gt;</code> &gt; default-deny set. Click a row's chip to cycle
-					between <em>default</em>, <em>override: enable</em>, and <em>override: disable</em>.
+					{rows.length} tools. Forven's safety rules decide which ones this agent can use, based on the job it is
+					doing. Nothing that runs on its own can wipe your data.
 				</p>
+				<dl class="grid gap-x-6 gap-y-1 text-[11px] text-sc-ink3 sm:grid-cols-2 max-w-3xl">
+					{#each JOBS as job}
+						<div><dt class="inline text-sc-ink2">{job.label}:</dt> <dd class="inline">{job.help}</dd></div>
+					{/each}
+				</dl>
 			</header>
 
 			{#if actionMessage}<div class="border border-emerald-900 bg-emerald-500/5 text-emerald-400 text-xs px-3 py-2">{actionMessage}</div>{/if}
 
-			<nav class="flex flex-wrap items-center gap-2 border-b border-sc-line pb-2">
-				{#each contexts as ctx}
-					{@const ctxOverrides = contextOverrideCountFor(ctx)}
-					<button
-						type="button"
-						disabled={loading || saving}
-						class="rounded-md flex items-center gap-1.5 text-[12px] px-3 py-1.5 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed {activeContext === ctx ? 'border-sc-line2 bg-sc-panel2 text-sc-ink' : 'border-sc-line2 text-sc-ink2 hover:text-sc-ink'}"
-						on:click={() => void handleSelectContext(ctx)}
-					>
-						{ctx}
-						{#if ctxOverrides > 0}
-							<span class="text-[10px] px-1 border border-yellow-900 bg-yellow-500/10 text-yellow-400">{ctxOverrides}</span>
-						{/if}
-					</button>
-				{/each}
-				<div class="ml-auto flex items-center gap-2 text-xs">
-					<input
-						type="text"
-						bind:value={nameFilter}
-						placeholder="Filter tools..."
-						class="terminal-input w-40 !py-1"
-					/>
-					<span class="text-sc-ink3 uppercase tracking-wider">Category</span>
-					<select bind:value={categoryFilter} class="terminal-select !w-auto !py-1">
-						{#each categories as cat}
-							<option value={cat}>{cat}</option>
+			{#if savedOverrides.length > 0}
+				<div class="border border-yellow-900 bg-yellow-500/5 px-3 py-2 text-xs text-sc-ink2 space-y-1.5">
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<span class="text-yellow-400">This agent has {savedOverrides.length} saved exception{savedOverrides.length === 1 ? '' : 's'} to the standard rules. They still apply.</span>
+						<button type="button" class="terminal-button text-[12px] disabled:opacity-40" disabled={clearing} on:click={() => void clearOverrides()}>
+							{clearing ? 'Removing...' : 'Remove exceptions'}
+						</button>
+					</div>
+					<ul class="space-y-0.5">
+						{#each savedOverrides as rule}
+							<li><span class="font-mono">{rule.tool_name}</span>: {rule.enabled ? 'allowed' : 'blocked'} in {jobLabel(rule.context)}</li>
 						{/each}
-					</select>
+					</ul>
 				</div>
-			</nav>
+			{/if}
 
-			<div class="flex flex-wrap items-center gap-3 text-[11px] text-sc-ink3">
-				<span>{filteredTools.length} tool(s)</span>
-				<span class="text-emerald-400">{filteredEnabledCount} enabled</span>
-				<span class="text-red-400">{filteredDisabledCount} disabled</span>
-				{#if unavailableCount > 0}
-					<label class="ml-auto flex items-center gap-1.5">
-						<input type="checkbox" bind:checked={showUnavailable} />
-						Show {unavailableCount} tools outside this agent's permissions
-					</label>
-				{/if}
+			<div class="flex items-center gap-2 text-xs">
+				<input type="text" id="tool-filter" bind:value={nameFilter} placeholder="Filter tools..." class="terminal-input w-56 !py-1" />
+				<span class="text-sc-ink3">{filteredRows.length} shown</span>
 			</div>
 
-			<table class="w-full text-xs">
-				<thead class="text-[10px] text-sc-ink3 uppercase tracking-wider">
-					<tr>
-						<th class="text-left px-3 py-2">Tool</th>
-						<th class="text-left px-3 py-2">Category</th>
-						<th class="text-left px-3 py-2">Effective</th>
-						<th class="text-left px-3 py-2">Override</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each filteredTools as tool}
-						{@const state = rowState(tool.name)}
-						{@const rowDirty = isRowDirty(tool.name)}
-						<tr class="border-t border-sc-line hover:bg-sc-panel2 transition-colors {rowDirty ? 'bg-yellow-500/5' : ''}">
-							<td class="px-3 py-1.5 font-mono text-sc-ink" title={tool.description || ''}>
-								<span class="inline-flex items-center gap-1.5">
-									{#if rowDirty}<span class="text-yellow-400" title="Unsaved change">●</span>{/if}
-									{tool.name}
-									{#if tool.description}<span class="text-sc-ink3" title={tool.description}>(?)</span>{/if}
-								</span>
-							</td>
-							<td class="px-3 py-1.5 text-sc-ink3">{tool.category}</td>
-							<td class="px-3 py-1.5 {effectiveClass(tool)}">{effectiveLabel(tool)}</td>
-							<td class="px-3 py-1.5">
-								{#if effectiveByName.has(tool.name)}
-									<button
-										type="button"
-										disabled={saving}
-										class="rounded-md text-[12px] px-2 py-0.5 border disabled:opacity-50 {rowChipClass(state)}"
-										on:click={() => cycleRow(tool.name)}
-									>
-										{rowChipLabel(state)}
-									</button>
-								{:else}
-									<span class="text-[12px] text-sc-ink4" title="An override cannot grant a tool outside the agent's base permissions.">—</span>
-								{/if}
-							</td>
+			<div class="overflow-x-auto">
+				<table class="w-full text-xs">
+					<thead class="text-[10px] text-sc-ink3 uppercase tracking-wider">
+						<tr>
+							<th class="text-left px-3 py-2">Tool</th>
+							{#each JOBS as job}
+								<th class="text-center px-2 py-2 whitespace-nowrap" title={job.help}>{job.label}</th>
+							{/each}
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{#each filteredRows as row}
+							<tr class="border-t border-sc-line">
+								<td class="px-3 py-1.5">
+									<div class="font-mono text-sc-ink">{row.tool.name}</div>
+									{#if row.summary}<div class="text-[11px] text-sc-ink3">{row.summary}</div>{/if}
+								</td>
+								{#each JOBS as job}
+									<td class="px-2 py-1.5 text-center">
+										{#if row.jobs[job.context]}
+											<span class="text-emerald-400" aria-label="Can use">✓</span>
+										{:else}
+											<span class="text-sc-ink4" aria-label="Can't use">–</span>
+										{/if}
+									</td>
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		{/if}
 	</section>
 </div>
