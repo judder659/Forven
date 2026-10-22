@@ -654,3 +654,16 @@ def test_a_new_strategy_is_clean_and_an_old_one_is_not():
     assert rh.is_contaminated({"created_at": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()}, settings)
     assert not rh.is_contaminated({"created_at": datetime.now(timezone.utc).isoformat()}, settings)
     assert rh.is_contaminated({"created_at": datetime.now(timezone.utc).isoformat()}, _cfg(established_at=""))
+
+
+def test_stale_validation_is_pending_evidence_for_unpromotable_backstop():
+    """S19944: the 2-day un-promotable sweep must not archive a strategy whose
+    only gate failure is that its tests need a re-run after optimization."""
+    from forven.evolution import _is_pending_evidence_gate_reason
+
+    assert _is_pending_evidence_gate_reason(
+        "Ordering violation: cost_stress was run before optimization — re-run after optimization"
+    )
+    assert _is_pending_evidence_gate_reason(
+        "Stale validation tests (run before latest optimization): walk_forward"
+    )
