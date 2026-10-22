@@ -213,6 +213,10 @@ def fetch_hyperliquid_candles(
     # callers/cache key on the pair, so normalize only for the API request here.
     from forven.symbol_mapping import _extract_crypto_base
     hl_coin = _extract_crypto_base(normalized_coin) or normalized_coin
+    # Hyperliquid's k-prefixed coins (kPEPE, kSHIB) are case-sensitive.
+    raw_coin = str(coin).strip()
+    if raw_coin[:1] == "k" and raw_coin[1:2].isupper() and hl_coin.startswith("K"):
+        hl_coin = "k" + hl_coin[1:]
 
     normalized_interval = str(interval or "1h").strip().lower()
     interval_ms = INTERVAL_TO_MS.get(normalized_interval)

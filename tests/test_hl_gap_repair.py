@@ -9,6 +9,7 @@ from forven.dataeng import venue
 @pytest.fixture
 def lake(monkeypatch, tmp_path):
     monkeypatch.setattr(data, "DATA_DIR", tmp_path / "ohlcv")
+    monkeypatch.setattr(venue, "hl_listed_coins", lambda: None)  # no network
     return pd.Timestamp.now("UTC").floor("h")
 
 
