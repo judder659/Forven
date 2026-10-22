@@ -203,6 +203,61 @@ def backfill_outcome_for_strategy(strategy_id: str, terminal_stage: str) -> dict
     }
 
 
+# Cycle-level outcomes, written when a cycle ends without anything for the
+# strategy backfill above to resolve later. NULL ("pending") is reserved for
+# cycles that spawned agent tasks, which the backfill can still settle.
+OUTCOME_NO_ACTION = "no_action"
+OUTCOME_TIMED_OUT = "timed_out"
+OUTCOME_FAILED = "failed"
+
+
+def decision_id_for_cycle(cycle_id: str | None) -> int | None:
+    """Return the newest decision row for ``cycle_id`` (or None).
+
+    A retried brain task keeps its cycle id, so the retry reuses this row
+    instead of writing a duplicate decision per attempt.
+    """
+    if not cycle_id:
+        return None
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM brain_decisions WHERE cycle_id = ? ORDER BY id DESC LIMIT 1",
+            (str(cycle_id),),
+        ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def linked_task_count(decision_id: int) -> int:
+    """Number of ``agent_tasks`` rows the decision spawned."""
+    if not decision_id:
+        return 0
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM agent_tasks WHERE brain_decision_id = ?",
+            (int(decision_id),),
+        ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def close_cycle_outcome(decision_id: int, outcome: str) -> bool:
+    """Settle a cycle that has nothing left to track.
+
+    Only applies when the decision spawned no agent tasks (otherwise the
+    strategy backfill owns the outcome) and no outcome is set yet. Returns
+    True when the row was updated.
+    """
+    if not decision_id or linked_task_count(decision_id):
+        return False
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE brain_decisions SET outcome_observed = ?, "
+            "outcome_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now') "
+            "WHERE id = ? AND outcome_observed IS NULL",
+            (outcome, int(decision_id)),
+        )
+        return bool(cur.rowcount)
+
+
 def get_decision(decision_id: int) -> dict | None:
     """Return a single decision row as a dict (or None if missing)."""
     if not decision_id:
@@ -221,11 +276,17 @@ def get_decision(decision_id: int) -> dict | None:
 
 __all__ = [
     "ACTION_TAKEN_MAX_CHARS",
+    "OUTCOME_FAILED",
+    "OUTCOME_NO_ACTION",
+    "OUTCOME_TIMED_OUT",
     "SITUATION_SUMMARY_MAX_CHARS",
     "backfill_outcome_for_strategy",
+    "close_cycle_outcome",
+    "decision_id_for_cycle",
     "get_active_decision_id",
     "get_decision",
     "link_agent_task",
+    "linked_task_count",
     "record_decision",
     "reset_active_decision_id",
     "set_active_decision_id",

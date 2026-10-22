@@ -134,14 +134,31 @@
 	const BUTTON =
 		'rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 transition-colors hover:border-sc-ink hover:text-sc-ink disabled:cursor-not-allowed disabled:opacity-50';
 
+	const OUTCOME_LABELS: Record<string, string> = {
+		no_action: 'no action',
+		timed_out: 'timed out',
+		failed: 'failed',
+		retried: 'retried',
+		running: 'running'
+	};
+
+	function rowOutcome(row: BrainDecisionRow): string {
+		return row.outcome_display ?? row.outcome_observed ?? 'pending';
+	}
+
 	function outcomeClass(value: string | null): string {
 		switch ((value ?? '').toLowerCase()) {
 			case 'success':
 				return `${CHIP} border-[#3cc48f]/40 bg-[#3cc48f]/10 text-[#3cc48f]`;
 			case 'failure':
+			case 'failed':
+			case 'timed_out':
 				return `${CHIP} border-[#e5574f]/40 bg-[#e5574f]/10 text-[#f2956f]`;
 			case 'mixed':
+			case 'retried':
 				return `${CHIP} border-[#e7b24a]/40 bg-[#e7b24a]/10 text-[#e7b24a]`;
+			case 'no_action':
+				return `${CHIP} border-sc-line bg-transparent text-sc-ink3`;
 			default:
 				return `${CHIP} border-sc-line2 bg-sc-raise text-sc-ink2`;
 		}
@@ -152,7 +169,18 @@
 		if (decision && typeof decision === 'object' && decision.action_type) {
 			return decision.action_type;
 		}
-		return row.action_taken ? 'multi-action' : '—';
+		const parts: string[] = [];
+		const tasks = row.linked_task_count ?? 0;
+		if (tasks) parts.push(`${tasks} task${tasks === 1 ? '' : 's'}`);
+		if (row.action_taken) {
+			try {
+				const calls = (JSON.parse(row.action_taken) as { tool_calls?: unknown[] }).tool_calls;
+				if (Array.isArray(calls)) parts.push(`${calls.length} tool call${calls.length === 1 ? '' : 's'}`);
+			} catch {
+				parts.push('multi-action');
+			}
+		}
+		return parts.length ? parts.join(' · ') : '—';
 	}
 
 	function formatTimestamp(value: string | null | undefined): string {
@@ -210,6 +238,9 @@
 				<option value="success">Success</option>
 				<option value="failure">Failure</option>
 				<option value="mixed">Mixed</option>
+				<option value="no_action">No action</option>
+				<option value="timed_out">Timed out</option>
+				<option value="failed">Failed</option>
 			</select>
 		</label>
 		<div class="flex gap-2">
@@ -252,8 +283,8 @@
 						<div class="flex w-full flex-wrap items-center gap-2 text-[12px]">
 							<span class="break-all font-plex-mono text-sc-ink">{row.cycle_id ?? '—'}</span>
 							<span class={`${CHIP} border-sc-line2 bg-sc-raise text-sc-ink2`}>{actionLabel(row)}</span>
-							<span class={outcomeClass(row.outcome_observed)}>
-								{row.outcome_observed ?? 'pending'}
+							<span class={outcomeClass(rowOutcome(row))}>
+								{OUTCOME_LABELS[rowOutcome(row)] ?? rowOutcome(row)}
 							</span>
 							<span class="text-[11.5px] text-sc-ink3 sm:ml-auto">{formatTimestamp(row.created_at)}</span>
 						</div>

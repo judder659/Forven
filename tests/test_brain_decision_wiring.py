@@ -86,3 +86,62 @@ def test_autonomous_brain_cycle_records_decision_and_links_tasks(forven_db, monk
 
     assert agent_task is not None
     assert int(agent_task["brain_decision_id"]) == int(decision["id"])
+    # The cycle spawned a task, so the strategy backfill still owns its outcome.
+    assert decision["outcome_observed"] is None
+
+
+def _patch_brain_cycle(monkeypatch, fake_call):
+    import forven.agents.runner as runner
+    import forven.brain as brain_mod
+    import forven.context as context_mod
+
+    monkeypatch.setattr(
+        brain_mod, "resolve_brain_provider_model", lambda *a, **k: ("openai", "gpt-5.2")
+    )
+    monkeypatch.setattr(brain_mod, "_get_completed_agent_tasks", lambda *a, **k: [])
+    monkeypatch.setattr(brain_mod, "_get_pending_post_mortems", lambda *a, **k: [])
+    monkeypatch.setattr(context_mod, "build_brain_context", lambda *a, **k: "BRAIN CTX")
+    monkeypatch.setattr(runner, "_call_with_tools", fake_call)
+
+
+def test_cycle_that_spawns_nothing_is_settled_as_no_action(forven_db, monkeypatch):
+    from forven import runtime_worker
+
+    task = _seed_brain_task()
+
+    async def fake_call(*a, **kw):
+        return ("All quiet; nothing to do.", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+
+    _patch_brain_cycle(monkeypatch, fake_call)
+    asyncio.run(runtime_worker._run_brain_task(task))
+
+    with get_db() as conn:
+        rows = conn.execute("SELECT outcome_observed, outcome_at FROM brain_decisions").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["outcome_observed"] == "no_action"
+    assert rows[0]["outcome_at"]
+
+
+def test_retried_cycle_reuses_its_decision_row(forven_db, monkeypatch):
+    from forven import runtime_worker
+
+    task = _seed_brain_task()
+    attempts = {"n": 0}
+
+    async def flaky_call(*a, **kw):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise TimeoutError("first attempt cut off")
+        return ("Second attempt finished.", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2})
+
+    _patch_brain_cycle(monkeypatch, flaky_call)
+    try:
+        asyncio.run(runtime_worker._run_brain_task(task))
+    except TimeoutError:
+        pass
+    asyncio.run(runtime_worker._run_brain_task(task))
+
+    with get_db() as conn:
+        rows = conn.execute("SELECT cycle_id, action_taken FROM brain_decisions").fetchall()
+    assert len(rows) == 1, "a retry must not write a second decision row for the same cycle"
+    assert "Second attempt finished." in json.loads(rows[0]["action_taken"])["response"]

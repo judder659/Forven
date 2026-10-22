@@ -45,7 +45,17 @@ except (TypeError, ValueError):
 _BRAIN_RATE_LIMIT_BACKOFF_SECONDS = (60, 120, 300)
 _BRAIN_TRANSIENT_BACKOFF_SECONDS = (120, 300, 900)
 _MAX_BRAIN_PROVIDER_RETRIES = 3
-_BRAIN_TASK_TIMEOUT_SECONDS = 180
+# One Brain cycle may take up to 25 tool rounds; at 15-35s per model round a
+# 180s cap cut nearly every cycle off around round 7 (2026-10-20), so cycles
+# never finished and their work was replayed by retries.
+try:
+    _BRAIN_TASK_TIMEOUT_SECONDS = float(os.environ.get("FORVEN_BRAIN_TASK_TIMEOUT_SECONDS", "600") or 600)
+except (TypeError, ValueError):
+    _BRAIN_TASK_TIMEOUT_SECONDS = 600.0
+# Autonomous cycle sources whose timeout is NOT retried: a retry replays the
+# side-effecting tools the cut-off attempt already ran (duplicate agent tasks),
+# and the keepalive seeds a fresh cycle after a quiet spell anyway.
+_BRAIN_NO_TIMEOUT_RETRY_SOURCES = frozenset({"agent_callback", "keepalive"})
 # Brain keepalive: the Brain is driven by an agent-callback chain with no
 # periodic scheduler job, and a timed-out agent-callback cycle deliberately
 # SUPPRESSES its retry (to avoid replaying side-effecting tools). That can leave
@@ -713,6 +723,42 @@ def _record_brain_spend(provider: str, model: str | None, response: object) -> N
         log.debug("brain spend accounting skipped", exc_info=True)
 
 
+def _brain_tool_call_summaries(cycle_id: str) -> list[dict]:
+    from forven.db import get_task_tool_calls
+
+    return [
+        {"tool": c.get("tool_name"), "summary": str(c.get("output_summary") or "")[:160]}
+        for c in get_task_tool_calls(cycle_id)
+    ]
+
+
+def _close_brain_decision_after_failure(task: dict, outcome: str, error_detail: str) -> None:
+    """Record what a cut-off or failed Brain cycle did before it stopped.
+
+    The cycle may already have run tools (and spawned agent tasks) when it was
+    cut off; without this its decision row showed no action and stayed
+    "pending" forever. Best-effort, never raises.
+    """
+    try:
+        from forven.brain_decisions import (
+            close_cycle_outcome,
+            decision_id_for_cycle,
+            update_action_taken,
+        )
+
+        cycle_id = f"B{int(task['id']):04d}"
+        decision_id = decision_id_for_cycle(cycle_id)
+        if not decision_id:
+            return
+        update_action_taken(decision_id, {
+            "tool_calls": _brain_tool_call_summaries(cycle_id),
+            "response": f"Cycle stopped before finishing: {error_detail}"[:1500],
+        })
+        close_cycle_outcome(decision_id, outcome)
+    except Exception:
+        log.debug("brain_decisions: failure close-out skipped for task %s", task.get("id"), exc_info=True)
+
+
 async def _run_agent_task(agent: dict, task: dict) -> dict:
     from forven.agents.runner import run_agent_task
 
@@ -901,6 +947,9 @@ async def _run_brain_task(task: dict) -> None:
     # any tasks it creates to this decision via the active-decision ContextVar;
     # action_taken is filled in after the loop from the tool audit.
     from forven.brain_decisions import (
+        OUTCOME_NO_ACTION,
+        close_cycle_outcome,
+        decision_id_for_cycle,
         record_decision,
         reset_active_decision_id,
         set_active_decision_id,
@@ -908,9 +957,12 @@ async def _run_brain_task(task: dict) -> None:
     )
 
     decision_id = 0
+    cycle_id = f"B{int(task['id']):04d}"
     try:
-        decision_id = record_decision(
-            cycle_id=f"B{int(task['id']):04d}",
+        # A retried task keeps its cycle id: reuse that row rather than writing
+        # one duplicate decision per attempt.
+        decision_id = decision_id_for_cycle(cycle_id) or record_decision(
+            cycle_id=cycle_id,
             situation_summary=(
                 f"[{source or 'headless'}] {message[:500]}"
                 + (f" | reviewing {len(review_ids)} completed agent task(s)" if review_ids else "")
@@ -922,7 +974,7 @@ async def _run_brain_task(task: dict) -> None:
         log.debug("brain_decisions: record_decision failed for task %s", task.get("id"), exc_info=True)
 
     tool_tokens = set_tool_context(
-        "brain", f"B{int(task['id']):04d}", tools_context=brain_tools_context
+        "brain", cycle_id, tools_context=brain_tools_context
     )
     decision_token = set_active_decision_id(decision_id or None)
     brain_trace: list[dict] = []
@@ -944,16 +996,13 @@ async def _run_brain_task(task: dict) -> None:
 
     if decision_id:
         try:
-            from forven.db import get_task_tool_calls
-
-            calls = get_task_tool_calls(f"B{int(task['id']):04d}")
             update_action_taken(decision_id, {
-                "tool_calls": [
-                    {"tool": c.get("tool_name"), "summary": str(c.get("output_summary") or "")[:160]}
-                    for c in calls
-                ],
+                "tool_calls": _brain_tool_call_summaries(cycle_id),
                 "response": _brain_response_text(response)[:1500],
             })
+            # Nothing spawned means nothing for the strategy backfill to
+            # resolve later: settle it now instead of leaving it "pending".
+            close_cycle_outcome(decision_id, OUTCOME_NO_ACTION)
         except Exception:
             log.debug("brain_decisions: update_action_taken failed for task %s", task.get("id"), exc_info=True)
 
@@ -1508,8 +1557,8 @@ def ensure_brain_keepalive() -> bool:
                 {
                     "source": "keepalive",
                     "message": (
-                        "Periodic brain cycle (keepalive). The Brain went idle with no "
-                        "pending work; reassess current state and continue."
+                        f"Periodic brain cycle: no Brain work for {_BRAIN_KEEPALIVE_SECONDS // 60} "
+                        "minutes, so this cycle reviews the current state and continues."
                     ),
                 },
                 priority=0,
@@ -1558,7 +1607,8 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
         import time as _time
         start_ts = _time.monotonic()
         payload = _task_payload_dict(task)
-        is_agent_callback = str(payload.get("source") or "").strip() == "agent_callback"
+        cycle_source = str(payload.get("source") or "").strip()
+        is_agent_callback = cycle_source == "agent_callback"
         try:
             from forven.async_utils import contain_process_exit
 
@@ -1585,60 +1635,78 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
                     "timed_out": isinstance(exc, asyncio.TimeoutError),
                 },
             )
-            if isinstance(exc, asyncio.TimeoutError) and is_agent_callback:
-                try:
-                    reviewed_ids = _mark_agent_callback_reviewed(payload)
-                except Exception:
-                    reviewed_ids = []
-                    log.exception(
-                        "Failed to mark agent callback task(s) reviewed after brain timeout for task=%s",
-                        task.get("id"),
+            from forven.brain_decisions import OUTCOME_FAILED, OUTCOME_TIMED_OUT
+
+            if isinstance(exc, asyncio.TimeoutError) and cycle_source in _BRAIN_NO_TIMEOUT_RETRY_SOURCES:
+                reviewed_ids: list = []
+                if is_agent_callback:
+                    try:
+                        reviewed_ids = _mark_agent_callback_reviewed(payload)
+                    except Exception:
+                        log.exception(
+                            "Failed to mark agent callback task(s) reviewed after brain timeout for task=%s",
+                            task.get("id"),
+                        )
+                    suppressed = (
+                        f"{error_detail}; automatic callback retry suppressed "
+                        f"after marking reviewed agent tasks: {reviewed_ids}"
+                    )
+                    result_text = (
+                        "Automatic agent callback timed out; retry suppressed "
+                        "to avoid duplicate downstream tool actions."
+                    )
+                else:
+                    suppressed = (
+                        f"{error_detail}; retry suppressed (the keepalive starts a "
+                        "fresh cycle after a quiet spell)"
+                    )
+                    result_text = (
+                        "Periodic Brain cycle timed out; retry suppressed to avoid "
+                        "replaying tool actions."
                     )
                 with get_db() as conn:
                     conn.execute(
                         "UPDATE tasks SET status='cancelled', error=?, completed_at=?, result=? WHERE id=?",
                         (
-                            (
-                                f"{error_detail}; automatic callback retry suppressed "
-                                f"after marking reviewed agent tasks: {reviewed_ids}"
-                            )[:500],
+                            suppressed[:500],
                             datetime.now(timezone.utc).isoformat(),
                             json.dumps(
                                 {
-                                    "response": (
-                                        "Automatic agent callback timed out; retry suppressed "
-                                        "to avoid duplicate downstream tool actions."
-                                    ),
+                                    "response": result_text,
                                     "reviewed_agent_task_ids": reviewed_ids,
                                 }
                             ),
                             task["id"],
                         ),
                     )
+                _close_brain_decision_after_failure(task, OUTCOME_TIMED_OUT, error_detail)
             elif isinstance(exc, asyncio.TimeoutError):
-                requeue_brain_task(
+                if not requeue_brain_task(
                     int(task["id"]),
                     error_detail,
                     backoff_seconds=_BRAIN_TRANSIENT_BACKOFF_SECONDS,
                     max_retries=_MAX_BRAIN_PROVIDER_RETRIES,
                     exhausted_label="Brain task timeout retries exhausted",
-                )
+                ):
+                    _close_brain_decision_after_failure(task, OUTCOME_TIMED_OUT, error_detail)
             elif _is_rate_limit_exception(exc):
-                requeue_brain_task(
+                if not requeue_brain_task(
                     int(task["id"]),
                     f"Rate-limited by provider: {error_detail[:350]}",
                     backoff_seconds=_BRAIN_RATE_LIMIT_BACKOFF_SECONDS,
                     max_retries=_MAX_BRAIN_PROVIDER_RETRIES,
                     exhausted_label="Rate-limit retries exhausted",
-                )
+                ):
+                    _close_brain_decision_after_failure(task, OUTCOME_FAILED, error_detail)
             elif is_transient_provider_exception(exc):
-                requeue_brain_task(
+                if not requeue_brain_task(
                     int(task["id"]),
                     f"Provider unavailable; requeued for retry: {error_detail[:350]}",
                     backoff_seconds=_BRAIN_TRANSIENT_BACKOFF_SECONDS,
                     max_retries=_MAX_BRAIN_PROVIDER_RETRIES,
                     exhausted_label="Provider retries exhausted",
-                )
+                ):
+                    _close_brain_decision_after_failure(task, OUTCOME_FAILED, error_detail)
             else:
                 # Non-transient terminal failure. If it's a provider-credential error
                 # on a scheduled routine, pause the routine + alert so it doesn't
@@ -1649,6 +1717,7 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
                         "UPDATE tasks SET status='failed', error=?, completed_at=? WHERE id=?",
                         (error_detail[:500], datetime.now(timezone.utc).isoformat(), task["id"]),
                     )
+                _close_brain_decision_after_failure(task, OUTCOME_FAILED, error_detail)
     return len(claimed)
 
 

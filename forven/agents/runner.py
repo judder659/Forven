@@ -585,6 +585,9 @@ def _creation_task_unregistered(state: "ExecutionState | None") -> bool:
     return not str(row["strategy_id"] or "").strip()
 
 
+_MAX_REGISTRATION_NUDGES = 3
+
+
 def _register_nudge(rounds_left: int, *, ending: bool = False) -> str:
     """The message that steers a creation task to register before it runs out."""
     lead = (
@@ -630,7 +633,10 @@ async def _call_with_tools_single(
     last_nonempty_text = ""
     _recent_tool_calls: list[tuple[str, str]] = []
     nudged_for_tool = bool(state and state.checkpoint.get("has_tools"))
-    nudged_for_registration = False
+    # Some models (MiniMax-M3.1-Flash, 2026-10-20) end a turn with "...then I
+    # register" and no tool call, repeatedly. One nudge left ~55% of creation
+    # tasks blocked, so allow a few, each still bounded by MAX_TOOL_ROUNDS.
+    registration_nudges_left = _MAX_REGISTRATION_NUDGES
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _accum(usage: dict):
@@ -693,11 +699,11 @@ async def _call_with_tools_single(
             # blocked: give it one more chance to register (or say why it cannot).
             if (
                 active_tools
-                and not nudged_for_registration
+                and registration_nudges_left > 0
                 and round_num < MAX_TOOL_ROUNDS - 1
                 and _creation_task_unregistered(state)
             ):
-                nudged_for_registration = True
+                registration_nudges_left -= 1
                 impl.append_assistant(messages, response)
                 messages.append({"role": "user", "content": _register_nudge(MAX_TOOL_ROUNDS - round_num - 1, ending=True)})
                 continue

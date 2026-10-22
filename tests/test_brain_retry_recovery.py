@@ -198,3 +198,47 @@ def test_direct_brain_chat_rate_limit_returns_retryable_error(monkeypatch):
     assert result["error_code"] == "provider_rate_limited"
     assert result["retryable"] is True
     assert "rate limiting" in result["error"]
+
+
+def test_headless_brain_keepalive_timeout_suppresses_retry_and_closes_decision(forven_db, monkeypatch):
+    from forven import runtime_worker
+    from forven.brain_decisions import record_decision
+
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO tasks (type, payload, status, priority, source, created_at)
+            VALUES ('brain_invoke', ?, 'pending', 0, 'system', ?)
+            """,
+            (json.dumps({"source": "keepalive", "message": "Periodic brain cycle"}),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        task_id = int(conn.execute("SELECT id FROM tasks ORDER BY id DESC LIMIT 1").fetchone()["id"])
+
+    async def _sleepy(task, *args, **kwargs):
+        # The real cycle writes its decision row before calling the model.
+        record_decision(cycle_id=f"B{int(task['id']):04d}", situation_summary="[keepalive]", decision_json={})
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(runtime_worker, "_run_brain_task", _sleepy)
+    monkeypatch.setattr(runtime_worker, "_headless_task_processing_allowed", lambda: True)
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr("forven.system_mode_policy.is_manual_mode", lambda: False)
+
+    processed = asyncio.run(process_brain_tasks_once())
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT status, retry_count, error FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        decision = conn.execute(
+            "SELECT outcome_observed, action_taken FROM brain_decisions WHERE cycle_id = ?",
+            (f"B{task_id:04d}",),
+        ).fetchone()
+
+    assert processed == 1
+    assert row["status"] == "cancelled"
+    assert row["retry_count"] == 0
+    assert "retry suppressed" in str(row["error"])
+    assert decision["outcome_observed"] == "timed_out"
+    assert "Cycle stopped before finishing" in str(decision["action_taken"])
