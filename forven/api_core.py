@@ -1663,18 +1663,6 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
             ("live_failed_open_cooldown_minutes", 15.0),
             ("live_failed_open_max_attempts", 3.0),
             ("live_failed_open_window_hours", 6.0),
-            # PORT-LAYER-1: portfolio allocator (forven.portfolio_allocator).
-            ("portfolio_lookback_days", 60.0),
-            ("portfolio_target_book_vol_pct", 0.0),
-            ("portfolio_min_risk_multiplier", 0.25),
-            ("portfolio_max_risk_multiplier", 2.0),
-            # PORT-LAYER-2: funding-carry basket (forven.basket_runtime).
-            ("basket_rebalance_hours", 24.0),
-            ("basket_n_legs", 5.0),
-            ("basket_gross_leverage", 1.0),
-            ("basket_universe_min_bars", 17520.0),
-            # BASKET-2: incumbency buffer on basket re-ranking (forven.basket_runtime).
-            ("basket_rank_buffer", 3.0),
             # LIVE-LOOP-1: paper→live graduation recommender (forven.live_graduation).
             ("graduation_min_soak_days", 14.0),
             ("graduation_min_paper_trades", 10.0),
@@ -1692,35 +1680,12 @@ def _apply_settings_section(section: str, payload: dict, actor: str = "ui") -> d
                 payload.get("live_correlation_budget_enabled"),
                 bool(updates.get("live_correlation_budget_enabled", True)),
             )
-        # PORT-LAYER-1 toggles (forven.portfolio_allocator).
-        if "portfolio_allocator_enabled" in payload:
-            updates["portfolio_allocator_enabled"] = _coerce_bool(
-                payload.get("portfolio_allocator_enabled"),
-                bool(updates.get("portfolio_allocator_enabled", False)),
-            )
-        if "portfolio_allocator_live" in payload:
-            updates["portfolio_allocator_live"] = _coerce_bool(
-                payload.get("portfolio_allocator_live"),
-                bool(updates.get("portfolio_allocator_live", False)),
-            )
-        # PORT-GATE-1: master switch for the whole portfolio layer.
-        if "portfolio_layer_enabled" in payload:
-            updates["portfolio_layer_enabled"] = _coerce_bool(
-                payload.get("portfolio_layer_enabled"),
-                bool(updates.get("portfolio_layer_enabled", False)),
-            )
         # LIVE-LOOP-1 toggle: graduation recommender ships dark
         # (forven.live_graduation — recommendation-only, never arms capital).
         if "live_graduation_recommender_enabled" in payload:
             updates["live_graduation_recommender_enabled"] = _coerce_bool(
                 payload.get("live_graduation_recommender_enabled"),
                 bool(updates.get("live_graduation_recommender_enabled", False)),
-            )
-        # PORT-LAYER-2 toggle (forven.basket_runtime).
-        if "basket_funding_carry_enabled" in payload:
-            updates["basket_funding_carry_enabled"] = _coerce_bool(
-                payload.get("basket_funding_carry_enabled"),
-                bool(updates.get("basket_funding_carry_enabled", False)),
             )
         # EQ-BASIS-1: whether the master wallet counts toward the live equity
         # basis when direction books are enabled (forven.daemon).

@@ -48,8 +48,7 @@ Semantics:
 Halts (two independent layers, both OPEN-only — closes are never blocked):
 * The GLOBAL trading halt (`risk.is_trading_allowed`: kill-switch / daily-loss
   halt / operator STOP). The operator's single "stop everything" control must
-  mean everything, venues included — same stance as
-  `basket_live.reconcile_basket_live`.
+  mean everything, venues included.
 * PROPR-3's account-level halt on the challenge account's own kill rules.
 
 `risk.close_all_positions` deliberately does NOT flatten Propr: it sweeps the
@@ -2205,8 +2204,7 @@ def mirror_tick() -> dict:
     # mean everything. The kill-switch / daily-loss halt / operator STOP used to
     # be invisible here, so the mirror kept placing venue orders every 60s
     # through a system-wide halt. OPEN pass only — the close pass above runs
-    # unconditionally (reducing risk is never halted), exactly as
-    # basket_live.reconcile_basket_live does it. Trades are not stamped in state,
+    # unconditionally (reducing risk is never halted). Trades are not stamped in state,
     # same rationale as the PROPR-3 halt below.
     _global_ok, _global_why = (True, "OK")
     if to_open:

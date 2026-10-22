@@ -672,14 +672,6 @@ _SETTINGS_SECTION_KNOWN_KEYS: dict[str, frozenset[str]] = {
         # RETRY-STORM-1 failed-open brake
         "live_failed_open_cooldown_minutes", "live_failed_open_max_attempts",
         "live_failed_open_window_hours",
-        # PORT-LAYER-1 allocator
-        "portfolio_layer_enabled", "portfolio_allocator_enabled",
-        "portfolio_allocator_live", "portfolio_lookback_days",
-        "portfolio_target_book_vol_pct", "portfolio_min_risk_multiplier",
-        "portfolio_max_risk_multiplier",
-        # PORT-LAYER-2 / BASKET-2 funding-carry basket
-        "basket_funding_carry_enabled", "basket_rebalance_hours", "basket_n_legs",
-        "basket_gross_leverage", "basket_universe_min_bars", "basket_rank_buffer",
         # LIVE-LOOP-1 paper->live graduation recommender
         "live_graduation_recommender_enabled", "graduation_min_soak_days",
         "graduation_min_paper_trades", "graduation_min_measured_trades",
@@ -735,15 +727,6 @@ _SETTINGS_SECTION_NUMERIC_BOUNDS: dict[str, dict[str, tuple[float, float]]] = {
         "live_failed_open_cooldown_minutes": (0.0, 10080.0),
         "live_failed_open_max_attempts": (1.0, 1000.0),
         "live_failed_open_window_hours": (0.0, 8760.0),
-        "portfolio_lookback_days": (1.0, 3650.0),
-        "portfolio_target_book_vol_pct": (0.0, 1000.0),
-        "portfolio_min_risk_multiplier": (0.0, 100.0),
-        "portfolio_max_risk_multiplier": (0.0, 100.0),
-        "basket_rebalance_hours": (0.0, 8760.0),
-        "basket_n_legs": (1.0, 100.0),
-        "basket_gross_leverage": (0.0, 100.0),
-        "basket_universe_min_bars": (0.0, 1e7),
-        "basket_rank_buffer": (0.0, 100.0),
         "graduation_min_soak_days": (0.0, 3650.0),
         "graduation_min_paper_trades": (0.0, 1e5),
         "graduation_min_measured_trades": (0.0, 1e5),

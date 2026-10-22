@@ -3,7 +3,7 @@
 	 * Renderer for `strategy_live_graduation_recommendation` (forven/live_graduation.py):
 	 *   { recommendation: { strategy_id, display_id, name, symbol, timeframe,
 	 *       evidence: { soak_days, closed_paper_trades, paper_pnl_sum, ... },
-	 *       risk_multiplier, proposed_arm_usd },
+	 *       proposed_arm_usd },
 	 *     executes_nothing: true, next_step }
 	 *
 	 * Approving records intent only. Real capital still goes through the
@@ -36,7 +36,7 @@
 	</div>
 	<div class="grid gap-2 sm:grid-cols-3">
 		<div><div class="text-sc-ink3 uppercase tracking-wider">Strategy</div><div class="text-sc-ink font-mono">{label}</div><div class="text-sc-ink3">{rec.symbol || '—'} · {rec.timeframe || '—'}</div></div>
-		<div><div class="text-sc-ink3 uppercase tracking-wider">Proposed cap</div><div class="text-sc-ink font-semibold">{money(rec.proposed_arm_usd)}</div><div class="text-sc-ink3">allocator × {num(rec.risk_multiplier, 2)}</div></div>
+		<div><div class="text-sc-ink3 uppercase tracking-wider">Proposed cap</div><div class="text-sc-ink font-semibold">{money(rec.proposed_arm_usd)}</div></div>
 		<div><div class="text-sc-ink3 uppercase tracking-wider">Paper record</div><div class="text-sc-ink">{num(evidence.soak_days)} days · {evidence.closed_paper_trades ?? '—'} trades</div><div class="text-sc-ink3">PnL {money(evidence.paper_pnl_sum)}</div></div>
 	</div>
 	{#if strategyId}

@@ -150,18 +150,17 @@ def test_strict_checklist_failure_blocks(forven_db, monkeypatch):
 
 
 def test_fully_eligible_candidate_and_arm_sizing(forven_db, monkeypatch):
-    import forven.portfolio_allocator as alloc
-
     _patch_checklist(monkeypatch, ready=True)
-    monkeypatch.setattr(alloc, "live_risk_multiplier", lambda sid: 1.5)
     _insert_paper_strategy("s-grad")
     _insert_closed_paper_trades("s-grad", 12)
     verdict = evaluate_graduation_candidate(_strategy_row("s-grad"))
     assert verdict["eligible"], verdict["reasons"]
-    # base 100 x 1.5 = 150, under the 250 cap
-    assert verdict["proposed_arm_usd"] == 150.0
+    assert verdict["proposed_arm_usd"] == 100.0  # graduation_base_arm_usd
 
-    monkeypatch.setattr(alloc, "live_risk_multiplier", lambda sid: 9.0)
+    from forven.db import kv_get, kv_set
+
+    settings = kv_get("forven:settings", {}) or {}
+    kv_set("forven:settings", {**settings, "graduation_base_arm_usd": 900})
     capped = evaluate_graduation_candidate(_strategy_row("s-grad"))
     assert capped["proposed_arm_usd"] == 250.0  # graduation_max_arm_usd cap
 

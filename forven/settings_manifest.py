@@ -136,7 +136,7 @@ def _consumer_default_registries() -> list[tuple[str, dict[str, Any]]]:
 
     Only registries whose KEYS are already the setting names are pulled in;
     nothing here re-types a key/value pair by hand. Knobs whose default lives as
-    a bare module constant (basket_runtime.DEFAULT_N_LEGS, …) or inline at the
+    a bare module constant or inline at the
     read site are deliberately left out — mapping those would reintroduce
     exactly the hand-copied table this module exists to delete. The manifest's
     own literal stays their fallback.

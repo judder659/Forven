@@ -1,3 +1,10 @@
+> **Retired 2026-10-22.** The funding-carry basket paper books, their live
+> execution path and the portfolio allocator were removed from Forven. Both
+> paper books lost money from 2026-07-07 to 2026-10-22 (Binance-ranked book
+> equity 0.735, Hyperliquid book 0.839): trading costs (~8% each) were far
+> larger than the funding they collected (~1-1.5%). This document is kept as
+> the design record only; nothing in the codebase implements it any more.
+
 # Cross-Sectional Basket Strategies — Design (2026-07-06)
 
 ## Why

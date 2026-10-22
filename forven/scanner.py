@@ -7507,25 +7507,6 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         _notify_live_open_blocked(strat_id, asset, _rg_why, "regime_gate")
         return f"BLOCKED {asset} live — {_rg_why}"
     size_fraction = _kernel_entry_fraction(strat_id, strat, pos, float(sizing_equity), leverage, execution_type="live")
-    # PORT-LAYER-1: portfolio allocation multiplier — LIVE only, double-flagged
-    # (portfolio_allocator_enabled AND portfolio_allocator_live), neutral 1.0 on
-    # any failure. Scales size_fraction, NEVER sizing_equity: equity is recorded
-    # as kernel_equity_at_entry (the PnL basis) and must stay the true account
-    # value. The scaled fraction flows through every downstream risk gate
-    # (PORT-1 budget, ceilings) so gates check what is actually deployed.
-    portfolio_multiplier = 1.0
-    try:
-        from forven.portfolio_allocator import live_risk_multiplier
-
-        portfolio_multiplier = float(live_risk_multiplier(strat_id))
-    except Exception:
-        portfolio_multiplier = 1.0
-    if portfolio_multiplier != 1.0:
-        size_fraction = min(size_fraction * portfolio_multiplier, 1.0)
-        log.info(
-            "[%s] portfolio allocator scaled live size_fraction x%.3f -> %.6f",
-            strat_id, portfolio_multiplier, size_fraction,
-        )
     # PROBATION-1: a strategy in live probation trades at its probation size
     # (forven.probation). The full-size units are kept so the exchange-minimum
     # rule below can raise a too-small order, never past full size.
@@ -7753,9 +7734,6 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         "expected_entry_price": pos.get("expected_entry_price") if getattr(action, "pending", False) else kernel_entry_price,
         "entry_reference_unavailable": bool(getattr(action, "pending", False) and pos.get("expected_entry_price") is None),
         "pending_entry": bool(getattr(action, "pending", False)),
-        # PORT-LAYER-1 attribution: the allocation multiplier applied to this
-        # fill (kernel_size_fraction above is the SCALED value actually deployed).
-        "portfolio_risk_multiplier": round(portfolio_multiplier, 4),
     }
     if probation_meta is not None:
         signal_data["probation"] = probation_meta

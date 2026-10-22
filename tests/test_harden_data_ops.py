@@ -124,13 +124,6 @@ def test_on_disk_funding_fallback_uses_the_measured_interval(tmp_path, monkeypat
     assert all(rate == pytest.approx(0.0008 / 4) for _, rate in out)
 
 
-def test_basket_lab_shares_the_one_funding_interval_helper():
-    import forven.basket_lab as bl
-
-    assert bl.funding_interval_hours_per_print is md.funding_interval_hours_per_print
-    assert bl.DEFAULT_FUNDING_INTERVAL_HOURS == md.DEFAULT_FUNDING_INTERVAL_HOURS
-
-
 def test_latest_funding_rate_uses_the_advertised_interval():
     assert md.funding_interval_hours_from_ticker({"interval": "4h"}) == 4.0
     assert md.funding_interval_hours_from_ticker({"info": {"fundingIntervalHours": 4}}) == 4.0

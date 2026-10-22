@@ -621,8 +621,7 @@ class BinancePriceFeed:
 # accrual and the paper book alike. Same class as the 2026-07-07 basket incident
 # (a single whole-file divisor inflated funding ~8x and corrupted the
 # cross-sectional ranking). Every series is now converted PER PRINT off the gap
-# to the next settlement — see funding_interval_hours_per_print, the one
-# implementation basket_lab._per_hour_funding_series also uses.
+# to the next settlement — see funding_interval_hours_per_print.
 _FUTURES_BINANCE_EXCHANGE = None
 DEFAULT_FUNDING_INTERVAL_HOURS = 8.0
 MIN_FUNDING_INTERVAL_HOURS = 1.0

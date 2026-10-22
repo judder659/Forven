@@ -4,7 +4,6 @@ export type SettingsAreaId =
   | 'home'
   | 'automation'
   | 'trading'
-  | 'portfolio'
   | 'hyperliquid'
   | 'lab'
   | 'backtesting'
@@ -90,7 +89,6 @@ export const SETTINGS_AREAS: SettingsArea[] = [
   { id: 'home', label: 'Overview', description: 'Real-money status, what still needs configuring, and recently changed settings.', deepLinks: [] },
   { id: 'automation', label: 'Automation', description: 'What Forven does on its own and what waits for you. Anything automatic can also be done by hand.', deepLinks: [] },
   { id: 'trading', label: 'Live trading & risk', description: 'Limits on real-money trading. Each field shows the value the engine actually enforces.', deepLinks: [{ label: 'Risk', href: '/risk' }] },
-  { id: 'portfolio', label: 'Portfolio', description: 'The book above the strategies: measured-risk allocation and basket products. Everything here proves itself on paper before touching live sizing.', deepLinks: [] },
   { id: 'hyperliquid', label: 'Exchange', description: 'Hyperliquid wallets, credentials, network, margin mode and long/short accounts.', deepLinks: [{ label: 'Bot Factory', href: '/bot-factory' }] },
   { id: 'lab', label: 'Strategy pipeline', description: 'The path a strategy takes, in order: quick screen, gauntlet, paper, probation, live.', deepLinks: [{ label: 'Pipeline', href: '/pipeline' }] },
   { id: 'backtesting', label: 'Backtesting', description: 'Defaults for the backtests you start and the window each pipeline stage tests on, plus research sources.', deepLinks: [] },
@@ -122,8 +120,6 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'trading-propr-mirror', area: 'trading', label: 'Propr challenge mirror', description: 'Sizing for the strategy mirror on the Propr challenge account. Roster and on/off live on the Propr page; this group only appears while the Propr integration is enabled.', deepLinkTo: '/propr' },
 
   // Portfolio — the layer above individual strategies (PORT-LAYER).
-  { id: 'portfolio-allocator', area: 'portfolio', label: 'Measured-risk allocator', description: 'Per-strategy risk multipliers from realized vol and correlations, optional book vol targeting, and the live-sizing arm. Paper sandboxes are never scaled.' },
-  { id: 'portfolio-basket', area: 'portfolio', label: 'Funding-carry basket', description: 'The forward-marked paper basket: rebalance cadence, legs, gross leverage, and universe rule. Paper only — live basket execution does not exist yet.' },
 
   // Exchange — all Hyperliquid setup. The wallets manager (sub-account
   // create/discover/fund, spot↔perp transfers) is a custom block.
@@ -580,193 +576,6 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     order: 4,
     realMoney: true,
   },
-  // PORT-LAYER-1: measured-risk portfolio allocation. Publishes per-strategy
-  // risk multipliers from realized vol + correlations; paper sandboxes are
-  // never scaled (they are the backtest-parity measurement instruments).
-  {
-    id: 'risk.portfolio_layer_enabled',
-    label: 'Portfolio layer',
-    default: false,
-    type: 'toggle',
-    area: 'system',
-    subsection: 'system-experimental',
-    backendSection: 'risk',
-    backendPath: 'portfolio_layer_enabled',
-    description:
-      'Master switch for the measured-risk allocator and funding-carry basket services. Enables their settings and background jobs. Job seeding takes effect on the next restart or scheduler reconcile.',
-    usedBy: ['forven.portfolio_allocator', 'forven.basket_runtime', 'forven.scheduler', 'forven.routers.ops'],
-    order: 1,
-  },
-  {
-    id: 'risk.portfolio_allocator_enabled',
-    label: 'Portfolio allocator',
-    default: false,
-    type: 'toggle',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_allocator_enabled',
-    description:
-      'Compute measured-risk allocation weights across the paper/live cohort every hour (realized vol, strategy correlations, optional book vol target) and publish them with a retrospective virtual-book comparison. Measurement only — sizing is unchanged until "Portfolio allocator sizes live" is also enabled.',
-    usedBy: ['forven.portfolio_allocator', 'forven.scheduler'],
-  },
-  {
-    id: 'risk.portfolio_allocator_live',
-    label: 'Portfolio allocator sizes live',
-    default: false,
-    type: 'toggle',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_allocator_live',
-    description:
-      'Apply the published risk multipliers to LIVE position sizing (scales each live entry’s size fraction; all hard risk gates still check the scaled size). Requires the allocator itself to be enabled; any unmeasured strategy or stale snapshot falls back to neutral 1.0. Paper sizing is never touched.',
-    usedBy: ['forven.scanner', 'forven.portfolio_allocator'],
-  },
-  {
-    id: 'risk.portfolio_lookback_days',
-    label: 'Portfolio allocator lookback',
-    unit: 'days',
-    default: 60,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_lookback_days',
-    description:
-      'Trailing window of realized kernel parity trades used to measure each strategy’s volatility and the strategy-pair correlations. Shorter adapts faster; longer is more stable. Minimum 14.',
-    usedBy: ['forven.portfolio_allocator'],
-  },
-  {
-    id: 'risk.portfolio_target_book_vol_pct',
-    label: 'Portfolio target book volatility',
-    unit: '%/yr',
-    default: 0,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_target_book_vol_pct',
-    description:
-      'Annualized volatility target for the combined book: all multipliers are scaled toward it (bounded by the min/max multiplier clamps). 0 disables vol targeting — weights are relative-risk only.',
-    usedBy: ['forven.portfolio_allocator'],
-  },
-  {
-    id: 'risk.portfolio_min_risk_multiplier',
-    label: 'Portfolio min risk multiplier',
-    unit: 'x',
-    default: 0.25,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_min_risk_multiplier',
-    description:
-      'Floor on any strategy’s allocation multiplier (1.0 = the legacy flat allocation). Stops the allocator from starving a strategy below a usable size.',
-    usedBy: ['forven.portfolio_allocator'],
-  },
-  {
-    id: 'risk.portfolio_max_risk_multiplier',
-    label: 'Portfolio max risk multiplier',
-    unit: 'x',
-    default: 2.0,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-allocator',
-    backendSection: 'risk',
-    backendPath: 'portfolio_max_risk_multiplier',
-    description:
-      'Ceiling on any strategy’s allocation multiplier. Bounds how much extra risk the allocator can concentrate into one strategy, independent of the hard per-trade risk caps (which always apply to the scaled size).',
-    usedBy: ['forven.portfolio_allocator'],
-  },
-
-  // PORT-LAYER-2: funding-carry basket — a forward-marked PAPER book running
-  // the Phase 0 validated carry strategy (short highest funding, long lowest,
-  // dollar-neutral). Never places orders; live basket execution is a later phase.
-  {
-    id: 'risk.basket_funding_carry_enabled',
-    label: 'Funding-carry basket (paper)',
-    default: false,
-    type: 'toggle',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_funding_carry_enabled',
-    description:
-      'Run the funding-carry basket as a forward-marked paper book: hourly marks + funding accrual from the data lake, rebalances on its own cadence, PnL decomposed into price vs funding vs cost. Paper only — no orders are ever placed. The prove-it stage for the carry edge validated in research.',
-    usedBy: ['forven.basket_runtime', 'forven.scheduler'],
-  },
-  {
-    id: 'risk.basket_rebalance_hours',
-    label: 'Basket rebalance cadence',
-    unit: 'h',
-    default: 24,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_rebalance_hours',
-    description:
-      'Hours between basket rebalances. Research verdict: 24h keeps essentially all of the carry edge at one third the turnover cost of 8h.',
-    usedBy: ['forven.basket_runtime'],
-  },
-  {
-    id: 'risk.basket_n_legs',
-    label: 'Basket legs per side',
-    unit: 'legs',
-    default: 5,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_n_legs',
-    description:
-      'Number of perps held on each side (long lowest-funding, short highest-funding). More legs diversifies idiosyncratic moves but dilutes the funding spread captured.',
-    usedBy: ['forven.basket_runtime'],
-  },
-  {
-    id: 'risk.basket_gross_leverage',
-    label: 'Basket gross leverage',
-    unit: 'x',
-    default: 1.0,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_gross_leverage',
-    description:
-      'Total gross exposure of the basket as a multiple of its equity (split equally across all legs, dollar-neutral). 1.0 = 50% long + 50% short.',
-    usedBy: ['forven.basket_runtime'],
-  },
-  {
-    id: 'risk.basket_rank_buffer',
-    label: 'Basket rank buffer (incumbency)',
-    unit: 'ranks',
-    default: 3,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_rank_buffer',
-    description:
-      'How far past the plain top/bottom cut a HELD leg may drift before being swapped out. Re-validation showed most basket turnover was marginal rank flicker, not signal — a buffer of 3 cut turnover ~27% with the same gross carry. 0 = rebuild from scratch every rebalance.',
-    usedBy: ['forven.basket_runtime', 'forven.basket_lab'],
-  },
-  {
-    id: 'risk.basket_universe_min_bars',
-    label: 'Basket universe min history',
-    unit: 'bars',
-    default: 17520,
-    type: 'number',
-    area: 'portfolio',
-    subsection: 'portfolio-basket',
-    backendSection: 'risk',
-    backendPath: 'basket_universe_min_bars',
-    description:
-      'Minimum 1h bars of lake history a perp needs to enter the basket universe. The default (2 years) mirrors the deep-universe rule the research verdict was validated on; lowering it admits younger listings the edge was not tested against.',
-    usedBy: ['forven.basket_runtime'],
-  },
-
   // Risk: failed-open retry brake (RETRY-STORM-1). A live open the exchange
   // rejects is re-attempted by the kernel every scan; these bound the retries.
   {
@@ -3047,7 +2856,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'risk',
     backendPath: 'graduation_base_arm_usd',
     description:
-      'Starting notional proposed for a graduating strategy, scaled by the portfolio allocator’s measured risk multiplier.',
+      'Starting notional proposed for a graduating strategy.',
     usedBy: ['forven.live_graduation'],
     order: 5,
   },

@@ -95,32 +95,12 @@ _DEFAULT_JOB_IDS = {
     "forven-param-optimization",
 }
 
-# PORT-GATE-1: the portfolio layer's jobs exist only while its master switch is
-# on — seeding them unconditionally would leak the dark feature's existence on
-# the scheduler page. _default_job_ids() folds them in when enabled, so
-# reconcile_forven_jobs REMOVES them when the layer is later disabled and
-# RESTORES them (via reseed) when it's enabled. Flipping the flag takes effect
-# on the next scheduler reconcile or restart.
-_PORTFOLIO_JOB_IDS = {
-    "forven-portfolio-allocation",
-    "forven-basket-funding-carry",
-}
-
-# PROPR-1: same dark-feature treatment as the portfolio jobs — the mirror job
-# exists only while the hidden Propr flag is on, so the scheduler page leaks
-# nothing while it's off.
+# PROPR-1: the Propr mirror job exists only while the hidden Propr flag is
+# on, so the scheduler page leaks nothing while it's off. reconcile_forven_jobs
+# removes it when the flag is later disabled and restores it when re-enabled.
 _PROPR_JOB_IDS = {
     "forven-propr-mirror",
 }
-
-
-def _portfolio_layer_on() -> bool:
-    try:
-        from forven.portfolio_allocator import portfolio_layer_enabled
-
-        return bool(portfolio_layer_enabled())
-    except Exception:
-        return False
 
 
 def _propr_on() -> bool:
@@ -134,8 +114,6 @@ def _propr_on() -> bool:
 
 def _default_job_ids() -> set[str]:
     ids = set(_DEFAULT_JOB_IDS)
-    if _portfolio_layer_on():
-        ids |= _PORTFOLIO_JOB_IDS
     if _propr_on():
         ids |= _PROPR_JOB_IDS
     return ids
@@ -1590,24 +1568,11 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             log.info("Regime update job refreshed market_pot for %d deployed strategy rows", updated)
             return "ok", None
 
-        # PORT-LAYER-1: measured-risk portfolio allocation snapshot. Internally
-        # flag-gated (no-op unless portfolio_allocator_enabled) and fail-soft.
-        if kind == "portfolio_allocation_refresh":
-            from forven.portfolio_allocator import refresh_portfolio_allocation
-            snapshot = await _run_sync_job(refresh_portfolio_allocation)
-            if snapshot is None:
-                return "ok", "allocator disabled or refresh skipped"
-            return "ok", None
-
-        # PORT-LAYER-2: funding-carry basket forward paper tick. Internally
-        # flag-gated (no-op unless basket_funding_carry_enabled) and fail-soft;
-        # marks/accrues hourly, rebalances on its own cadence (default 24h).
-        if kind == "basket_funding_carry_tick":
-            from forven.basket_runtime import run_basket_tick
-            report = await _run_sync_job(run_basket_tick)
-            if report is None:
-                return "ok", "basket disabled or tick skipped"
-            return "ok", None
+        # The portfolio allocator and funding-carry basket were retired
+        # (2026-10-22). reconcile_forven_jobs reaps their job rows; one that
+        # runs before that is a no-op.
+        if kind in ("portfolio_allocation_refresh", "basket_funding_carry_tick"):
+            return "ok", "portfolio layer retired"
 
         # Universe paper books were retired (2026-10-21). reconcile_forven_jobs
         # reaps the job row; one that runs before that is a no-op.
@@ -2137,8 +2102,7 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             return "ok", None
 
         # Hyperliquid funding snapshot (PORT-HLFUND-1): one info call captures
-        # every HL perp's current hourly funding — the series the HL-native
-        # basket ranks/accrues on. It stays a fixed hourly job because a
+        # every HL perp's current hourly funding into the lake. It stays a fixed hourly job because a
         # missed hour can never be fetched later; the venue candles this job
         # used to collect are refreshed by the SLA collector.
         if kind == "hl_venue_collect":
@@ -3248,30 +3212,6 @@ def seed_forven_jobs():
         payload={"kind": "testnet_execution_harness"},
     )
 
-    # PORT-GATE-1: the portfolio layer's jobs are seeded only while its master
-    # switch is on (see _default_job_ids — reconcile removes/restores them when
-    # the flag flips). Each job is additionally no-op unless its own toggle is
-    # enabled, and correlations/panels are cached so the hourly cadence is cheap.
-    if _portfolio_layer_on():
-        add_job(
-            job_id="forven-portfolio-allocation",
-            name="Portfolio Allocation Refresh",
-            schedule_type="interval",
-            schedule_expr="3600000",
-            command="portfolio-allocation",
-            timezone_str="UTC",
-            payload={"kind": "portfolio_allocation_refresh"},
-        )
-        add_job(
-            job_id="forven-basket-funding-carry",
-            name="Funding-Carry Basket Paper Tick",
-            schedule_type="interval",
-            schedule_expr="3600000",
-            command="basket-funding-carry",
-            timezone_str="UTC",
-            payload={"kind": "basket_funding_carry_tick"},
-        )
-
     # PROPR-1: the strategy-mirror observer exists only while the hidden Propr
     # flag is on. The tick itself is a cheap no-op unless the mirror toggle is
     # enabled AND the roster is non-empty, so a 60s cadence costs nothing idle.
@@ -3674,9 +3614,10 @@ def reconcile_forven_jobs() -> dict[str, int]:
     # after the Data Manager rebuild ships. Idempotent.
     migrate_data_sla_collector()
     migrate_probation_watchdog()
-    # PORT-GATE-1: expected ids are dynamic — the portfolio layer's jobs count
-    # as defaults only while its master switch is on, so disabling the layer
-    # reaps its jobs here and re-enabling restores them via the reseed below.
+    # Expected ids are dynamic — the Propr mirror job counts as a default only
+    # while its flag is on, so disabling it reaps the job here and re-enabling
+    # restores it via the reseed below. Retired jobs (portfolio allocator,
+    # funding-carry basket, universe books) are reaped the same way.
     expected_ids = _default_job_ids()
     with get_db() as conn:
         existing = {row["id"] for row in conn.execute("SELECT id FROM scheduler_jobs")}
