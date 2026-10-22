@@ -87,6 +87,56 @@ class TestAgentTaskRecovery:
         assert "16 minutes" in str(by_type[("quant-researcher", "research")]["error"])
         assert by_type[("simulation-agent", "backtest")]["status"] == "running"
 
+    def test_reaper_spares_a_slow_run_that_is_still_making_progress(self, forven_db):
+        """Timeout means no progress for that long, so slow/local models are not reaped."""
+        import json
+
+        from forven.task_timeouts import AGENT_TASK_PROGRESS_KV_PREFIX
+
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=40)).isoformat()
+        with get_db() as conn:
+            self._ensure_agent(conn)
+            ids = []
+            for title in ("Working", "Stuck", "Endless"):
+                cur = conn.execute(
+                    "INSERT INTO agent_tasks (agent_id, type, title, description, status, created_at, started_at) "
+                    "VALUES ('quant-researcher', 'research', ?, 'desc', 'running', ?, ?)",
+                    (title, started, started),
+                )
+                ids.append(int(cur.lastrowid))
+            working, stuck, endless = ids
+            conn.execute(
+                "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+                (f"{AGENT_TASK_PROGRESS_KV_PREFIX}{working}", json.dumps("x"),
+                 (now - timedelta(minutes=2)).isoformat()),
+            )
+            conn.execute(
+                "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+                (f"{AGENT_TASK_PROGRESS_KV_PREFIX}{stuck}", json.dumps("x"),
+                 (now - timedelta(minutes=30)).isoformat()),
+            )
+            # Past the 4x ceiling (60 min for a 15 min research timeout) even
+            # though it reported progress just now.
+            long_ago = (now - timedelta(minutes=90)).isoformat()
+            conn.execute("UPDATE agent_tasks SET started_at = ? WHERE id = ?", (long_ago, endless))
+            conn.execute(
+                "INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+                (f"{AGENT_TASK_PROGRESS_KV_PREFIX}{endless}", json.dumps("x"), now.isoformat()),
+            )
+
+        reaped = reap_long_running_agent_tasks(timeout_minutes=31)
+
+        with get_db() as conn:
+            status = {
+                int(r["id"]): r["status"]
+                for r in conn.execute("SELECT id, status FROM agent_tasks").fetchall()
+            }
+        assert reaped == 2
+        assert status[working] == "running"
+        assert status[stuck] == "failed"
+        assert status[endless] == "failed"
+
 
 class TestContextVarIsolation:
     """_current_agent_id uses ContextVar for thread/task safety."""
@@ -310,7 +360,7 @@ def test_agent_task_timeout_requeues_non_execution_work(forven_db, monkeypatch):
             (task["id"],),
         ).fetchone()
 
-    assert result["error"] == "AI/provider timeout after 0.01s"
+    assert result["error"].startswith("AI/provider timeout after 0.01s without progress")
     assert row["status"] == "pending"
     assert row["retry_count"] == 1
     assert "AI/provider timeout after 0.01s" in str(row["error"])
@@ -439,3 +489,41 @@ def test_recover_dangling_runtime_tasks_requeues_brain_and_respects_manual_mode(
     assert row["claimed_at"] is None
     assert row["completed_at"] is None
     assert "process restarted" in str(row["error"]).lower()
+
+
+def test_agent_run_that_keeps_progressing_outlives_its_timeout(forven_db, monkeypatch):
+    """A slow model that keeps making progress is not cut off at the timeout."""
+    from forven.agents.progress import note_progress
+
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO agents (id, name, role, created_at) "
+            "VALUES ('quant-researcher', 'Quant Researcher', 'researcher', datetime('now'))"
+        )
+        cur = conn.execute(
+            "INSERT INTO agent_tasks (agent_id, type, title, description, status, created_at) "
+            "VALUES ('quant-researcher', 'research', 'Slow but steady', 'desc', 'pending', ?)",
+            (now,),
+        )
+        task = dict(conn.execute("SELECT * FROM agent_tasks WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+    async def _slow_inner(*args, **kwargs):
+        for _ in range(6):  # 6 x 0.03s, well past the 0.05s no-progress limit in total
+            await asyncio.sleep(0.03)
+            note_progress()
+        return {"ok": True}
+
+    monkeypatch.setattr(runner, "_check_task_owner", lambda *args, **kwargs: (None, True))
+    monkeypatch.setattr(runner, "_run_agent_task_inner", _slow_inner)
+    monkeypatch.setattr(runner, "resolve_agent_task_timeout_seconds", lambda *args, **kwargs: 0.05)
+    monkeypatch.setattr(runner, "resolve_agent_task_max_seconds", lambda *args, **kwargs: 5.0)
+    monkeypatch.setattr(runner, "log_activity", lambda *args, **kwargs: None)
+
+    result = asyncio.run(
+        runner.run_agent_task(
+            {"id": "quant-researcher", "name": "Quant Researcher", "model": "openai", "model_id": "gpt-5.2"},
+            task,
+        )
+    )
+    assert result == {"ok": True}

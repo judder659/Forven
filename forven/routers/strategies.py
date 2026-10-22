@@ -950,7 +950,7 @@ def lab_now_working():
     """
     from forven.db import get_db, kv_get
     from forven.system_mode_policy import SYSTEM_SOURCE, USER_SOURCE, is_manual_mode
-    from forven.task_timeouts import resolve_agent_task_timeout_seconds
+    from forven.task_timeouts import AGENT_TASK_PROGRESS_KV_PREFIX, resolve_agent_task_timeout_seconds
     import datetime as _dt
 
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -979,23 +979,28 @@ def lab_now_working():
                 t.title        AS task_title,
                 t.status       AS task_status,
                 t.started_at   AS started_at,
-                t.created_at   AS task_created_at
+                t.created_at   AS task_created_at,
+                kp.updated_at  AS progress_at
             FROM agent_tasks t
             LEFT JOIN strategies s ON s.id = t.strategy_id
+            LEFT JOIN kv kp ON kp.key = ? || t.id
             {where_clause}
             ORDER BY t.created_at ASC
             """
             ,
-            tuple(params),
+            (AGENT_TASK_PROGRESS_KV_PREFIX, *params),
         ).fetchall()
 
     out: list[dict] = []
     for row in rows:
+        # Stalled = no progress for the task's timeout (a slow run that is
+        # still working stamps a progress heartbeat and is not stalled).
         started_at = row["started_at"] or row["task_created_at"]
+        last_activity = max(str(row["progress_at"] or ""), str(started_at or "")) or None
         stalled = False
         try:
-            if started_at:
-                ts = _dt.datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+            if last_activity:
+                ts = _dt.datetime.fromisoformat(str(last_activity).replace("Z", "+00:00"))
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=_dt.timezone.utc)
                 stale_after_seconds = resolve_agent_task_timeout_seconds(

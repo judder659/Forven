@@ -13,6 +13,9 @@ MAX_TASK_TIMEOUT_SECONDS = 7200
 MAX_STALE_RECOVERY_MINUTES = 240
 REAPER_GRACE_MINUTES = 1
 STALE_RECOVERY_GRACE_MINUTES = 5
+# KV key prefix holding a running agent task's last progress time (stamped by
+# the runner), so the reaper does not fail a slow run that is still working.
+AGENT_TASK_PROGRESS_KV_PREFIX = "agent_task_progress:"
 
 
 def coerce_timeout_seconds(
@@ -47,6 +50,22 @@ def resolve_agent_task_timeout_seconds(
     if lowered in {"backtest", "simulation", "robustness"}:
         return backtest_timeout
     return default_timeout
+
+
+# The per-type timeout above is how long a run may go WITHOUT PROGRESS (no
+# model reply, no finished tool call). A run that keeps progressing may go
+# longer — slow and local models need it — up to this multiple of it.
+AGENT_TASK_CEILING_MULTIPLIER = 4
+
+
+def resolve_agent_task_max_seconds(
+    task_type: str,
+    *,
+    settings: Mapping[str, Any] | None = None,
+) -> int:
+    """Total safety ceiling for one agent run that keeps making progress."""
+    stall = resolve_agent_task_timeout_seconds(task_type, settings=settings)
+    return max(stall, min(MAX_TASK_TIMEOUT_SECONDS, stall * AGENT_TASK_CEILING_MULTIPLIER))
 
 
 def max_agent_task_timeout_seconds(settings: Mapping[str, Any] | None = None) -> int:

@@ -198,6 +198,20 @@ def _resolve_agent_task_timeout_seconds(task: dict) -> int:
     return resolve_agent_task_timeout_seconds(task_type, settings=settings)
 
 
+def _resolve_agent_task_outer_timeout_seconds(task: dict) -> float:
+    """Backstop around the runner's own progress watchdog.
+
+    The runner cuts a run off after its timeout passes with no progress, or at
+    its safety ceiling; this outer limit only catches a runner that never
+    returns, so it sits just past that ceiling.
+    """
+    from forven.task_timeouts import AGENT_TASK_CEILING_MULTIPLIER, MAX_TASK_TIMEOUT_SECONDS
+
+    stall = _resolve_agent_task_timeout_seconds(task)
+    ceiling = max(stall, min(MAX_TASK_TIMEOUT_SECONDS, stall * AGENT_TASK_CEILING_MULTIPLIER))
+    return float(ceiling) + 60.0
+
+
 def _json_safe_task_output(value: object) -> object:
     if isinstance(value, bool) or value is None:
         return value
@@ -1367,7 +1381,7 @@ async def process_agent_tasks_once(concurrency: int = 5) -> int:
             from forven.async_utils import contain_process_exit
 
             async with sem:
-                timeout_seconds = _resolve_agent_task_timeout_seconds(task)
+                timeout_seconds = _resolve_agent_task_outer_timeout_seconds(task)
                 try:
                     await asyncio.wait_for(
                         contain_process_exit(_run_agent_task(agent, task)),
@@ -1586,57 +1600,16 @@ def ensure_brain_keepalive() -> bool:
         return False
 
 
-class _BrainCycleStalled(asyncio.TimeoutError):
-    """A Brain cycle made no progress for too long (or hit the safety ceiling)."""
-
-
 async def _run_with_progress_watchdog(coro):
-    """Run one Brain cycle, cutting it off only when it stops making progress.
+    """Run one Brain cycle, cutting it off only when it stops making progress."""
+    from forven.agents.progress import run_with_progress_watchdog
 
-    The runner reports each model response and finished tool call; the cycle
-    is cancelled after ``_BRAIN_TASK_TIMEOUT_SECONDS`` without either, or once
-    it has run ``_BRAIN_TASK_MAX_SECONDS`` in total.
-    """
-    import time as _time
-
-    from forven.agents.progress import new_tracker, reset_tracker, set_tracker
-
-    tracker = new_tracker()
-    token = set_tracker(tracker)
-    try:
-        # The task copies the current context, so the runner sees this tracker.
-        future = asyncio.ensure_future(coro)
-    finally:
-        reset_tracker(token)
-    started = _time.monotonic()
-    while True:
-        now = _time.monotonic()
-        stall_left = _BRAIN_TASK_TIMEOUT_SECONDS - (now - tracker["last"])
-        total_left = _BRAIN_TASK_MAX_SECONDS - (now - started)
-        if stall_left <= 0 or total_left <= 0:
-            future.cancel()
-            try:
-                await future
-            except (asyncio.CancelledError, Exception):
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    raise  # the worker itself is shutting down, not just this cycle
-            if total_left <= 0:
-                raise _BrainCycleStalled(
-                    f"Brain task timeout after {_BRAIN_TASK_MAX_SECONDS:.2f}s (cycle safety ceiling, "
-                    f"{tracker['events']} steps done)"
-                )
-            raise _BrainCycleStalled(
-                f"Brain task timeout after {_BRAIN_TASK_TIMEOUT_SECONDS:.2f}s without progress "
-                f"({tracker['events']} steps done)"
-            )
-        try:
-            done, _ = await asyncio.wait({future}, timeout=min(stall_left, total_left))
-        except asyncio.CancelledError:
-            future.cancel()  # never leave the cycle running orphaned
-            raise
-        if done:
-            return future.result()
+    return await run_with_progress_watchdog(
+        coro,
+        stall_seconds=_BRAIN_TASK_TIMEOUT_SECONDS,
+        max_seconds=_BRAIN_TASK_MAX_SECONDS,
+        label="Brain task timeout",
+    )
 
 
 async def process_brain_tasks_once(limit: int | None = None) -> int:
@@ -1679,7 +1652,9 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
             await _run_with_progress_watchdog(contain_process_exit(_run_brain_task(task)))
         except Exception as exc:
             elapsed = _time.monotonic() - start_ts
-            if isinstance(exc, _BrainCycleStalled):
+            from forven.agents.progress import ProgressStalled
+
+            if isinstance(exc, ProgressStalled):
                 error_detail = str(exc)
             elif isinstance(exc, asyncio.TimeoutError):
                 error_detail = f"Brain task timeout after {elapsed:.2f}s"
