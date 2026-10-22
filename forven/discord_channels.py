@@ -2,52 +2,109 @@
 
 Lives outside ``forven/bot.py`` so API code (e.g. the /routines channel
 dropdown) can resolve aliases without importing the discord package.
-Defaults are overridden by config.json ``discord_channels``.
+
+No channel ids ship with Forven: every install talks to its own Discord
+server. An alias resolves, in order, to:
+
+1. the id set for it in config.json ``discord_channels``;
+2. a channel on the bot's server whose name matches the alias (or one of
+   its fallback names, e.g. ``heartbeat`` -> ``#alerts``);
+3. the ``general`` channel, else the first channel the bot can post to.
+
+Steps 2 and 3 use the channel list the bot publishes when it connects, so
+alerts reach a fresh install's server with no channel setup at all.
 """
 from __future__ import annotations
 
 from forven.config import load_config
 
-DEFAULT_CHANNELS = {
-    "general": "1472929176213393505",
-    "ops": "1473714175300603924",
-    "approvals": "1473006244171354123",
-    "risk": "1473006244171354123",
-    "morning-brief": "1473323213143539868",
-    "evening-brief": "1473323214083199093",
-    "evening-summary": "1473323214083199093",
-    "chat": "1473412370528338003",
-    "heartbeat": "1473654720735481947",
-    "development": "1473714175300603924",
-    "strategies": "1473006243147808829",
-    "alerts": "1473006244171354123",
-    "research": "1473006245211275304",
-    "backtesting": "1473036255716577420",
-    "paper-trades": "1473036257625112808",
-    "market-data": "1473036258962968842",
-    "autopilot": "1473036260103815351",
-    "news": "1473036261345202340",
-    "full-stack-engineer": "1474937376928301169",
-    # Backward-compatible aliases that collapse old room-specific names onto the
-    # reduced notification/channel model.
-    "quant-researcher": "1473006245211275304",
-    "back-test-engineer": "1473036255716577420",
-    "risk-manager": "1473006244171354123",
-    "sentiment": "1473036261345202340",
-    "full-stack-engineers": "1473714175300603924",
+# Alias -> server channel names it may land in, best match first. Old
+# room-specific aliases collapse onto the reduced notification/channel model.
+CHANNEL_ALIASES: dict[str, tuple[str, ...]] = {
+    "general": ("general",),
+    "ops": ("ops", "development"),
+    "approvals": ("approvals", "alerts"),
+    "risk": ("risk", "alerts"),
+    "morning-brief": ("morning-brief", "briefs"),
+    "evening-brief": ("evening-brief", "evening-summary", "briefs"),
+    "evening-summary": ("evening-summary", "evening-brief", "briefs"),
+    "chat": ("chat",),
+    "heartbeat": ("heartbeat", "alerts"),
+    "development": ("development", "ops"),
+    "strategies": ("strategies",),
+    "alerts": ("alerts",),
+    "research": ("research", "quant-researcher"),
+    "backtesting": ("backtesting", "backtest-engineer", "back-test-engineer"),
+    "paper-trades": ("paper-trades", "trades"),
+    "market-data": ("market-data",),
+    "autopilot": ("autopilot",),
+    "news": ("news", "sentiment"),
+    "full-stack-engineer": ("full-stack-engineer", "development"),
+    "quant-researcher": ("quant-researcher", "research"),
+    "back-test-engineer": ("back-test-engineer", "backtest-engineer", "backtesting"),
+    "risk-manager": ("risk-manager", "risk", "alerts"),
+    "sentiment": ("sentiment", "sentiment-analyst", "news"),
+    "full-stack-engineers": ("full-stack-engineers", "development", "ops"),
 }
 
+# Conversational reply channels must be a real match, never the catch-all.
+_NO_FALLBACK = frozenset({"chat"})
 
-def load_channel_map() -> dict[str, str]:
-    """Alias -> channel-id map with config.json overrides applied."""
-    cfg = load_config()
-    overrides = cfg.get("discord_channels", {}) or {}
-    return {**DEFAULT_CHANNELS, **overrides}
+
+def _configured_overrides() -> dict[str, str]:
+    try:
+        raw = load_config().get("discord_channels") or {}
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k): str(v).strip() for k, v in raw.items() if str(v or "").strip()}
+
+
+def load_channel_map(*, fallback: bool = True) -> dict[str, str]:
+    """Alias -> channel-id map for this install.
+
+    With ``fallback=False`` only configured or name-matched aliases appear,
+    so callers can tell a real channel from the catch-all.
+    """
+    overrides = _configured_overrides()
+    live = available_channels() or []
+    by_name: dict[str, str] = {}
+    for entry in live:
+        by_name.setdefault(entry["name"].lower(), entry["id"])
+
+    default_id = overrides.get("general") or by_name.get("general")
+    if not default_id and live:
+        default_id = live[0]["id"]
+
+    out: dict[str, str] = {}
+    for alias in {*CHANNEL_ALIASES, *overrides}:
+        channel_id = overrides.get(alias)
+        if not channel_id:
+            for name in CHANNEL_ALIASES.get(alias, (alias,)):
+                channel_id = by_name.get(name)
+                if channel_id:
+                    break
+        if not channel_id and fallback and alias not in _NO_FALLBACK:
+            channel_id = default_id
+        if channel_id:
+            out[alias] = channel_id
+    return out
+
+
+def resolve_channel_id(alias: str | None) -> str | None:
+    """Channel id for an alias (or a raw numeric id), freshly resolved."""
+    name = str(alias or "").strip()
+    if not name:
+        return None
+    if name.isdigit():
+        return name
+    return load_channel_map().get(name)
 
 
 def channel_aliases() -> list[str]:
     """Sorted alias names for UI dropdowns (aliases may share a channel id)."""
-    return sorted(load_channel_map().keys())
+    return sorted({*CHANNEL_ALIASES, *_configured_overrides()})
 
 
 # The bot gateway publishes the text channels it can actually post to (per

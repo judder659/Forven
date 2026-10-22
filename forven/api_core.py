@@ -5078,11 +5078,11 @@ def post_agent_test_discord(agent_id: str, payload: AgentDiscordTestBody | None 
             detail="Gateway Discord bot token is not configured. Configure the main bot token first, or provide one in this test request.",
         )
 
-    from forven.bot import CHANNELS
+    from forven.bot import _channel_id
     from forven.reporter import AGENT_CHANNEL_MAP
 
     channel_name = AGENT_CHANNEL_MAP.get(normalized_agent_id, "research")
-    channel_id = CHANNELS.get(channel_name)
+    channel_id = _channel_id(channel_name)
     if not channel_id:
         raise HTTPException(status_code=500, detail=f"Discord channel mapping missing for '{channel_name}'")
 
