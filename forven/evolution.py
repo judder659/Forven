@@ -1325,9 +1325,14 @@ _GAUNTLET_UNPROMOTABLE_DAYS = 2.0
 # "tested and failed". A freshly-entered strategy legitimately fails these until
 # the gauntlet workflow runs its validations, so the un-promotable backstop must
 # NOT archive on them (that would kill strategies merely queued behind a backed-up
-# pipeline). "Ordering violation" / stale-freshness / quality rejects all imply the
-# artifacts DO exist, so those remain archivable.
+# pipeline). Quality rejects imply the artifacts DO exist, so those remain
+# archivable. "Ordering violation" / stale-freshness do NOT: they mean the tests
+# need a re-run (policy's stale_validation, an evidence-absence code everywhere
+# else), and archiving on them killed a 5/5-passing strategy whose only "fault"
+# was an agent re-optimizing it (S19944, 2026-10-22).
 _PENDING_EVIDENCE_GATE_MARKERS = (
+    "ordering violation",
+    "stale validation tests",
     "requires at least one persisted",
     "no gauntlet metrics",
     "canonical backtest",

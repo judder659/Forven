@@ -1337,6 +1337,49 @@ def _latest_genuine_optimization_time(conn, strategy_id: str) -> str:
     return _latest_genuine_result_time(conn, strategy_id, "optimization")
 
 
+def _current_params_hash_for_ordering(conn, strategy_id: str) -> str | None:
+    """Fingerprint of the strategy's CURRENT params (None when unknown)."""
+    try:
+        from forven.util import params_fingerprint
+
+        row = conn.execute("SELECT params FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        return params_fingerprint(row["params"] if row else None)
+    except Exception:
+        return None
+
+
+def _has_genuine_current_params_result(
+    conn, strategy_id: str, result_type: str, current_params_hash: str | None
+) -> bool:
+    """True when a GENUINE ``result_type`` row was validated on exactly the
+    strategy's current params (its stamped ``params_hash`` matches).
+
+    Such a verdict describes the strategy as it stands, so a LATER optimization
+    that did not change the params (an agent's exploratory re-optimization, or one
+    whose best params were not adopted) cannot make it stale. This is the same
+    evidence the gate's verdict reader prefers (see _extract_gauntlet_verdict_payloads),
+    so the ordering check now agrees with what the gate actually scores. Rows
+    without a stamped hash (legacy) keep the timestamp rule.
+    """
+    if not current_params_hash:
+        return False
+    rows = conn.execute(
+        """SELECT metrics_json, config_json FROM backtest_results
+           WHERE strategy_id = ?
+             AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = ?
+             AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+             AND json_valid(COALESCE(config_json, ''))
+             AND json_extract(config_json, '$.params_hash') = ?""",
+        (strategy_id, str(result_type or "").strip().lower(), current_params_hash),
+    ).fetchall()
+    for row in rows:
+        metrics_blob = _parse_json_blob(row["metrics_json"], {})
+        config_blob = _parse_json_blob(row["config_json"], {})
+        if not is_nonresult_validation_row(metrics_blob, config_blob):
+            return True
+    return False
+
+
 def _check_confirmation_backtest(strategy_id: str) -> tuple[bool, str]:
     """Verify a full backtest exists that was run AFTER the latest optimization.
 
@@ -1384,9 +1427,14 @@ def _check_artifact_ordering(strategy_id: str, required_types: list[str] | None 
     validation_types = sorted(required) if required else list(_GAUNTLET_VALIDATION_TYPES)
     with get_db() as conn:
         opt_time = _latest_genuine_optimization_time(conn, strategy_id)
+        params_hash = _current_params_hash_for_ordering(conn, strategy_id) if opt_time else None
         for vt in validation_types:
             vt_time = _latest_genuine_result_time(conn, strategy_id, vt)
             if vt_time and opt_time and vt_time < opt_time:
+                # Validated on the exact current params: a later optimization that
+                # left the params unchanged does not invalidate it (S19944).
+                if _has_genuine_current_params_result(conn, strategy_id, vt, params_hash):
+                    continue
                 return False, GateRejection(
                     f"Ordering violation: {vt} was run before optimization — re-run after optimization",
                     reason_code="stale_validation",
@@ -1417,12 +1465,15 @@ def _check_validation_freshness(strategy_id: str, required_types: list[str] | No
     validation_types = sorted(required) if required else list(_GAUNTLET_VALIDATION_TYPES)
     stale = []
     with get_db() as conn:
+        params_hash = _current_params_hash_for_ordering(conn, strategy_id)
         for vt in validation_types:
             # Genuine rows only: an errored/timed-out newer re-run must not make
             # the verdict the gate actually reads (an older genuine run) look
             # fresh against the optimization baseline.
             vt_time = _latest_genuine_result_time(conn, strategy_id, vt)
             if vt_time and vt_time < baseline:
+                if _has_genuine_current_params_result(conn, strategy_id, vt, params_hash):
+                    continue
                 stale.append(vt)
 
     if stale:
