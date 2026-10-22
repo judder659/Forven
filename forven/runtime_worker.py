@@ -45,13 +45,24 @@ except (TypeError, ValueError):
 _BRAIN_RATE_LIMIT_BACKOFF_SECONDS = (60, 120, 300)
 _BRAIN_TRANSIENT_BACKOFF_SECONDS = (120, 300, 900)
 _MAX_BRAIN_PROVIDER_RETRIES = 3
-# One Brain cycle may take up to 25 tool rounds; at 15-35s per model round a
-# 180s cap cut nearly every cycle off around round 7 (2026-10-20), so cycles
-# never finished and their work was replayed by retries.
-try:
-    _BRAIN_TASK_TIMEOUT_SECONDS = float(os.environ.get("FORVEN_BRAIN_TASK_TIMEOUT_SECONDS", "600") or 600)
-except (TypeError, ValueError):
-    _BRAIN_TASK_TIMEOUT_SECONDS = 600.0
+# A Brain cycle is cut off only when it STALLS: no model response and no
+# finished tool call for this long. How long a cycle takes depends on the model
+# (a hosted flash model vs a local LLM on a home PC), so a fixed wall-clock
+# limit was wrong for someone: the old 180s cap cut nearly every cycle off
+# around round 7 of 25 on MiniMax-M3.1-Flash (2026-10-20). A cycle that keeps
+# making progress runs on, bounded by its 25 tool rounds and the safety
+# ceiling below.
+def _env_seconds(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+_BRAIN_TASK_TIMEOUT_SECONDS = _env_seconds("FORVEN_BRAIN_STALL_SECONDS", 600.0)
+# Last-resort ceiling for one cycle that never stops making progress.
+_BRAIN_TASK_MAX_SECONDS = _env_seconds("FORVEN_BRAIN_CYCLE_MAX_SECONDS", 3600.0)
 # Autonomous cycle sources whose timeout is NOT retried: a retry replays the
 # side-effecting tools the cut-off attempt already ran (duplicate agent tasks),
 # and the keepalive seeds a fresh cycle after a quiet spell anyway.
@@ -1575,6 +1586,59 @@ def ensure_brain_keepalive() -> bool:
         return False
 
 
+class _BrainCycleStalled(asyncio.TimeoutError):
+    """A Brain cycle made no progress for too long (or hit the safety ceiling)."""
+
+
+async def _run_with_progress_watchdog(coro):
+    """Run one Brain cycle, cutting it off only when it stops making progress.
+
+    The runner reports each model response and finished tool call; the cycle
+    is cancelled after ``_BRAIN_TASK_TIMEOUT_SECONDS`` without either, or once
+    it has run ``_BRAIN_TASK_MAX_SECONDS`` in total.
+    """
+    import time as _time
+
+    from forven.agents.progress import new_tracker, reset_tracker, set_tracker
+
+    tracker = new_tracker()
+    token = set_tracker(tracker)
+    try:
+        # The task copies the current context, so the runner sees this tracker.
+        future = asyncio.ensure_future(coro)
+    finally:
+        reset_tracker(token)
+    started = _time.monotonic()
+    while True:
+        now = _time.monotonic()
+        stall_left = _BRAIN_TASK_TIMEOUT_SECONDS - (now - tracker["last"])
+        total_left = _BRAIN_TASK_MAX_SECONDS - (now - started)
+        if stall_left <= 0 or total_left <= 0:
+            future.cancel()
+            try:
+                await future
+            except (asyncio.CancelledError, Exception):
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    raise  # the worker itself is shutting down, not just this cycle
+            if total_left <= 0:
+                raise _BrainCycleStalled(
+                    f"Brain task timeout after {_BRAIN_TASK_MAX_SECONDS:.2f}s (cycle safety ceiling, "
+                    f"{tracker['events']} steps done)"
+                )
+            raise _BrainCycleStalled(
+                f"Brain task timeout after {_BRAIN_TASK_TIMEOUT_SECONDS:.2f}s without progress "
+                f"({tracker['events']} steps done)"
+            )
+        try:
+            done, _ = await asyncio.wait({future}, timeout=min(stall_left, total_left))
+        except asyncio.CancelledError:
+            future.cancel()  # never leave the cycle running orphaned
+            raise
+        if done:
+            return future.result()
+
+
 async def process_brain_tasks_once(limit: int | None = None) -> int:
     """Claim and execute one round of pending brain tasks."""
     from forven.ai import _is_rate_limit_exception, is_transient_provider_exception
@@ -1612,13 +1676,13 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
         try:
             from forven.async_utils import contain_process_exit
 
-            await asyncio.wait_for(
-                contain_process_exit(_run_brain_task(task)), timeout=_BRAIN_TASK_TIMEOUT_SECONDS,
-            )
+            await _run_with_progress_watchdog(contain_process_exit(_run_brain_task(task)))
         except Exception as exc:
             elapsed = _time.monotonic() - start_ts
-            if isinstance(exc, asyncio.TimeoutError):
-                error_detail = f"Brain task timeout after {_BRAIN_TASK_TIMEOUT_SECONDS:.2f}s"
+            if isinstance(exc, _BrainCycleStalled):
+                error_detail = str(exc)
+            elif isinstance(exc, asyncio.TimeoutError):
+                error_detail = f"Brain task timeout after {elapsed:.2f}s"
             else:
                 error_detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             # H-O2: structured context so log queries can filter on

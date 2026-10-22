@@ -32,6 +32,7 @@ from forven.research_context import build_research_context, coerce_research_cont
 from forven.task_timeouts import DEFAULT_AGENT_TASK_TIMEOUT_SECONDS, resolve_agent_task_timeout_seconds
 from forven.workspace import append_workspace, read_workspace
 
+from .progress import note_progress
 from .context import (
     _current_agent_id as _legacy_current_agent_id,
     reset_tool_context,
@@ -680,6 +681,7 @@ async def _call_with_tools_single(
         response = await impl.call(model_id, messages, system, active_tools, token)
         _accum(response.usage)
         record_response(provider, model_id, response.usage)
+        note_progress()
 
         if transcript is not None:
             transcript.write(
@@ -761,6 +763,7 @@ async def _call_with_tools_single(
             if state:
                 state.save(provider=provider, model_id=model_id, inflight=True, has_tools=True)
             result = await _execute_tool(tc.name, tc.input)
+            note_progress()
             tool_results.append((tc.id, str(result)[:5000]))
             if transcript is not None:
                 transcript.write(

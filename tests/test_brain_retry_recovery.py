@@ -242,3 +242,59 @@ def test_headless_brain_keepalive_timeout_suppresses_retry_and_closes_decision(f
     assert "retry suppressed" in str(row["error"])
     assert decision["outcome_observed"] == "timed_out"
     assert "Cycle stopped before finishing" in str(decision["action_taken"])
+
+
+def test_brain_watchdog_lets_a_progressing_cycle_outrun_the_stall_limit(monkeypatch):
+    """A slow model that keeps making progress is not cut off (local LLMs)."""
+    from forven import runtime_worker
+    from forven.agents.progress import note_progress
+
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_MAX_SECONDS", 5.0)
+
+    async def _slow_but_steady():
+        for _ in range(6):  # 6 x 0.03s = well past the 0.05s stall limit in total
+            await asyncio.sleep(0.03)
+            note_progress()
+        return "finished"
+
+    assert asyncio.run(runtime_worker._run_with_progress_watchdog(_slow_but_steady())) == "finished"
+
+
+def test_brain_watchdog_cuts_off_a_stalled_cycle(monkeypatch):
+    import pytest
+
+    from forven import runtime_worker
+
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_MAX_SECONDS", 5.0)
+    cancelled = {"seen": False}
+
+    async def _stuck():
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled["seen"] = True
+            raise
+
+    with pytest.raises(asyncio.TimeoutError, match="without progress"):
+        asyncio.run(runtime_worker._run_with_progress_watchdog(_stuck()))
+    assert cancelled["seen"]
+
+
+def test_brain_watchdog_safety_ceiling(monkeypatch):
+    import pytest
+
+    from forven import runtime_worker
+    from forven.agents.progress import note_progress
+
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(runtime_worker, "_BRAIN_TASK_MAX_SECONDS", 0.1)
+
+    async def _endless():
+        while True:
+            await asyncio.sleep(0.01)
+            note_progress()
+
+    with pytest.raises(asyncio.TimeoutError, match="safety ceiling"):
+        asyncio.run(runtime_worker._run_with_progress_watchdog(_endless()))
