@@ -111,7 +111,6 @@ def test_settings_storage_half_stayed_in_api_core():
         "_save_settings_secrets",
         "_load_pipeline_settings_payload",
         "_save_pipeline_settings_payload",
-        "_sync_pipeline_wip_cap_kv",
     ):
         assert name in core_names, (
             f"{name} writes KV through api_core's own module globals, which the "

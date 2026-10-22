@@ -178,8 +178,6 @@ from forven.settings_apply import (  # noqa: F401
     _DEFAULT_PIPELINE_SETTINGS,
     _DEFAULT_SETTINGS_PAYLOAD,
     _GRAVEYARD_STRATEGY_STATUSES,
-    _PIPELINE_STAGE_WIP_CAPS,
-    _PIPELINE_WIP_CAP_UNLIMITED_VALUES,
     _SETTINGS_API_KEYS_STORAGE_KEY,
     _SETTINGS_MUTATION_LOCK,
     _SETTINGS_PIPELINE_STORAGE_KEY,
@@ -187,6 +185,7 @@ from forven.settings_apply import (  # noqa: F401
     _SETTINGS_SECTION_KNOWN_KEYS,
     _SETTINGS_SECTION_NUMERIC_BOUNDS,
     _SETTINGS_STORAGE_KEY,
+    _UNLIMITED_LIMIT_VALUES,
     _append_settings_audit,
     _coerce_agent_model_keys,
     _coerce_bool,
@@ -205,10 +204,6 @@ from forven.settings_apply import (  # noqa: F401
     _normalize_graveyard_strategy_limit_mode,
     _normalize_graveyard_strategy_limit_payload,
     _normalize_graveyard_strategy_limit_value,
-    _normalize_pipeline_wip_cap_mode,
-    _normalize_pipeline_wip_cap_payload,
-    _normalize_pipeline_wip_cap_value,
-    _pipeline_wip_cap_kv_items,
     _validate_settings_section_payload,
 )
 
@@ -1246,10 +1241,6 @@ def resolve_strategy_query_limit(status: str | None, requested_limit: object = N
     return bounded_limit
 
 
-def _sync_pipeline_wip_cap_kv(payload: dict) -> None:
-    kv_set_many(_pipeline_wip_cap_kv_items(payload))
-
-
 def _has_open_book_routed_trades() -> bool:
     """True if any OPEN live trade is routed to a direction sub-account.
 
@@ -1402,7 +1393,6 @@ def _load_pipeline_settings_payload() -> dict:
     payload = _default_pipeline_settings_payload()
     if isinstance(raw, dict):
         payload.update(raw)
-    _normalize_pipeline_wip_cap_payload(payload)
     _normalize_graveyard_strategy_limit_payload(payload)
     payload["created_by"] = str(payload.get("created_by") or "system")
     payload["created_at"] = str(payload.get("created_at") or _now())
@@ -3608,23 +3598,16 @@ def put_pipeline_settings(body: PipelineSettingsUpdateBody):
                 else:
                     policy_config[key] = value
             # forven:pipeline_thresholds lives in policy.py and opens its own
-            # write; it stays a distinct KV key from the pipeline payload +
-            # WIP-cap mirror. The lock serializes it against the payload write
-            # below; a crash between them leaves the thresholds updated but the
-            # display payload stale (never a torn payload+mirror).
+            # write; it stays a distinct KV key from the pipeline payload.
+            # The lock serializes it against the payload write below; a crash
+            # between them leaves the thresholds updated but the display
+            # payload stale.
             save_pipeline_config(policy_config)
         payload.update(flat_updates)
-        _normalize_pipeline_wip_cap_payload(payload)
         _normalize_graveyard_strategy_limit_payload(payload)
         payload["created_by"] = str(body.actor or "manual") or "manual"
         payload["created_at"] = _now()
-        # Write the pipeline payload AND its WIP-cap KV mirror in ONE
-        # transaction so the display blob and the enforced per-stage caps can
-        # never diverge on a crash between them.
-        kv_set_many({
-            _SETTINGS_PIPELINE_STORAGE_KEY: payload,
-            **_pipeline_wip_cap_kv_items(payload),
-        })
+        kv_set_many({_SETTINGS_PIPELINE_STORAGE_KEY: payload})
     return payload
 
 
