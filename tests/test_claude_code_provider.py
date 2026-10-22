@@ -256,6 +256,11 @@ def test_agent_run_out_of_turns_returns_last_text(fake_claude, monkeypatch):
 
 
 def test_connect_checks_the_login_and_stores_no_secret(forven_db, fake_claude, monkeypatch):
+    def locked(*_a, **_k):
+        raise PermissionError("[WinError 5] Access is denied: 'auth.json'")
+
+    monkeypatch.setattr(ac, "upsert_profile", locked)
+    monkeypatch.setattr(store, "upsert_profile", locked)
     monkeypatch.setenv("FAKE_CLAUDE_LOGGED_IN", "0")
     with pytest.raises(ac.HTTPException) as excinfo:
         ac.upsert_auth_provider("claude-code", ac.AuthProviderProfileBody())
@@ -263,8 +268,9 @@ def test_connect_checks_the_login_and_stores_no_secret(forven_db, fake_claude, m
 
     monkeypatch.setenv("FAKE_CLAUDE_LOGGED_IN", "1")
     assert ac.upsert_auth_provider("claude-code", ac.AuthProviderProfileBody()) == {"ok": True, "provider": "claude-code"}
-    profile = store.get_profile("claude-code")
-    assert profile and not any(k in profile for k in ("access", "token", "api_key", "refresh"))
+    # Nothing is written to auth.json (a locked auth.json on Windows made this
+    # a 500 in 8e79afa); the connection lives in the connected-providers list.
+    assert "claude-code" not in store.load_auth()["profiles"]
     assert store.get_token("claude-code") == ""
 
     payload = ac._build_auth_provider_payload("claude-code")
@@ -328,3 +334,23 @@ def test_runner_hands_the_whole_task_to_claude_code(monkeypatch):
             "claude-code", "error_max_turns", [{"role": "user", "content": "go"}], "sys",
             tools=[{"name": "create_strategy", "description": "", "input_schema": {"type": "object"}}],
         ))
+
+
+def test_auth_save_waits_out_a_briefly_locked_file(monkeypatch):
+    # Windows refuses to replace auth.json while another process is reading it.
+    import pathlib
+
+    real_replace = pathlib.Path.replace
+    failures = {"left": 2}
+
+    def flaky_replace(self, target):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise PermissionError("[WinError 5] Access is denied")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(pathlib.Path, "replace", flaky_replace)
+    monkeypatch.setattr(store.time, "sleep", lambda s: None)
+    store.save_auth({"version": 1, "profiles": {}})
+    assert failures["left"] == 0
+    assert store.load_auth()["profiles"] == {}

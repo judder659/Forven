@@ -776,7 +776,12 @@ def _build_claude_code_provider_payload() -> dict:
     """
     from forven.providers import claude_code
 
-    connected_here = bool(get_profile(claude_code.PROVIDER))
+    try:
+        from forven.model_selection import list_connected_providers
+
+        connected_here = claude_code.PROVIDER in list_connected_providers()
+    except Exception:
+        connected_here = False
     cli = claude_code.auth_status()
     ready = bool(cli["installed"] and cli["logged_in"])
     detail = None if ready else cli["error"]
@@ -4681,7 +4686,8 @@ def get_agent_model_options(refresh: bool = False):
 
 def _connect_claude_code() -> dict:
     """Connect the operator's own signed-in Claude Code. No credential is sent
-    or stored: Forven only records that it may run ``claude``."""
+    or stored (not even in auth.json): Forven only records, in the
+    connected-providers list, that it may run ``claude``."""
     from forven.providers import claude_code
 
     cli = claude_code.auth_status(force=True)
@@ -4692,13 +4698,9 @@ def _connect_claude_code() -> dict:
         )
     if not cli["logged_in"]:
         raise HTTPException(status_code=400, detail=f"{cli['error']} Then connect again.")
-    upsert_profile(claude_code.PROVIDER, {"auth_method": cli["auth_method"] or "unknown"})
-    try:
-        from forven.model_selection import mark_provider_connected
+    from forven.model_selection import mark_provider_connected
 
-        mark_provider_connected(claude_code.PROVIDER)
-    except Exception:
-        log.exception("failed to mark %s connected", claude_code.PROVIDER)
+    mark_provider_connected(claude_code.PROVIDER)
     return {"ok": True, "provider": claude_code.PROVIDER}
 
 
@@ -4763,6 +4765,13 @@ def upsert_auth_provider(provider: str, body: AuthProviderProfileBody):
 
 def delete_auth_provider(provider: str):
     normalized_provider = _normalize_auth_provider(provider)
+    if normalized_provider == "claude-code":
+        # Nothing is stored for Claude Code; disconnecting only forgets the
+        # connection. Its own login stays with the claude program.
+        from forven.model_selection import unmark_provider_connected
+
+        unmark_provider_connected(normalized_provider)
+        return {"ok": True, "provider": normalized_provider, "removed": True}
     removed = delete_profile(normalized_provider)
     # Forget the in-app connection so the provider can no longer authorize spend.
     try:

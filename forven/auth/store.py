@@ -29,6 +29,7 @@ _AUTH_SECRET_FIELDS = {"access", "refresh", "token", "id_token", "api_key", "api
 # ciphertext intact so it becomes readable again if the correct key returns.
 _OPAQUE_MARKER = "__opaque__"
 _AUTH_BACKUP_COUNT = 3
+_REPLACE_ATTEMPTS = 8  # ~2.8s of waiting in all; see _save_auth_unlocked
 
 # Dedupe decrypt-failure warnings per-process: `_build_auth_provider_payload`
 # is called once per provider per Settings page load and re-walks the store
@@ -299,7 +300,17 @@ def _save_auth_unlocked(store: dict):
     store = _encrypt_auth_store(store)
     tmp = AUTH_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(store, indent=2) + "\n")
-    tmp.replace(AUTH_FILE)
+    # On Windows the swap fails with "Access is denied" while any other process
+    # (another Forven process, antivirus) has auth.json open for reading. Those
+    # reads are brief, so wait them out instead of failing the save.
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            tmp.replace(AUTH_FILE)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.1 * (attempt + 1))
 
 
 def save_auth(store: dict):
@@ -337,6 +348,12 @@ def get_profile(provider: str) -> dict | None:
     explicit runtime credential independent of the stored ciphertext.
     """
     from forven.bot_factory.broker_client import fetch_brokered_profile, is_brokered_process
+
+    if provider == "claude-code":
+        # Claude Code keeps its own login: there is nothing to store, so it
+        # never touches auth.json. Whether the operator connected it lives in
+        # the connected-providers record (forven.model_selection).
+        return {"provider": "claude-code"}
 
     env_override = _env_profile(provider)
     if is_brokered_process():
