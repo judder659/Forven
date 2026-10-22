@@ -5,16 +5,13 @@ all required historical data into a temporary SQLite database before the run sta
 """
 
 import logging
-import asyncio
 import os
 import re
 import sqlite3
 import threading
 import pandas as pd
-from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from forven.market_data import fetch_hyperliquid_candles
 
 log = logging.getLogger("forven.sim.data_pump")
 
@@ -69,103 +66,6 @@ def _prepare_cache_frame(df: pd.DataFrame) -> pd.DataFrame:
     cached = cached.sort_index()
     cached["t_ms"] = (cached.index.view("int64") // 1_000_000).astype("int64")
     return cached
-
-async def prefetch_candles(
-    assets: List[str], 
-    start_time: datetime, 
-    end_time: datetime, 
-    interval: str, 
-    warmup_bars: int = 300
-):
-    """Pre-download all candle data for the simulation period into SQLite."""
-    clear_cache()
-    
-    # Calculate required range including warmup
-    delta_map = {
-        "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400
-    }
-    sec_per_bar = delta_map.get(interval.lower(), 3600)
-    warmup_delta = pd.Timedelta(seconds=warmup_bars * sec_per_bar)
-    
-    fetch_start = start_time - warmup_delta
-    total_bars = int((end_time - fetch_start).total_seconds() / sec_per_bar) + 1
-    
-    log.info("Prefetching ~%d bars for %d assets (%s) to SQLite", total_bars, len(assets), interval)
-
-    def _write_chunk(table_name: str, cached_df: pd.DataFrame) -> None:
-        conn = sqlite3.connect(_DB_PATH)
-        try:
-            cached_df.to_sql(table_name, conn, if_exists="append", index=True, index_label="t")
-            conn.commit()
-        finally:
-            conn.close()
-
-    def _finalize_table(table_name: str) -> None:
-        conn = sqlite3.connect(_DB_PATH)
-        try:
-            conn.execute(f"CREATE TABLE {table_name}_tmp AS SELECT DISTINCT * FROM {table_name} ORDER BY t ASC")
-            conn.execute(f"DROP TABLE {table_name}")
-            conn.execute(f"ALTER TABLE {table_name}_tmp RENAME TO {table_name}")
-            conn.execute(f"CREATE INDEX idx_{table_name}_t ON {table_name}(t)")
-            conn.execute(f"CREATE INDEX idx_{table_name}_t_ms ON {table_name}(t_ms)")
-            conn.commit()
-        finally:
-            conn.close()
-
-    for asset in assets:
-        asset = asset.upper()
-        curr_end = end_time
-        bars_remaining = total_bars
-        table_name = _get_table_name(asset, interval)
-
-        rows_inserted = 0
-
-        # HyperLiquid limits to ~5000 bars per request
-        while bars_remaining > 0:
-            chunk_size = min(bars_remaining, 5000)
-            end_ms = int(curr_end.timestamp() * 1000)
-
-            try:
-                df = await asyncio.to_thread(
-                    fetch_hyperliquid_candles, asset, bars=chunk_size,
-                    interval=interval, end_time=end_ms
-                )
-                if df.empty:
-                    break
-
-                cached_df = _prepare_cache_frame(df)
-                if cached_df.empty:
-                    break
-
-                # Save to SQLite immediately — in a worker thread. This function
-                # is async: the to_sql write and the dedup DDL used to run inline
-                # on the event loop, blocking all async traffic (incl. the live
-                # WebSocket) for the duration of the SQLite work.
-                await asyncio.to_thread(_write_chunk, table_name, cached_df)
-                rows_inserted += len(cached_df)
-
-                # Update for next chunk (earlier in time)
-                oldest_ts = cached_df.index.min()
-                curr_end = oldest_ts - pd.Timedelta(seconds=sec_per_bar)
-                bars_remaining -= len(cached_df)
-
-                # Courtesy sleep to avoid hitting rate limits during prefetch
-                await asyncio.sleep(0.2)
-            except Exception as e:
-                log.error("Prefetch failed for %s chunk: %s", asset, e)
-                break
-
-        if rows_inserted > 0:
-            # Deduplicate and sort using SQL (worker thread, same reason).
-            await asyncio.to_thread(_finalize_table, table_name)
-            if rows_inserted < total_bars:
-                log.warning(
-                    "Prefetched only %d/%d bars for %s (%s) — sim windows near the "
-                    "start may run on a truncated frame",
-                    rows_inserted, total_bars, asset, interval,
-                )
-            else:
-                log.info("Prefetched %d bars for %s", rows_inserted, asset)
 
 
 def get_cached_candles(asset: str, interval: str, end_time_ms: int, bars: int) -> Optional[pd.DataFrame]:

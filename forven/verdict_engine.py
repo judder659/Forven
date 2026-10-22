@@ -50,20 +50,6 @@ def _coerce_float(value: object, default: float = 0.0) -> float:
         return float(default)
 
 
-def _normalize_win_rate(value: object) -> float:
-    win_rate = _coerce_float(value, 0.0)
-    if win_rate <= 1.0:
-        win_rate *= 100.0
-    return win_rate
-
-
-def _normalize_drawdown_pct(value: object) -> float:
-    drawdown = abs(_coerce_float(value, 0.0))
-    if drawdown <= 1.0:
-        drawdown *= 100.0
-    return drawdown
-
-
 def _normalize_base_asset_symbol(value: object, fallback: object = None) -> str:
     raw = str(value or fallback or "").strip().upper()
     if not raw:

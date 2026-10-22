@@ -302,13 +302,6 @@ def get_strict_regime_gating() -> bool:
     return _parse_bool(cfg.get("strict_regime_gating", True))
 
 
-def set_strict_regime_gating(enabled: bool):
-    """Persist strict regime gating toggle."""
-    cfg = load_config()
-    cfg["strict_regime_gating"] = bool(enabled)
-    save_config(cfg)
-
-
 def get_backup_ai_provider() -> str:
     """Backup AI provider to fall back to when the primary provider's credentials
     are unusable. ``'none'`` (default) disables fallback. Wired setting: env override,
@@ -351,13 +344,6 @@ def get_regime_min_confidence() -> float:
 
     cfg = load_config()
     return _clamp(_parse_float(cfg.get("regime_min_confidence", 0.3), 0.3), 0.0, 1.0)
-
-
-def set_regime_min_confidence(value: float):
-    """Persist the minimum regime confidence threshold (0.0-1.0)."""
-    cfg = load_config()
-    cfg["regime_min_confidence"] = _clamp(_parse_float(value, 0.3), 0.0, 1.0)
-    save_config(cfg)
 
 
 _REGIME_GATE_MODES = ("off", "observe", "enforce")
@@ -461,13 +447,6 @@ def get_allow_unknown_regime_strategies() -> bool:
 
     cfg = load_config()
     return _parse_bool(cfg.get("allow_unknown_regime_strategies", False))
-
-
-def set_allow_unknown_regime_strategies(enabled: bool):
-    """Persist unknown-strategy behavior under strict regime gating."""
-    cfg = load_config()
-    cfg["allow_unknown_regime_strategies"] = bool(enabled)
-    save_config(cfg)
 
 
 # ---------------------------------------------------------------------------

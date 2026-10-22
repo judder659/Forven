@@ -371,65 +371,6 @@ class TestHubEnrichExcludeStreams:
 
 
 # ---------------------------------------------------------------------------
-# Dry-run validation guard
-# ---------------------------------------------------------------------------
-
-
-class _DenseStrategy:
-    def __init__(self, name, params):
-        self.params = params
-
-    def generate_signals(self, df):
-        entries = pd.Series(True, index=df.index)
-        exits = pd.Series(False, index=df.index)
-        return entries, exits
-
-
-class _SparseStrategy(_DenseStrategy):
-    def generate_signals(self, df):
-        entries = pd.Series(False, index=df.index)
-        entries.iloc[-2:] = True
-        exits = pd.Series(False, index=df.index)
-        return entries, exits
-
-
-class TestDryRunGuard:
-    @pytest.fixture()
-    def _frame(self):
-        start = _closed_start(300)
-        return _bars(start, 250)
-
-    def _run(self, monkeypatch, strategy_cls, frame):
-        from forven.strategies import registry
-        from forven.strategy_validation import dry_run_signal_validation
-
-        monkeypatch.setitem(registry._TYPE_MAP, "_hardening_dummy", strategy_cls)
-        monkeypatch.setattr("forven.data.load_parquet", lambda s, tf, **kw: frame.copy())
-        return dry_run_signal_validation("_hardening_dummy", {})
-
-    def test_dense_strategy_passes_with_real_count(self, monkeypatch, _frame):
-        ok, reason, count = self._run(monkeypatch, _DenseStrategy, _frame)
-        assert ok is True
-        assert count >= 5  # real count, not the -1 "unable to validate" sentinel
-
-    def test_sparse_strategy_rejected(self, monkeypatch, _frame):
-        ok, reason, count = self._run(monkeypatch, _SparseStrategy, _frame)
-        assert ok is False
-        assert count == 2
-        assert "too restrictive" in reason
-
-    def test_no_data_still_allows_with_sentinel(self, monkeypatch):
-        from forven.strategies import registry
-        from forven.strategy_validation import dry_run_signal_validation
-
-        monkeypatch.setitem(registry._TYPE_MAP, "_hardening_dummy", _DenseStrategy)
-        monkeypatch.setattr("forven.data.load_parquet", lambda s, tf, **kw: None)
-        ok, reason, count = dry_run_signal_validation("_hardening_dummy", {})
-        assert ok is True
-        assert count == -1
-
-
-# ---------------------------------------------------------------------------
 # Ingestion run store
 # ---------------------------------------------------------------------------
 

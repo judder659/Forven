@@ -128,17 +128,6 @@ def _safe_iso(value: object) -> str | None:
         return None
 
 
-def _symbol_token(symbol: str) -> str:
-    return (
-        str(symbol or "BTCUSDT")
-        .upper()
-        .replace("/", "")
-        .replace("-", "")
-        .replace(":", "")
-        .replace(" ", "")
-    ) or "BTCUSDT"
-
-
 def _source_priority(source_pool: str) -> int:
     order = {
         "active": 0,

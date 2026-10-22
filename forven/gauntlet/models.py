@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 WorkflowStatus = Literal[
     "pending",
@@ -72,7 +72,3 @@ class WorkflowStepDefinition:
 def normalize_step_key(value: object) -> str:
     raw = str(value or "").strip().lower().replace("-", "_")
     return STEP_KEY_ALIASES.get(raw, raw)
-
-
-def json_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}

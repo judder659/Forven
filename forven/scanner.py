@@ -2279,7 +2279,6 @@ def check_funding_signal(df: pd.DataFrame, p: dict, coin: str = "BTC") -> dict:
     }
 
 
-
 def check_funding_direction_signal(df: pd.DataFrame, p: dict, coin: str = "BTC") -> dict:
     """Funding direction momentum: track funding rate changes and signal direction shifts.
     
@@ -2524,7 +2523,6 @@ def check_bb_reversion_signal(df: pd.DataFrame, p: dict) -> dict:
         "exit_signal": exit_signal,
         "direction": direction,
     }
-
 
 
 def check_bb_squeeze_signal(df: pd.DataFrame, p: dict) -> dict:
@@ -3090,9 +3088,6 @@ def check_supertrend_signal(df: pd.DataFrame, p: dict) -> dict:
     exit_signal = (prev["trend"] == 1) & (curr["trend"] == -1)
 
     return {"price": round(price, 4), "supertrend": round(curr["final_lower"] if curr["trend"] == 1 else curr["final_upper"], 4), "adx": round(curr["adx_val"], 1), "atr_14": round(curr["atr_val"], 6), "entry_signal": bool(entry_signal), "exit_signal": bool(exit_signal), "direction": "long"}
-
-
-
 
 
 def check_orb_signal(df: pd.DataFrame, p: dict) -> dict:
@@ -9773,34 +9768,3 @@ def check_signal_freshness(signal_timestamp: str | None, max_age_seconds: int = 
         return age <= max_age_seconds, age
     except Exception:
         return False, float("inf")
-
-
-# ── P4-3: Operational SLO telemetry ─────────────────────────────────────────
-
-
-def record_scan_slo(
-    scan_start: float,
-    scan_end: float,
-    signals_generated: int,
-    executions_attempted: int,
-    fills_received: int,
-    opportunities_dropped: int = 0,
-):
-    """P4-3: Record operational SLO metrics for a scan cycle."""
-    from forven.db import kv_set, log_activity
-
-    scan_latency_ms = (scan_end - scan_start) * 1000
-    slo_entry = {
-        "scan_latency_ms": round(scan_latency_ms, 1),
-        "signals_generated": signals_generated,
-        "executions_attempted": executions_attempted,
-        "fills_received": fills_received,
-        "opportunities_dropped": opportunities_dropped,
-        "fill_rate": round(fills_received / max(executions_attempted, 1), 3),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    kv_set("scanner_slo_latest", slo_entry)
-
-    if scan_latency_ms > 30000:  # 30s SLO breach
-        log_activity("warning", "scanner-slo", f"Scan latency SLO breach: {scan_latency_ms:.0f}ms", slo_entry)

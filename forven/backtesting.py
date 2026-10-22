@@ -116,48 +116,6 @@ def _normalize_api_base(raw: str | None) -> str | None:
     return f"{text}/api"
 
 
-def _api_to_origin(api_base: str) -> str:
-    base = str(api_base or "").rstrip("/")
-    if base.endswith("/api"):
-        return base[:-4]
-    return base
-
-
-def get_backtesting_api_base() -> str:
-    """Resolve backtesting API base URL from env/settings with sane default."""
-    for key in (
-        "FORVEN_BACKTEST_API",
-        "FORVEN_BACKTEST_API_URL",
-        "FORVEN_BACKTESTING_API_URL",
-        "FORVEN_BACKTEST_BASE_URL",
-        "FORVEN_BACKTEST_BASE",
-        "FORVEN_BACKTEST_REMOTE_API",
-        "FORVEN_BACKTEST_RESULTS_REMOTE_API",
-        "FORVEN_CLIENT_BASE",
-    ):
-        normalized = _normalize_api_base(os.environ.get(key))
-        if normalized:
-            return normalized
-
-    port = str(os.environ.get("FORVEN_PORT", "")).strip()
-    if port.isdigit():
-        return _normalize_api_base(f"http://127.0.0.1:{port}") or _DEFAULT_FORVEN_API
-
-    settings = kv_get("forven:settings", {})
-    if isinstance(settings, dict):
-        for key in (
-            "backtesting_api_url",
-            "backtesting_base_url",
-            "backtesting_remote_api",
-            "backtesting_remote_base",
-        ):
-            normalized = _normalize_api_base(settings.get(key))
-            if normalized:
-                return normalized
-
-    return _DEFAULT_FORVEN_API
-
-
 # ── Client ───────────────────────────────────────────────────────────
 
 class BacktestingClient:

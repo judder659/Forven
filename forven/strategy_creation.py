@@ -354,14 +354,6 @@ def preview_url(url: str) -> dict[str, Any]:
     }
 
 
-def current_task_origin(task_display_id: str | None) -> str:
-    """The running task's origin_mode, or ""."""
-    from forven.strategies.candidate_checks import get_agent_task_payload
-
-    payload = get_agent_task_payload(task_display_id)
-    return str(payload.get("origin_mode") or "").strip()
-
-
 def idea_payload(hypothesis_id: str) -> dict[str, Any] | None:
     """An idea with the strategies built from it, for the strategy page."""
     from forven.hypotheses import get_hypothesis, list_hypothesis_artifacts, list_hypothesis_strategies

@@ -261,121 +261,6 @@ _REGIME_CLASSES = {
 }
 
 
-def compute_archetype_fingerprint(
-    strategy_type: str,
-    params: dict | None = None,
-    metrics: dict | None = None,
-) -> dict:
-    """P3-3: Compute archetype fingerprint for a strategy.
-
-    Fields: strategy_type, regime_class, indicator_family, risk_profile.
-    """
-    normalized_type = str(strategy_type or "").strip().lower().replace("-", "_")
-    params = params if isinstance(params, dict) else {}
-    metrics = metrics if isinstance(metrics, dict) else {}
-
-    indicator_family = _INDICATOR_FAMILIES.get(normalized_type, "unknown")
-    regime_class = _REGIME_CLASSES.get(normalized_type, "unknown")
-
-    # Derive risk profile from params/metrics
-    has_stop = "stop_loss_pct" in params or "stop_loss" in params
-    has_tp = "take_profit_pct" in params or "take_profit" in params
-    max_dd = _to_float(metrics.get("max_drawdown_pct"), 0.0)
-
-    if max_dd > 0.20:
-        risk_profile = "aggressive"
-    elif has_stop and has_tp:
-        risk_profile = "managed"
-    elif has_stop:
-        risk_profile = "defensive"
-    else:
-        risk_profile = "unmanaged"
-
-    return {
-        "strategy_type": normalized_type,
-        "regime_class": regime_class,
-        "indicator_family": indicator_family,
-        "risk_profile": risk_profile,
-    }
-
-
-def persist_archetype_fingerprint(strategy_id: str, fingerprint: dict):
-    """Save fingerprint to strategy record."""
-    try:
-        with get_db() as conn:
-            conn.execute(
-                "UPDATE strategies SET archetype_fingerprint = ? WHERE id = ?",
-                (json.dumps(fingerprint), strategy_id),
-            )
-    except Exception:
-        pass
-
-
-def is_near_duplicate(
-    fingerprint: dict,
-    params: dict | None = None,
-    active_stages: tuple[str, ...] = ("quick_screen", "gauntlet", "paper", "live_graduated"),
-    similarity_threshold: float = 0.85,
-) -> tuple[bool, str | None]:
-    """P3-4: Check if a strategy fingerprint is near-duplicate of an active strategy.
-
-    Compares fingerprint fields + parameter similarity to existing active strategies.
-    Returns (is_duplicate, matching_strategy_id).
-    """
-    params = params if isinstance(params, dict) else {}
-    try:
-        with get_db() as conn:
-            placeholders = ",".join("?" for _ in active_stages)
-            rows = conn.execute(
-                f"SELECT id, archetype_fingerprint, params FROM strategies WHERE stage IN ({placeholders})",
-                active_stages,
-            ).fetchall()
-
-        for row in rows:
-            existing_fp = {}
-            try:
-                existing_fp = json.loads(row["archetype_fingerprint"] or "{}")
-            except (json.JSONDecodeError, TypeError):
-                continue
-            if not existing_fp:
-                continue
-
-            # Fingerprint similarity: count matching fields
-            fp_fields = ["strategy_type", "regime_class", "indicator_family", "risk_profile"]
-            matches = sum(
-                1 for f in fp_fields
-                if fingerprint.get(f) and fingerprint.get(f) == existing_fp.get(f)
-            )
-            fp_similarity = matches / len(fp_fields)
-
-            if fp_similarity < similarity_threshold:
-                continue
-
-            # Parameter similarity check (for same-type strategies)
-            if fingerprint.get("strategy_type") == existing_fp.get("strategy_type") and params:
-                try:
-                    existing_params = json.loads(row["params"] or "{}")
-                except (json.JSONDecodeError, TypeError):
-                    existing_params = {}
-                if existing_params:
-                    all_keys = set(params.keys()) | set(existing_params.keys())
-                    param_matches = sum(
-                        1 for k in all_keys
-                        if params.get(k) == existing_params.get(k)
-                    )
-                    param_similarity = param_matches / max(len(all_keys), 1)
-                    if param_similarity > 0.80:
-                        return True, row["id"]
-
-            if fp_similarity >= 1.0:  # Exact fingerprint match
-                return True, row["id"]
-
-    except Exception:
-        pass
-
-    return False, None
-
-
 def _parse_timeframe_minutes(value: str | None) -> int:
     raw = str(value or "").strip()
     match = re.fullmatch(r"(\d+)([mhdwM])", raw)
@@ -595,35 +480,6 @@ def _attempt_stage_promotion(
         ).strip()
         return False, blocked_reason or "transition blocked"
     return True, "promoted"
-
-
-def _compute_and_persist_robustness_score(strategy_id: str) -> float:
-    """Recompute and persist the composite robustness score.
-
-    Delegates to the single canonical, verdict-honoring scorer in
-    forven.robustness.engine (`_recalculate_robustness_score`) so there is exactly
-    ONE scoring formula and one set of metric keys feeding the promotion gate. The
-    previous evolution-local scorer awarded partial credit (up to 20 pts) to tests
-    whose own verdict was FAIL — it only skipped a test on status=='failed'/'error',
-    never on the verdict — which inflated the gating composite. Returns the resulting
-    0–100 composite (0.0 if it could not be computed).
-    """
-    from forven.robustness.engine import _recalculate_robustness_score
-
-    _recalculate_robustness_score(strategy_id)
-    with get_db() as conn:
-        row = conn.execute("SELECT metrics FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
-    metrics: dict = {}
-    if row and row["metrics"]:
-        try:
-            parsed = json.loads(row["metrics"]) if isinstance(row["metrics"], str) else (row["metrics"] or {})
-            metrics = parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            metrics = {}
-    try:
-        return float(metrics.get("composite_robustness_score") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
 
 
 def _execute_gauntlet_step(
@@ -1403,16 +1259,6 @@ async def run_backtest_validation(
         bars,
         params,
     )
-
-
-async def run_simulation_validation(
-    strategy_id: str,
-    start_date: str,
-    end_date: str,
-    interval: str = "1h",
-) -> dict:
-    """Archived — simulation engine is disabled. Use backtest validation instead."""
-    raise RuntimeError("Simulation engine is archived. Use run_backtest_validation() instead.")
 
 
 def run_testing_step(code_first: bool = True) -> dict:

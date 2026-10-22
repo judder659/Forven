@@ -4005,12 +4005,6 @@ def requeue_brain_task(
 STALE_RECOVERY_FAIL_AGENTS: tuple[str, ...] = ("execution-trader",)
 
 
-def _is_ready_for_retry(retry_at: str | None, now_iso: str) -> bool:
-    if not retry_at:
-        return True
-    return retry_at <= now_iso
-
-
 def _serialize_json_value(value) -> str | None:
     """Serialize values to JSON for sqlite text columns."""
     if value is None:
@@ -4072,41 +4066,6 @@ def log_activity(
             )
             return False
         raise
-
-
-def validate_agent_param_mutation(field_name: str, new_value) -> tuple[bool, str]:
-    """Check if an agent-proposed param change is within the allow-list bounds.
-
-    Returns (allowed, reason).
-    """
-    import json as _json
-    from pathlib import Path as _Path
-
-    allow_path = _Path(__file__).parent / "param_allow_list.json"
-    try:
-        with open(allow_path) as f:
-            allow_list = _json.load(f)
-    except Exception:
-        return False, "param_allow_list.json not found"
-
-    denied = allow_list.get("denied", [])
-    if field_name in denied or any(field_name.startswith(d) for d in denied if d.endswith("_")):
-        return False, f"field '{field_name}' is denied"
-
-    allowed = allow_list.get("allowed", {})
-    if field_name not in allowed:
-        return False, f"field '{field_name}' not in allow-list"
-
-    spec = allowed[field_name]
-    try:
-        val = float(new_value)
-    except (TypeError, ValueError):
-        return False, f"value must be numeric, got {type(new_value).__name__}"
-
-    if val < spec.get("min", float("-inf")) or val > spec.get("max", float("inf")):
-        return False, f"value {val} outside range [{spec.get('min')}, {spec.get('max')}]"
-
-    return True, "ok"
 
 
 def log_mutation_audit(conn: sqlite3.Connection, strategy_id: str, actor: str, field_name: str, old_value, new_value):
@@ -4873,20 +4832,6 @@ def assign_task_display_id(conn: sqlite3.Connection, task_id: int) -> str:
         (numeric_id + 1,),
     )
     return display_id
-
-
-def get_display_prefix(stage: str | None) -> str:
-    """Return container display prefix based on stage."""
-    normalized = str(stage or "").strip().lower()
-    if normalized in {"quick_screen", "researching", "developing", "rejected"}:
-        return "S"
-    if normalized in {"gauntlet", "backtesting", "paper", "paper_trading"}:
-        return "B"
-    if normalized in {"ceo_review", "ceoreview", "ceo-review", "review", "live_graduated"}:
-        return "E"
-    if normalized == "deployed":
-        return "E"
-    return "S"
 
 
 def update_display_id(
@@ -5658,23 +5603,6 @@ def handoff_task(
     )
 
 
-def get_strategy_audit_trail(strategy_id: str) -> dict:
-    """Return strategy event trail plus row summary events."""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM strategy_events WHERE strategy_id = ? ORDER BY created_at ASC",
-            (strategy_id,),
-        ).fetchall()
-        strategy = conn.execute(
-            "SELECT audit_summary FROM strategies WHERE id = ?",
-            (strategy_id,),
-        ).fetchone()
-    summary = _parse_json_value(strategy["audit_summary"]) if strategy else []
-    if not isinstance(summary, list):
-        summary = []
-    return {"events": [dict(r) for r in rows], "summary": summary}
-
-
 def get_task_tool_calls(task_display_id: str) -> list[dict]:
     """Return all tool invocation rows for one task container."""
     with get_db() as conn:
@@ -5683,16 +5611,6 @@ def get_task_tool_calls(task_display_id: str) -> list[dict]:
             (task_display_id,),
         ).fetchall()
     return [dict(r) for r in rows]
-
-
-def get_pending_agent_tasks(agent_id: str) -> list[dict]:
-    """Get pending tasks for an agent."""
-    with get_db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM agent_tasks WHERE agent_id = ? AND status = 'pending' ORDER BY priority DESC, created_at",
-            (agent_id,),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
 
 def _extract_strategy_id(task_input: object) -> str | None:
@@ -7288,50 +7206,6 @@ def auto_assign_best_symbol(strategy_id: str) -> str | None:
     if not assigned:
         return None
     return assigned[0]
-
-
-def backfill_strategy_symbols() -> dict:
-    """One-time backfill: assign best symbol to strategies that lack one.
-
-    Targets strategies in active pipeline stages (paper, paper_trading,
-    live_graduated, deployed, gauntlet) with an empty or GENERIC symbol.
-    Returns ``{"updated": N, "skipped": M}``.
-    """
-    updated = 0
-    skipped = 0
-    with get_db() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, symbol FROM strategies
-            WHERE stage IN ('paper', 'paper_trading', 'live_graduated', 'deployed', 'gauntlet')
-              AND (TRIM(COALESCE(symbol, '')) = '' OR UPPER(TRIM(COALESCE(symbol, ''))) = 'GENERIC')
-            """,
-        ).fetchall()
-
-    for row in rows:
-        result = auto_assign_best_symbol(row["id"])
-        if result:
-            updated += 1
-        else:
-            skipped += 1
-
-    return {"updated": updated, "skipped": skipped}
-
-
-def mark_backtest_failed(strategy_id: str, failure_type: str, reason: str) -> None:
-    """Explicitly mark a strategy container as having a failed backtest to prevent phantom container syndrome."""
-    from datetime import datetime, timezone
-    
-    now = datetime.now(timezone.utc).isoformat()
-    with get_db() as conn:
-        conn.execute(
-            """UPDATE strategies SET 
-                status = 'backtest_failed',
-                notes = COALESCE(notes, '') || ?,
-                updated_at = ?
-            WHERE id = ?""",
-            (f"\n[BACKTEST_FAILED] {failure_type}: {reason} at {now}", now, strategy_id)
-        )
 
 
 # ── GHOST CONTAINER DETECTION GUARDRAILS ────────────────────────────────────────

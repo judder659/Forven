@@ -78,16 +78,6 @@ ADX_POLICY = {
 }
 
 
-def get_adx_bounds_for_family(strategy_type: str) -> tuple[float | None, float | None]:
-    """P2-1: Look up explicit ADX bounds for a strategy family.
-
-    Returns (adx_min, adx_max). None means no bound.
-    """
-    normalized = str(strategy_type or "").strip().lower().replace("-", "_")
-    policy = ADX_POLICY.get(normalized, {})
-    return policy.get("adx_min"), policy.get("adx_max")
-
-
 # --- Shared regime ATR-ratio baseline --------------------------------------------
 # The volatility input to _classify is the ATR RATIO: recent ATR vs a lagged baseline
 # ATR. Historically THREE call sites computed it inline with drifting conventions —
@@ -713,8 +703,3 @@ def _cache_regime(asset: str, state: RegimeState):
             )
     except Exception as e:
         log.debug("Failed to cache regime for %s: %s", asset, e)
-
-def invalidate_cache():
-    """Clear regime cache. Called by sim runner between bars."""
-    for asset in TRACKED_ASSETS:
-        kv_set(_cache_key(asset), None)

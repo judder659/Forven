@@ -240,11 +240,7 @@ _DEFAULT_SETTINGS_PAYLOAD = {
 # fallback loop, so nothing is lost.
 _DEFAULT_API_KEY_SOURCES = ("polygon",)
 
-# Stage WIP caps the pipeline settings payload carries, as
-# {stage: {"mode_key", "cap_key", "default"}}. Empty since the paper cap went
-# with slot competition (2026-10): the paper pool caps paper on its own.
-_PIPELINE_STAGE_WIP_CAPS: dict[str, dict[str, object]] = {}
-_PIPELINE_WIP_CAP_UNLIMITED_VALUES = {"", "0", "none", "null", "unlimited", "off", "disabled"}
+_UNLIMITED_LIMIT_VALUES = {"", "0", "none", "null", "unlimited", "off", "disabled"}
 _DEFAULT_GRAVEYARD_STRATEGY_LIMIT = 500
 _GRAVEYARD_STRATEGY_STATUSES = {"archived", "rejected", "backtest_failed", "graveyard", "trash"}
 
@@ -448,46 +444,9 @@ def _default_pipeline_settings_payload() -> dict:
     return payload
 
 
-def _normalize_pipeline_wip_cap_mode(value: object, fallback: str = "capped") -> str:
-    normalized = str(value or "").strip().lower()
-    if normalized in _PIPELINE_WIP_CAP_UNLIMITED_VALUES:
-        return "unlimited"
-    if normalized in {"capped", "cap", "limited", "limit"}:
-        return "capped"
-    return fallback if fallback in {"capped", "unlimited"} else "capped"
-
-
-def _normalize_pipeline_wip_cap_value(value: object, fallback: int) -> int:
-    if value is None:
-        return max(1, int(fallback))
-    if isinstance(value, str) and value.strip().lower() in _PIPELINE_WIP_CAP_UNLIMITED_VALUES:
-        return max(1, int(fallback))
-    try:
-        parsed = int(value) if isinstance(value, (int, float)) else int(str(value).strip())
-    except Exception:
-        parsed = int(fallback)
-    return max(1, parsed)
-
-
-def _normalize_pipeline_wip_cap_payload(payload: dict) -> dict:
-    for stage_config in _PIPELINE_STAGE_WIP_CAPS.values():
-        mode_key = str(stage_config["mode_key"])
-        cap_key = str(stage_config["cap_key"])
-        default_cap = int(stage_config["default"])
-        payload[mode_key] = _normalize_pipeline_wip_cap_mode(
-            payload.get(mode_key),
-            str(_DEFAULT_PIPELINE_SETTINGS.get(mode_key) or "capped"),
-        )
-        payload[cap_key] = _normalize_pipeline_wip_cap_value(
-            payload.get(cap_key),
-            default_cap,
-        )
-    return payload
-
-
 def _normalize_graveyard_strategy_limit_mode(value: object, fallback: str = "capped") -> str:
     normalized = str(value or "").strip().lower()
-    if normalized in _PIPELINE_WIP_CAP_UNLIMITED_VALUES:
+    if normalized in _UNLIMITED_LIMIT_VALUES:
         return "unlimited"
     if normalized in {"capped", "cap", "limited", "limit"}:
         return "capped"
@@ -497,7 +456,7 @@ def _normalize_graveyard_strategy_limit_mode(value: object, fallback: str = "cap
 def _normalize_graveyard_strategy_limit_value(value: object, fallback: int = _DEFAULT_GRAVEYARD_STRATEGY_LIMIT) -> int:
     if value is None:
         return max(1, int(fallback))
-    if isinstance(value, str) and value.strip().lower() in _PIPELINE_WIP_CAP_UNLIMITED_VALUES:
+    if isinstance(value, str) and value.strip().lower() in _UNLIMITED_LIMIT_VALUES:
         return max(1, int(fallback))
     try:
         parsed = int(value) if isinstance(value, (int, float)) else int(str(value).strip())
@@ -516,22 +475,6 @@ def _normalize_graveyard_strategy_limit_payload(payload: dict) -> dict:
         _DEFAULT_GRAVEYARD_STRATEGY_LIMIT,
     )
     return payload
-
-
-def _pipeline_wip_cap_kv_items(payload: dict) -> dict:
-    """Compute the ``pipeline:wip_cap:*`` KV entries a payload implies (no write)."""
-    items: dict = {}
-    for stage, stage_config in _PIPELINE_STAGE_WIP_CAPS.items():
-        mode_key = str(stage_config["mode_key"])
-        cap_key = str(stage_config["cap_key"])
-        if _normalize_pipeline_wip_cap_mode(payload.get(mode_key)) == "unlimited":
-            items[f"pipeline:wip_cap:{stage}"] = "unlimited"
-        else:
-            items[f"pipeline:wip_cap:{stage}"] = _normalize_pipeline_wip_cap_value(
-                payload.get(cap_key),
-                int(stage_config["default"]),
-            )
-    return items
 
 
 def _normalize_agent_model_key(raw: str) -> str | None:

@@ -1,9 +1,6 @@
 """Backtest engine â€” run strategy rules against historical data and compute metrics.
 
 
-
-
-
 Uses the same signal checkers from scanner.py to ensure consistency between
 
 
@@ -1449,9 +1446,6 @@ def _check_data_requirements(strategy_type: str, asset: str, timeframe: str, bar
     """Pre-flight check: verify the strategy's data requirements can be met.
 
 
-
-
-
     Returns a warning string if requirements cannot be met, None if OK.
 
 
@@ -1580,9 +1574,6 @@ def load_multi_exchange_candles(
     """Load candles from multiple exchanges for cross-exchange strategies.
 
 
-
-
-
     Args:
 
 
@@ -1593,9 +1584,6 @@ def load_multi_exchange_candles(
 
 
         timeframe: Candle interval
-
-
-
 
 
     Returns:
@@ -4022,9 +4010,6 @@ def _precompute_indicators(df: pd.DataFrame, strategy_type: str, params: dict) -
     """Pre-compute all indicators for a built-in strategy type on the full DataFrame.
 
 
-
-
-
     Called once instead of per-bar, turning O(n^2) indicator computation into O(n).
 
 
@@ -4224,9 +4209,6 @@ def _compute_adx_filter(df: pd.DataFrame, params: dict) -> pd.Series:
     """Compute ADX filter based on adx_min and optional adx_max parameters.
 
 
-
-
-
     Args:
 
 
@@ -4236,16 +4218,10 @@ def _compute_adx_filter(df: pd.DataFrame, params: dict) -> pd.Series:
         params: Strategy parameters dict with optional 'adx_min' and 'adx_max'
 
 
-
-
-
     Returns:
 
 
         Boolean Series indicating where ADX filter passes
-
-
-
 
 
     Note: params should be canonicalized before calling this function so that
@@ -4293,9 +4269,6 @@ def _compute_adx_filter(df: pd.DataFrame, params: dict) -> pd.Series:
 
 def _vectorized_signals(df: pd.DataFrame, strategy_type: str, params: dict) -> tuple:
     """Generate entry/exit boolean Series from pre-computed indicators.
-
-
-
 
 
     Returns (entry_signals, exit_signals) aligned with df index.
@@ -4822,54 +4795,6 @@ def _to_float(value):
     except (TypeError, ValueError):
 
         return None
-
-
-def _index_to_position(value, index: pd.Index) -> int:
-    """Resolve trade entry/exit index values to integer row positions."""
-
-    numeric = _to_float(value)
-
-    if numeric is not None:
-
-        return int(numeric)
-
-    if value is None:
-
-        return -1
-
-    try:
-
-        location = index.get_loc(value)
-
-    except Exception:
-
-        return -1
-
-    if isinstance(location, slice):
-
-        return int(location.start)
-
-    if isinstance(location, np.ndarray):
-
-        if location.dtype == bool:
-
-            positions = np.flatnonzero(location)
-
-            return int(positions[0]) if len(positions) else -1
-
-        return int(location[0]) if len(location) else -1
-
-    if isinstance(location, list):
-
-        return int(location[0]) if location else -1
-
-    try:
-
-        return int(location)
-
-    except Exception:
-
-        return -1
 
 
 def _is_default_range_index(candidate: pd.Index, length: int) -> bool:
@@ -6166,9 +6091,6 @@ def backtest_strategy(
     """Run a backtest for a single strategy over historical candles.
 
 
-
-
-
     Args:
 
 
@@ -6200,9 +6122,6 @@ def backtest_strategy(
 
 
         persist_legacy_run: Persist the legacy B-prefixed run record and artifacts
-
-
-
 
 
     Returns:
@@ -7092,65 +7011,6 @@ def _downsample_curve(curve: list[dict], max_points: int = 2000) -> list[dict]:
     return kept
 
 
-def _build_closed_trade_equity_curve(
-    trades: list[dict],
-    df: "pd.DataFrame",
-    initial_capital: float = 10000.0,
-) -> list[dict]:
-    """Build a timestamped equity curve by replaying trades over the OOS price series.
-
-
-
-
-
-    For each bar in *df*, equity stays flat when not in a trade and compounds
-
-
-    with the trade's return on exit bars.  The result is a list of
-
-
-    ``{"timestamp": ..., "equity": ...}`` dicts suitable for charting.
-
-
-    """
-
-    if df is None or df.empty:
-
-        return []
-
-    # Map exit_time → pnl_pct for quick lookup
-
-    exit_map: dict[str, float] = {}
-
-    for t in (trades or []):
-
-        exit_ts = t.get("exit_time")
-
-        if exit_ts:
-
-            key = str(exit_ts)
-
-            exit_map[key] = exit_map.get(key, 0.0) + float(t.get("pnl_pct", 0.0))
-
-    equity = float(initial_capital)
-
-    curve: list[dict] = []
-
-    for ts in df.index:
-
-        ts_key = str(ts)
-
-        pnl_pct = exit_map.get(ts_key, 0.0)
-
-        if pnl_pct != 0.0:
-
-            equity *= max(0.0, 1.0 + pnl_pct)
-
-        curve.append({"timestamp": ts_key, "equity": round(equity, 2)})
-
-    return curve
-
-
 def _build_equity_curve_from_trades(
     trades: list[dict],
     df: "pd.DataFrame",
@@ -7332,9 +7192,6 @@ def _build_buy_and_hold_curve(
     initial_capital: float = 10000.0,
 ) -> list[dict]:
     """Build a buy-and-hold equity curve from close prices.
-
-
-
 
 
     Assumes buying at the first close and holding throughout.
@@ -7732,9 +7589,6 @@ def _compound_monthly_return(total_return_pct: float, months: float) -> float:
     """Compute monthly return from total return using CAGR-style compounding.
 
 
-
-
-
     ``total_return_pct`` is stored as a ratio (e.g. 0.12 means 12%).
 
 
@@ -7759,9 +7613,6 @@ def _compound_monthly_return(total_return_pct: float, months: float) -> float:
 
 def _annualized_return(total_return_pct: float, months: float) -> float:
     """Compute annualized return from total return using CAGR-style compounding.
-
-
-
 
 
     ``total_return_pct`` is stored as a ratio (e.g. 0.12 means 12%).
@@ -7876,15 +7727,9 @@ def walk_forward(
     the selection window as in-sample. Without it, ``in_sample_pct`` decides.
 
 
-
-
-
     Expanding/rolling training prefixes are separated from each future test slice
     by the configured purge gap and embargo. This function does not fit parameters;
     the optimizer performs selection on a disjoint earlier window before calling it.
-
-
-
 
 
     Args:
@@ -7918,9 +7763,6 @@ def walk_forward(
 
 
         slippage_bps: Slippage in basis points
-
-
-
 
 
     Returns:
@@ -8585,9 +8427,6 @@ def _run_signal_walk(checker, df, params: dict, warmup: int, leverage: float,
     IN-WALK (funding-aware kelly evidence) and stamps each trade so the caller's post-walk
     ``_apply_funding_to_trades`` skips it. The legacy/slow paths don't fund in-walk, so the
     post-walk pass still funds their trades. The scanner never sets this.
-
-
-
 
 
     Uses vectorized path for built-in strategy types when possible.

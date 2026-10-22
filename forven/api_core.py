@@ -178,8 +178,6 @@ from forven.settings_apply import (  # noqa: F401
     _DEFAULT_PIPELINE_SETTINGS,
     _DEFAULT_SETTINGS_PAYLOAD,
     _GRAVEYARD_STRATEGY_STATUSES,
-    _PIPELINE_STAGE_WIP_CAPS,
-    _PIPELINE_WIP_CAP_UNLIMITED_VALUES,
     _SETTINGS_API_KEYS_STORAGE_KEY,
     _SETTINGS_MUTATION_LOCK,
     _SETTINGS_PIPELINE_STORAGE_KEY,
@@ -187,6 +185,7 @@ from forven.settings_apply import (  # noqa: F401
     _SETTINGS_SECTION_KNOWN_KEYS,
     _SETTINGS_SECTION_NUMERIC_BOUNDS,
     _SETTINGS_STORAGE_KEY,
+    _UNLIMITED_LIMIT_VALUES,
     _append_settings_audit,
     _coerce_agent_model_keys,
     _coerce_bool,
@@ -205,10 +204,6 @@ from forven.settings_apply import (  # noqa: F401
     _normalize_graveyard_strategy_limit_mode,
     _normalize_graveyard_strategy_limit_payload,
     _normalize_graveyard_strategy_limit_value,
-    _normalize_pipeline_wip_cap_mode,
-    _normalize_pipeline_wip_cap_payload,
-    _normalize_pipeline_wip_cap_value,
-    _pipeline_wip_cap_kv_items,
     _validate_settings_section_payload,
 )
 
@@ -647,26 +642,6 @@ async def _on_startup():
                     )
                 except Exception:
                     pass
-
-
-def _parse_bool_query(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    lowered = str(value).strip().lower()
-    if lowered in {"1", "true", "yes", "on", "y"}:
-        return True
-    if lowered in {"0", "false", "no", "off", "n"}:
-        return False
-    return default
-
-
-def _parse_int_query(value: str | None, default: int = 0) -> int:
-    try:
-        if value is None:
-            return default
-        return int(str(value).strip())
-    except Exception:
-        return default
 
 
 _AUTH_OAUTH_SESSIONS: dict[str, dict[str, dict[str, object]]] = {}
@@ -1246,10 +1221,6 @@ def resolve_strategy_query_limit(status: str | None, requested_limit: object = N
     return bounded_limit
 
 
-def _sync_pipeline_wip_cap_kv(payload: dict) -> None:
-    kv_set_many(_pipeline_wip_cap_kv_items(payload))
-
-
 def _has_open_book_routed_trades() -> bool:
     """True if any OPEN live trade is routed to a direction sub-account.
 
@@ -1402,7 +1373,6 @@ def _load_pipeline_settings_payload() -> dict:
     payload = _default_pipeline_settings_payload()
     if isinstance(raw, dict):
         payload.update(raw)
-    _normalize_pipeline_wip_cap_payload(payload)
     _normalize_graveyard_strategy_limit_payload(payload)
     payload["created_by"] = str(payload.get("created_by") or "system")
     payload["created_at"] = str(payload.get("created_at") or _now())
@@ -3608,23 +3578,16 @@ def put_pipeline_settings(body: PipelineSettingsUpdateBody):
                 else:
                     policy_config[key] = value
             # forven:pipeline_thresholds lives in policy.py and opens its own
-            # write; it stays a distinct KV key from the pipeline payload +
-            # WIP-cap mirror. The lock serializes it against the payload write
-            # below; a crash between them leaves the thresholds updated but the
-            # display payload stale (never a torn payload+mirror).
+            # write; it stays a distinct KV key from the pipeline payload.
+            # The lock serializes it against the payload write below; a crash
+            # between them leaves the thresholds updated but the display
+            # payload stale.
             save_pipeline_config(policy_config)
         payload.update(flat_updates)
-        _normalize_pipeline_wip_cap_payload(payload)
         _normalize_graveyard_strategy_limit_payload(payload)
         payload["created_by"] = str(body.actor or "manual") or "manual"
         payload["created_at"] = _now()
-        # Write the pipeline payload AND its WIP-cap KV mirror in ONE
-        # transaction so the display blob and the enforced per-stage caps can
-        # never diverge on a crash between them.
-        kv_set_many({
-            _SETTINGS_PIPELINE_STORAGE_KEY: payload,
-            **_pipeline_wip_cap_kv_items(payload),
-        })
+        kv_set_many({_SETTINGS_PIPELINE_STORAGE_KEY: payload})
     return payload
 
 
@@ -4859,10 +4822,6 @@ def get_model_policy():
 
 
 def put_model_policy(body: ModelPolicyUpdateBody):
-    return _update_model_policy(body)
-
-
-def put_legacy_model_policy(body: ModelPolicyUpdateBody):
     return _update_model_policy(body)
 
 
@@ -7384,31 +7343,6 @@ def send_manual_strategy_to_forge(body: SendToForgeBody) -> dict:
     }
 
 
-def _collect_backtest_execution_controls(payload: object) -> dict[str, object]:
-    fields = (
-        "trade_mode",
-        "allow_shorting",
-        "stop_loss_pct",
-        "take_profit_pct",
-        "trailing_stop_pct",
-        "time_stop_bars",
-        "sizing_mode",
-        "fixed_size",
-        "risk_per_trade",
-        "atr_stop_multiplier",
-        "kelly_multiplier",
-        "kelly_lookback",
-    )
-    controls: dict[str, object] = {}
-    for field_name in fields:
-        if isinstance(payload, dict):
-            value = payload.get(field_name)
-        else:
-            value = getattr(payload, field_name, None)
-        controls[field_name] = value
-    return controls
-
-
 def _collect_honored_backtest_execution_controls(payload: object) -> dict[str, object]:
     fields = (
         "sizing_mode",
@@ -9149,4 +9083,3 @@ async def websocket_endpoint(ws: WebSocket):
     from forven.api_domains import live_ws
 
     await live_ws.websocket_endpoint(ws)
-

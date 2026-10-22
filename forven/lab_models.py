@@ -92,32 +92,6 @@ class LabRegimeSegment(BaseModel):
     created_at: str
 
 
-class LabStrategyRegimeScore(BaseModel):
-    id: str
-    model_version_id: str
-    strategy_id: str
-    regime: str
-    symbol: str
-    timeframe: str
-    score: float = 0.0
-    metrics_json: dict[str, Any] = Field(default_factory=dict)
-    admission_json: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
-    updated_at: str
-
-
-class LabRegimeContainer(BaseModel):
-    id: str
-    program_id: str | None = None
-    model_version_id: str
-    regime: str
-    score_version: str
-    status: str = "active"
-    meta_json: dict[str, Any] = Field(default_factory=dict)
-    created_at: str
-    updated_at: str
-
-
 class LabRegimeContainerMember(BaseModel):
     id: str
     container_id: str
@@ -126,16 +100,6 @@ class LabRegimeContainerMember(BaseModel):
     score: float
     metrics_json: dict[str, Any] = Field(default_factory=dict)
     admitted: bool = False
-    created_at: str
-
-
-class LabRegimeChampion(BaseModel):
-    id: str
-    container_id: str
-    regime: str
-    strategy_id: str
-    score: float = 0.0
-    rationale_json: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -245,11 +209,6 @@ class QueueJobListResponse(BaseModel):
     total: int
 
 
-class NotImplementedResponse(BaseModel):
-    status: str = "not_implemented"
-    message: str
-
-
 class ModelRebuildRequest(BaseModel):
     program_id: str | None = None
     experiment_id: str
@@ -314,30 +273,6 @@ class BacktestMatrixEnqueueResponse(BaseModel):
     job_id: str
     job_state: LabJobState
     queued_at: str
-
-
-class ContinuousOrchestratorConfig(BaseModel):
-    program_id: str | None = None
-    enabled: bool = False
-    cadence_hours: int = 12
-    symbol: str = "BTC/USDT"
-    regime_timeframe: str = DEFAULT_REGIME_TIMEFRAME
-    execution_timeframe: str = DEFAULT_EXECUTION_TIMEFRAME
-    classifier_type: str = "legacy_rule"
-    classifier_config: dict[str, Any] = Field(default_factory=dict)
-    train_lookback_days: int = 365
-    oos_lookback_days: int = 365
-    min_segment_bars: int = 24
-    max_strategies: int = 16
-    strategy_sources: list[str] = Field(default_factory=lambda: ["active", "graveyard"])
-    score_version: str = "v1"
-    reserve_count: int = 3
-    min_champion_dwell_hours: int = 24
-    min_champion_score_delta: float = 0.08
-    graveyard_required_wins: int = 2
-    auto_start_worker: bool = True
-    refresh_classifier_each_cycle: bool = False
-    matrix_workers: int = 4
 
 
 class ContinuousOrchestratorUpdateRequest(BaseModel):
@@ -435,16 +370,6 @@ class LabStrategyRegimeObservation(BaseModel):
     metrics_json: dict[str, Any] = Field(default_factory=dict)
     admission_json: dict[str, Any] = Field(default_factory=dict)
     created_at: str
-
-
-class UpsertRegimeProgramRequest(BaseModel):
-    program_id: str | None = None
-    symbol: str = "BTC/USDT"
-    regime_timeframe: str = DEFAULT_REGIME_TIMEFRAME
-    execution_timeframe: str = DEFAULT_EXECUTION_TIMEFRAME
-    status: str = "active"
-    notes: str | None = None
-    config_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class RegimeProgramResponse(BaseModel):
