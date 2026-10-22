@@ -21,7 +21,7 @@ These pin the fixes for the audit's "money" group:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -501,75 +501,6 @@ class TestHaltStreakSurvivesContention:
 
 
 # ---------------------------------------------------------------------------
-# ALLOC-FRESH-1 — the live sizing multiplier's freshness gate
-# ---------------------------------------------------------------------------
-
-def _publish_allocation(computed_at: str | None, multiplier: float = 1.75) -> None:
-    from forven.db import kv_set
-    from forven.portfolio_allocator import ALLOCATION_KV_KEY
-
-    snapshot: dict = {
-        "strategies": {STRATEGY_ID: {"risk_multiplier": multiplier, "measured": True}},
-    }
-    if computed_at is not None:
-        snapshot["computed_at"] = computed_at
-    kv_set(ALLOCATION_KV_KEY, snapshot)
-
-
-@pytest.fixture
-def allocator_live_on(forven_db, monkeypatch):
-    import forven.portfolio_allocator as alloc
-
-    monkeypatch.setattr(alloc, "allocator_enabled", lambda settings=None: True)
-    monkeypatch.setattr(alloc, "allocator_live_enabled", lambda settings=None: True)
-    monkeypatch.setattr(alloc, "_last_stale_warn_at", 0.0, raising=False)
-    return alloc
-
-
-def _stale_iso(alloc) -> str:
-    return (
-        datetime.now(timezone.utc) - timedelta(seconds=alloc.SNAPSHOT_MAX_AGE_SECONDS + 60)
-    ).isoformat()
-
-
-class TestAllocatorFreshnessGate:
-    def test_fresh_snapshot_still_scales(self, allocator_live_on):
-        alloc = allocator_live_on
-        _publish_allocation(datetime.now(timezone.utc).isoformat())
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == pytest.approx(1.75)
-
-    def test_stale_snapshot_drops_the_up_sizing(self, allocator_live_on):
-        """This multiplier scales a REAL order. An hourly best-effort KV write
-        that stopped days ago is not evidence for sizing UP."""
-        alloc = allocator_live_on
-        _publish_allocation(_stale_iso(alloc), multiplier=1.75)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == 1.0
-
-    def test_stale_snapshot_never_up_sizes_a_de_risked_strategy(self, allocator_live_on):
-        """The direction that matters: the range is [0.25, 2.0], so "fall back to
-        neutral 1.0" would have sized a strategy the allocator had measured DOWN
-        to 0.25x at up to 4x LARGER on the real order — widening a money bound
-        exactly when the evidence went stale. Staleness may only de-risk."""
-        alloc = allocator_live_on
-        _publish_allocation(_stale_iso(alloc), multiplier=alloc.DEFAULT_MIN_MULTIPLIER)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) <= alloc.DEFAULT_MIN_MULTIPLIER
-
-    def test_missing_computed_at_never_up_sizes(self, allocator_live_on):
-        alloc = allocator_live_on
-        _publish_allocation(None, multiplier=0.5)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == pytest.approx(0.5)
-        _publish_allocation(None, multiplier=1.75)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == 1.0
-
-    def test_unparseable_computed_at_never_up_sizes(self, allocator_live_on):
-        alloc = allocator_live_on
-        _publish_allocation("not-a-timestamp", multiplier=0.4)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == pytest.approx(0.4)
-        _publish_allocation("not-a-timestamp", multiplier=2.0)
-        assert alloc.live_risk_multiplier(STRATEGY_ID) == 1.0
-
-
-# ---------------------------------------------------------------------------
 # FIXED-DOLLAR-1 — `fixed` sizing means fixed DOLLARS
 # ---------------------------------------------------------------------------
 
@@ -705,8 +636,7 @@ class TestMirrorHonorsGlobalHalts:
         assert "Kill-switch" in held["reason"]
 
     def test_global_halt_still_lets_closes_run(self, mirror, monkeypatch):
-        """Reducing risk is never halted — same stance as
-        basket_live.reconcile_basket_live."""
+        """Reducing risk is never halted."""
         from forven.db import get_db
 
         pm, calls, _ = mirror

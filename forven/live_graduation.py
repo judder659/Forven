@@ -14,8 +14,7 @@ closes the detection/decision half of that loop:
   with enough measured fills to mean something — the execution-quality
   watchdog's rule, applied at the graduation decision);
 * eligible candidates get an OPERATOR APPROVAL carrying the full evidence
-  bundle and a proposed arm size: graduation_base_arm_usd × the portfolio
-  allocator's measured live_risk_multiplier, capped at
+  bundle and a proposed arm size: graduation_base_arm_usd, capped at
   graduation_max_arm_usd.
 
 NOTHING here executes. Approving the recommendation records operator intent
@@ -273,16 +272,9 @@ def evaluate_graduation_candidate(strategy: dict, settings: dict | None = None) 
         evidence["engine_artifacts_detail"] = f"unverifiable: {exc}"
         reasons.append(f"engine freshness unverifiable ({exc}) — failing closed")
 
-    multiplier = 1.0
-    try:
-        from forven.portfolio_allocator import live_risk_multiplier
-
-        multiplier = float(live_risk_multiplier(sid))
-    except Exception:
-        multiplier = 1.0
     base_arm = float(_setting("graduation_base_arm_usd", settings))
     max_arm = float(_setting("graduation_max_arm_usd", settings))
-    proposed_arm = round(min(base_arm * multiplier, max_arm), 2)
+    proposed_arm = round(min(base_arm, max_arm), 2)
 
     return {
         "strategy_id": sid,
@@ -293,7 +285,6 @@ def evaluate_graduation_candidate(strategy: dict, settings: dict | None = None) 
         "eligible": not reasons,
         "reasons": reasons,
         "evidence": evidence,
-        "risk_multiplier": round(multiplier, 4),
         "proposed_arm_usd": proposed_arm,
     }
 
@@ -376,8 +367,7 @@ def queue_graduation_recommendations(settings: dict | None = None) -> dict[str, 
                 f"Live-graduation recommendation: {candidate['display_id']} passed soak "
                 f"({candidate['evidence']['soak_days']}d), forward-positive paper PnL, the strict "
                 f"paper->live checklist, and the measured-cost gate. Proposed arm: "
-                f"${candidate['proposed_arm_usd']:.0f} (allocator multiplier "
-                f"{candidate['risk_multiplier']}). Approving records intent ONLY — arming goes "
+                f"${candidate['proposed_arm_usd']:.0f}. Approving records intent ONLY — arming goes "
                 "through the standard typed-GO-LIVE flow."
             ),
             payload={

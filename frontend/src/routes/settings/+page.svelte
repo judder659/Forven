@@ -19,7 +19,6 @@
 
 	// PORT-GATE-1: the Portfolio settings tab exists only while the layer's
 	// master switch (System -> Experimental features) is on.
-	$: portfolioLayerOn = Boolean((settings as Record<string, unknown> | null)?.['portfolio_layer_enabled']);
 
 	let activeArea: SettingsAreaId = 'home';
 	// "#changed": every field that differs from its default, across all areas.
@@ -220,10 +219,10 @@
 		</div>
 	{:else if settings}
 		<div class="flex gap-6">
-			<SettingsSidebar active={showChanged ? 'changed' : activeArea} onChange={setArea} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} />
+			<SettingsSidebar active={showChanged ? 'changed' : activeArea} onChange={setArea} />
 			<div class="flex-1 min-w-0">
 				{#if showChanged}
-					<ChangedSettingsView {settings} hiddenAreas={portfolioLayerOn ? [] : ['portfolio']} onOpenArea={setArea} />
+					<ChangedSettingsView {settings} onOpenArea={setArea} />
 				{:else}
 				{#if areaMeta && activeArea !== 'home'}
 					<div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
@@ -242,10 +241,6 @@
 				{/if}
 				{#if activeArea === 'home'}
 					<SettingsHome {settings} {dashboard} />
-				{:else if activeArea === 'portfolio' && !portfolioLayerOn}
-					<div class="rounded-md border border-sc-line bg-sc-panel p-4 text-xs text-sc-ink2">
-						The portfolio layer is disabled. Enable it under System → Experimental features.
-					</div>
 				{:else}
 					{#key activeArea}
 						<SettingsAreaView area={activeArea} {settings} />

@@ -327,29 +327,6 @@ def test_reentry_verdict_fails_open_but_marks_unverified(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_basket_close_outcome_rejects_a_confirmed_short_fill():
-    """A partial reduce-only fill must not be reported as a completed close."""
-    from forven.basket_live import _close_outcome
-
-    partial = _close_outcome({"exit_price": 100.0, "filled_size": 4.0}, 10.0)
-    assert partial["ok"] is False
-    assert partial["close_outcome"] == "partial"
-    assert partial["residual_units"] == pytest.approx(6.0)
-    assert "residual" in str(partial["error"])
-
-    full = _close_outcome({"exit_price": 100.0, "filled_size": 10.0}, 10.0)
-    assert full["ok"] is True and full["close_outcome"] == "filled"
-
-    rejected = _close_outcome({"error": "close order returned no fill (rejected by exchange)"}, 10.0)
-    assert rejected["ok"] is False and rejected["error"]
-
-    # An ambiguous response (no filled_size at all) stays `ok` — the reconcile
-    # re-reads real venue positions, so it self-corrects — but is stamped so the
-    # ambiguity reaches the ledger instead of being flattened into a green tick.
-    unknown = _close_outcome({"exit_price": 100.0}, 10.0)
-    assert unknown["ok"] is True and unknown["close_outcome"] == "unknown"
-
-
 def test_force_close_rejection_leaves_the_trade_open(forven_db, monkeypatch):
     """close_position's HL-CLOSE-1 error must never be booked as a close."""
     from types import SimpleNamespace

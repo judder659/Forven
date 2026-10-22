@@ -43,7 +43,6 @@ def _live_capture(monkeypatch: pytest.MonkeyPatch, *, equity: float, risk_cap: f
     monkeypatch.setattr("forven.exchange.risk.check_live_strategy_ceiling", lambda *a: (True, "ok"))
     monkeypatch.setattr("forven.exchange.risk.apply_go_live_ceiling", lambda sid, units, price: (units, None))
     monkeypatch.setattr("forven.exchange.risk.live_cohort_ids", lambda: ["SIZE"])
-    monkeypatch.setattr("forven.portfolio_allocator.live_risk_multiplier", lambda sid: 1.0)
     monkeypatch.setattr(scanner, "check_direction_regime_gate", lambda *a, **k: (True, "ok"))
     monkeypatch.setattr(scanner, "_get_real_account_equity", lambda: equity)
     monkeypatch.setattr(scanner, "get_risk_status", lambda: {"limits": {"max_risk_per_trade": risk_cap}})

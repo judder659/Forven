@@ -134,26 +134,3 @@ def test_stale_data_reason_code_is_counter_exempt():
     assert code == "stale_data_artifacts"
     assert "stale_data_artifacts" in _EVIDENCE_ABSENCE_REASON_CODES
 
-
-def test_per_print_funding_conversion_survives_mixed_cadence(fake_lake):
-    from forven.basket_lab import _per_hour_funding_series
-
-    # 400 prints at 8h then 200 prints at 1h, same PER-PRINT rate value.
-    ts8 = pd.date_range("2026-01-01", periods=400, freq="8h", tz="UTC")
-    ts1 = pd.date_range(ts8[-1] + pd.Timedelta(hours=8), periods=200, freq="1h", tz="UTC")
-    frame = pd.DataFrame(
-        {
-            "timestamp": ts8.append(ts1),
-            "funding_rate": np.full(600, 8e-5),
-        }
-    )
-    frame.to_parquet(fake_lake / "BTC-USDT" / "history.parquet")
-
-    index = pd.date_range("2026-01-01", periods=int(400 * 8 + 220), freq="1h", tz="UTC")
-    s = _per_hour_funding_series("BTC/USDT", index)
-    assert s is not None
-    # 8h era: rate/8; 1h era: rate/1 — a single whole-file divisor gets one wrong
-    early = s.loc["2026-01-10"]
-    late = s.loc[ts1[50] : ts1[100]]
-    assert np.allclose(early.dropna(), 1e-5)
-    assert np.allclose(late.dropna(), 8e-5)
