@@ -84,7 +84,6 @@ frontend/                  # SvelteKit frontend
       approval/            #   /approval (Management)
       diagnostics/         #   /diagnostics (Management)
       pipeline/            #   /pipeline (Management)
-      routines/            #   /routines (Management)
       integrations/        #   /integrations (Management; AI clients + MCP servers)
       settings/            #   /settings
       tasks/[id]/          #   /tasks/:id (/tasks redirects to /agents?tab=tasks)

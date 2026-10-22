@@ -79,7 +79,7 @@ _REGISTRY: dict[str, ToolDef] = {}
 # context are allowed by default; the rules below carve out contexts where
 # a category should be denied unless an explicit override re-enables it.
 _CONTEXT_DEFAULT_DENY: dict[str, frozenset[str]] = {
-    # Scheduled (cron) routines should not be running open-ended research
+    # Scheduled brain cycles should not be running open-ended research
     # without explicit operator approval — research tools may have their own
     # rate limits and side effects. Catastrophic tools (factory_reset) have no
     # legitimate autonomous use: a prompt-injected string in any agent output

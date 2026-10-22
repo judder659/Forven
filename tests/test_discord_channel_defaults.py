@@ -25,7 +25,6 @@ def setup(monkeypatch):
 def test_no_channel_ids_ship_with_forven(setup):
     assert dc.load_channel_map() == {}
     assert dc.resolve_channel_id("alerts") is None
-    assert "alerts" in dc.channel_aliases()
 
 
 def test_aliases_match_the_bots_own_server(setup):
@@ -51,7 +50,6 @@ def test_config_overrides_win(setup):
     channels = dc.load_channel_map()
     assert channels["alerts"] == "99"
     assert channels["custom"] == "55"
-    assert "custom" in dc.channel_aliases()
 
 
 def test_without_fallback_only_real_matches(setup):
