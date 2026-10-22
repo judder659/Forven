@@ -20,7 +20,7 @@ log = logging.getLogger("forven.auth.store")
 
 LOCK_PATH = AUTH_FILE.with_suffix(".lock")
 REFRESH_BUFFER_MS = 5 * 60 * 1000  # 5 minutes before expiry
-_SUPPORTED_AUTH_PROVIDERS = {"openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go"}
+_SUPPORTED_AUTH_PROVIDERS = {"openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go", "claude-code"}
 _AUTH_SECRET_FIELDS = {"access", "refresh", "token", "id_token", "api_key", "api_secret"}
 
 # Runtime-only marker attached to a profile whose ciphertext could not be
@@ -449,6 +449,10 @@ def get_token(provider: str) -> str:
     if not profile:
         raise ValueError(f"No auth profile for {provider}. Run: forven auth login {provider}")
 
+    if provider == "claude-code":
+        # Claude Code keeps its own login; Forven never holds a Claude token.
+        return ""
+
     if provider == "lmstudio":
         # LM Studio is a local OpenAI-compatible endpoint and may not require auth.
         return str(
@@ -545,8 +549,8 @@ def credential_status(provider: str) -> str:
     except Exception:
         return "expired"
     # A present, decryptable profile that yields no token is effectively unconfigured
-    # (corrupt/partial write). lmstudio legitimately needs no token.
-    if prov == "lmstudio" or tok:
+    # (corrupt/partial write). lmstudio and claude-code legitimately need no token.
+    if prov in ("lmstudio", "claude-code") or tok:
         return "ok"
     return "missing"
 

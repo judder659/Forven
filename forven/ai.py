@@ -241,6 +241,7 @@ _PROVIDER_ALIAS = {
 _KNOWN_PROVIDER_PREFIXES: frozenset[str] = frozenset({
     "openai", "minimax", "lmstudio", "zai", "openrouter", "groq", "gemini", "anthropic", "deepseek",
     "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go",
+    "claude-code",
     "codex", "openai-codex", "local", "lm-studio", "z.ai", "z-ai",
     "open-router", "open_router",
 })
@@ -257,6 +258,7 @@ _KNOWN_PROVIDER_PREFIXES: frozenset[str] = frozenset({
 _PROVIDER_PASSTHROUGH: frozenset[str] = frozenset({
     "openrouter", "anthropic", "deepseek", "groq", "gemini",
     "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go",
+    "claude-code",
 })
 
 
@@ -1009,6 +1011,13 @@ async def _call_single(
     assert_callable(provider, model, slot=f"call_ai:{provider}")
     token = get_token(provider)
 
+    if provider == "claude-code":
+        from forven.providers import claude_code
+
+        text, _usage = await claude_code.call_text(
+            model, messages, system, response_schema=response_schema,
+        )
+        return text
     if provider == "openai":
         return await _call_openai(
             token,

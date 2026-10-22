@@ -634,8 +634,12 @@ async def _call_with_tools_single(
     # (e.g. MiniMax) raised "Object of type _LazyToolList is not JSON serializable"
     # and the call fell through to a fallback provider.
     active_tools = list(tools or AGENT_TOOLS)
-    impl = get_provider(provider)
     state = current_execution.get()
+    if provider == "claude-code":
+        return await _call_with_tools_claude_code(
+            model_id, messages, system, active_tools, progress, transcript, state,
+        )
+    impl = get_provider(provider)
     last_nonempty_text = ""
     _recent_tool_calls: list[tuple[str, str]] = []
     nudged_for_tool = bool(state and state.checkpoint.get("has_tools"))
@@ -800,6 +804,76 @@ async def _call_with_tools_single(
                     transcript.write("event", content=stuck_nudge, tool_round=round_num)
 
     raise ToolLimitReached("Tool-call limit reached before completion; resume from the saved checkpoint.", last_nonempty_text)
+
+
+async def _call_with_tools_claude_code(
+    model_id: str, messages: list[dict], system: str, active_tools: list[dict],
+    progress: dict | None, transcript: "_TaskTranscript | None", state: "ExecutionState | None",
+) -> tuple[str, dict]:
+    """Hand the whole task to the operator's own ``claude`` program.
+
+    Claude Code runs its own tool loop and calls Forven's tools over MCP
+    (``claude_code_runner``); each call still goes through ``_execute_tool``
+    here, with the same checkpoint, transcript and progress bookkeeping as the
+    loop above. The conversation lives inside ``claude``, so no message list is
+    checkpointed: a resumed task starts again from its original prompt.
+    """
+    from forven.model_selection import assert_callable
+    from .claude_code_runner import run_agent_task as run_in_claude
+
+    assert_callable("claude-code", model_id, slot="agent-tool-call:claude-code")
+    tool_round = 0
+
+    def _tool_start() -> None:
+        # Mark BEFORE execution, as above: fallback is only safe before this.
+        if progress is not None:
+            progress["tools_executed"] = True
+        if state:
+            state.save(provider="claude-code", model_id=model_id, inflight=True, has_tools=True)
+
+    def _tool_done(name: str, args: dict, output: str) -> None:
+        nonlocal tool_round
+        note_progress()
+        log.info("Agent tool call [claude-code %d]: %s(%s)", tool_round + 1, name, json.dumps(args)[:100])
+        if transcript is not None:
+            transcript.write(
+                "tool",
+                tool_name=name,
+                tool_call_id=f"claude-code-{tool_round}",
+                tool_args=json.dumps(args, default=str),
+                tool_result=output,
+                tool_round=tool_round,
+            )
+        tool_round += 1
+        if state:
+            state.save(provider="claude-code", model_id=model_id, inflight=False, has_tools=True)
+
+    def _assistant(text: str, reasoning: str | None, _usage: dict) -> None:
+        note_progress()
+        if transcript is not None:
+            transcript.write("assistant", content=text or None, reasoning=reasoning, tool_round=tool_round)
+
+    text, usage, stop = await run_in_claude(
+        model_id=model_id,
+        messages=messages,
+        system=system,
+        tools=active_tools,
+        max_turns=MAX_TOOL_ROUNDS,
+        execute=_execute_tool,
+        on_tool_start=_tool_start,
+        on_tool_done=_tool_done,
+        on_assistant=_assistant,
+        on_activity=note_progress,
+    )
+    record_response("claude-code", model_id, usage)
+    total_usage = {
+        "input_tokens": usage["input_tokens"],
+        "output_tokens": usage["output_tokens"],
+        "total_tokens": usage["input_tokens"] + usage["output_tokens"],
+    }
+    if stop == "error_max_turns":
+        raise ToolLimitReached("Tool-call limit reached before completion; resume from the saved checkpoint.", text)
+    return text, total_usage
 
 
 _AGENT_TASK_TIMEOUT_SECONDS = DEFAULT_AGENT_TASK_TIMEOUT_SECONDS  # 15-minute hard wall-clock limit per task

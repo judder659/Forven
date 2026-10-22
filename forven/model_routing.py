@@ -28,6 +28,7 @@ _SUPPORTED_PROVIDERS: tuple[str, ...] = (
     "nvidia",
     "opencode-zen",
     "opencode-go",
+    "claude-code",
 )
 _MODEL_ROUTING_STORAGE_KEY = "forven:model-routing"
 _LEGACY_MODEL_ALIASES: dict[str, dict[str, str]] = {}
@@ -53,6 +54,8 @@ _ZAI_PRIMARY_PROVIDER_PRIORITY = [
     # Paid coding-model gateways — below the free tiers by default.
     "opencode-zen",
     "opencode-go",
+    # The operator's own Claude Code login (forven.providers.claude_code).
+    "claude-code",
 ]
 
 # Auxiliary task kinds — small/cheap helper models that run *outside* the
@@ -116,6 +119,7 @@ _DEFAULT_MODEL_ROUTING = {
         "nvidia": "meta/llama-3.3-70b-instruct",
         "opencode-zen": "big-pickle",
         "opencode-go": "glm-5.2",
+        "claude-code": "sonnet",
     },
     # Every default chain is SELF-ONLY (fail-closed): a slot NEVER silently falls
     # back to a provider the operator didn't choose for it. A throttled/failed
@@ -169,6 +173,9 @@ _DEFAULT_MODEL_ROUTING = {
         ],
         "opencode-go": [
             {"provider": "opencode-go", "model_id": "glm-5.2"},
+        ],
+        "claude-code": [
+            {"provider": "claude-code", "model_id": "sonnet"},
         ],
     },
     "auxiliary": copy.deepcopy(_DEFAULT_AUXILIARY_ROUTING),

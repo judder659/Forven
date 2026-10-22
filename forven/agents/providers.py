@@ -1145,6 +1145,37 @@ class AnthropicProvider(ToolCallProvider):
 
 
 # ---------------------------------------------------------------------------
+# Claude Code (the operator's own signed-in `claude` program)
+# ---------------------------------------------------------------------------
+
+class ClaudeCodeProvider(ToolCallProvider):
+    """Single turns through the operator's own Claude Code login.
+
+    Agent tasks never use this per-turn adapter: ``runner`` hands the whole
+    task to ``claude`` (``forven.agents.claude_code_runner``), which calls
+    Forven's tools itself. Surfaces that drive their own turn loop (assistant
+    chat, deep dive) get a plain text answer here, without tools.
+    """
+
+    async def call(self, model_id, messages, system, tools, token):
+        from forven.providers import claude_code
+
+        text, usage = await claude_code.call_text(model_id, messages, system)
+        return ProviderResponse(
+            text=text, stop=True, raw_assistant_message=text, usage=usage,
+        )
+
+    def append_assistant(self, messages, response):
+        messages.append({"role": "assistant", "content": response.text})
+
+    def append_tool_results(self, messages, results):
+        messages.append({
+            "role": "user",
+            "content": "\n\n".join(f"[tool result {tid}]\n{content}" for tid, content in results),
+        })
+
+
+# ---------------------------------------------------------------------------
 # DeepSeek direct (Hermes-inspired Phase 4) — OpenAI-compatible
 # ---------------------------------------------------------------------------
 
@@ -1362,6 +1393,8 @@ def _construct_provider(name: str) -> ToolCallProvider:
         return OpenCodeZenProvider()
     if name == "opencode-go":
         return OpenCodeGoProvider()
+    if name == "claude-code":
+        return ClaudeCodeProvider()
     if name in ("openai", "codex", "openai-codex"):
         # Auth-aware: ChatGPT OAuth tokens route to the Codex Responses backend,
         # API keys to Chat Completions. A bare OpenAIProvider would send OAuth

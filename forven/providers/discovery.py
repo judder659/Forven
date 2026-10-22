@@ -20,12 +20,13 @@ import httpx
 
 from forven.auth.store import get_profile, get_token
 from forven.codex_responses import is_openai_oauth_token
+from forven.providers import claude_code
 from forven.providers.frontier import FRONTIER_MODELS
 
 log = logging.getLogger("forven.api")
 
 
-_SUPPORTED_AUTH_PROVIDERS: list[str] = ["openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go"]
+_SUPPORTED_AUTH_PROVIDERS: list[str] = ["openai", "minimax", "lmstudio", "zai", "openrouter", "anthropic", "deepseek", "groq", "gemini", "cerebras", "mistral", "xai", "together", "nvidia", "opencode-zen", "opencode-go", "claude-code"]
 _AUTH_PROVIDER_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "minimax": "MINIMAX_API_KEY",
@@ -43,6 +44,8 @@ _AUTH_PROVIDER_ENV_VARS = {
     "nvidia": "NVIDIA_API_KEY",
     "opencode-zen": "OPENCODE_ZEN_API_KEY",
     "opencode-go": "OPENCODE_GO_API_KEY",
+    # Claude Code keeps its own login (`claude auth login`); there is no key.
+    "claude-code": "",
 }
 
 _AGENT_MODEL_LIST_CACHE_TTL_SECONDS = 30 * 60
@@ -156,6 +159,7 @@ _MODEL_PROVIDER_DISPLAY_NAMES = {
     "nvidia": "NVIDIA NIM",
     "opencode-zen": "OpenCode Zen",
     "opencode-go": "OpenCode GO",
+    "claude-code": "Claude Code",
 }
 _LOCAL_PROVIDER_DEFAULT_BASE_URLS = {
     "lmstudio": "http://127.0.0.1:1234",
@@ -190,6 +194,7 @@ _AGENT_MODEL_CATALOG = [
     {"provider": "minimax", "model_id": "MiniMax-M2.1-highspeed", "label": "MiniMax M2.1 Highspeed"},
     {"provider": "minimax", "model_id": "MiniMax-M2", "label": "MiniMax M2"},
     {"provider": "lmstudio", "model_id": "local-model", "label": "LM Studio Local Model"},
+    *claude_code.model_catalog(),
     {"provider": "zai", "model_id": "glm-5.1", "label": "Z.AI GLM-5.1"},
     {"provider": "zai", "model_id": "glm-5", "label": "Z.AI GLM-5"},
     {"provider": "zai", "model_id": "glm-5-turbo", "label": "Z.AI GLM-5 Turbo"},
@@ -333,7 +338,7 @@ def _provider_supports_oauth(provider: str) -> bool:
 
 
 def _provider_requires_token(provider: str) -> bool:
-    return provider != "lmstudio"
+    return provider not in ("lmstudio", "claude-code")
 
 
 def _normalize_local_base_url(provider: str, value: object | None, use_default: bool = True) -> str:
