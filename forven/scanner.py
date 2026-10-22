@@ -6242,6 +6242,51 @@ def manage_container_via_kernel(
     return out
 
 
+def _manage_paused_paper_legs(
+    strat_id: str, strat: dict | None, account_equity=None, diagnostics=None,
+) -> list[str]:
+    """Run a live strategy's paused paper legs to their exits. Never raises.
+
+    Probation and live trade a container's home coin only; its other coins pause
+    in paper (no new entries) and resume on demotion. A paper position one of those
+    coins held when the strategy went live still follows its rule to its exit here,
+    instead of sitting open until its stop happens to hit.
+    """
+    if not strat_id or not isinstance(strat, dict) or not _is_live_kernel_stage(strat):
+        return []
+    try:
+        if not (_paper_kernel_execution_enabled() and _live_kernel_execution_enabled()):
+            return []
+        container = _paper_container(strat_id, strat)
+        if not container:
+            return []
+        coins, since = container
+        held = {
+            str(row.get("asset") or "").strip().upper()
+            for row in _get_open_trades(strat_id)
+            if _recorded_row_execution_lane(row) == "paper"
+        }
+        out: list[str] = []
+        legs: dict[str, dict | None] = {}
+        for coin in coins[1:]:
+            if coin not in held:
+                continue
+            leg = {**_container_leg(strat, coin, coins, since.get(coin)), "paper_exits_only": True}
+            leg_diag: dict = {}
+            result = manage_positions_via_kernel(
+                strat_id, leg, account_equity=account_equity, execution_type="paper", diagnostics=leg_diag,
+            )
+            if isinstance(result, list):
+                out.extend(result)
+            legs[coin] = leg_diag.get(strat_id)
+        if diagnostics is not None and legs:
+            diagnostics.setdefault(strat_id, {})["paused_paper_legs"] = legs
+        return out
+    except Exception as exc:
+        log.error("[%s] paused paper legs failed: %s", strat_id, exc, exc_info=True)
+        return []
+
+
 def _kernel_allocate_entry_batch(
     strat_id: str, strat: dict, actions: list, *, equity: float, leverage: float, execution_type: str,
 ) -> None:
@@ -8176,6 +8221,10 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # actions when disabled or on the live path (the gated live path handles its own).
     if is_live or not _scanner_bool_setting("paper_kernel_converge_orphans", True):
         actions_plan = [a for a in actions_plan if a.kind != "orphan_close"]
+    # A paused container leg (its strategy trades live on the home coin) only
+    # exits what it already holds: no new or backfilled trades on this coin.
+    if strat.get("paper_exits_only"):
+        actions_plan = [a for a in actions_plan if a.recorded is not None]
     open_applier = _kernel_open_live_trade if is_live else _kernel_open_paper_trade
     close_applier = _kernel_close_live_trade if is_live else _kernel_close_paper_trade
     label = "live" if is_live else "paper"
@@ -8288,9 +8337,21 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # Resolve cross-asset orphans held out of reconcile above. Paper: flat-close the
     # phantom (no real order). Live: never auto-flatten a REAL position off the wrong
     # asset's price — hold it out of reconcile and surface it for operator review.
+    _live_container_coins: set[str] = set()
+    if is_live and cross_asset_open_rows:
+        _live_container = _paper_container(strat_id, strat)
+        _live_container_coins = set(_live_container[0]) if _live_container else set()
     for _row in cross_asset_open_rows:
         try:
-            if is_live:
+            if is_live and _recorded_row_execution_lane(_row) == "paper":
+                # A paper row costs nothing to settle. One on another coin of the
+                # strategy's container is closed by its paused leg
+                # (_manage_paused_paper_legs); any other is a phantom.
+                if str(_row.get("asset") or "").strip().upper() not in _live_container_coins:
+                    _msg = _kernel_close_cross_asset_orphan(_row)
+                    if _msg:
+                        out.append(_msg)
+            elif is_live:
                 log.warning(
                     "[%s] kernel live: recorded OPEN on %s != strategy asset %s — held out of "
                     "reconcile (not auto-closed); operator should review the stale-asset position",
@@ -8931,6 +8992,7 @@ def _apply_execution_action_item(
     diagnostics = diagnostics_out if diagnostics_out is not None else {}
     before = trade_snapshot(sid)
     actions = _dispatch_execution_action_item(item, account_equity, diagnostics)
+    actions = [*actions, *_manage_paused_paper_legs(sid, item.get("strategy"), account_equity, diagnostics)]
     summary = record_execution_outcome(item, before, trade_snapshot(sid), diagnostics.get(sid, {}), actions)
     diagnostics.setdefault(sid, {}).update(summary)
     return actions
