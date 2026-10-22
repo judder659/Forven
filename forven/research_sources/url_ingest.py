@@ -14,7 +14,6 @@ the operator is told to paste a different source or describe the idea instead.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 from urllib.parse import urlparse
 
@@ -120,12 +119,7 @@ def _github_client_with_optional_pat():
 
 
 def _reddit_oauth_credentials() -> tuple[str | None, str | None]:
-    cfg = (get_research_sources_block() or {}).get("reddit") or {}
-    client_id = cfg.get("client_id") or os.getenv("REDDIT_CLIENT_ID")
-    client_secret = cfg.get("client_secret") or os.getenv("REDDIT_CLIENT_SECRET")
-    cid = client_id if isinstance(client_id, str) and client_id.strip() else None
-    secret = client_secret if isinstance(client_secret, str) and client_secret.strip() else None
-    return cid, secret
+    return reddit.oauth_credentials((get_research_sources_block() or {}).get("reddit"))
 
 
 def _reddit_auth_required_error() -> dict[str, Any]:
@@ -143,12 +137,15 @@ def _reddit_auth_required_error() -> dict[str, Any]:
 
 def _inspect_reddit_with_optional_oauth(permalink: str) -> dict[str, Any]:
     result = reddit.inspect_reddit_thread(permalink)
-    if result.get("ok") or result.get("error_code") != "http_4xx" or result.get("error") != "http 403":
+    # Without a key the public feed is used; a 403 or a long rate limit there
+    # is worth retrying through OAuth when a key is configured.
+    blocked = result.get("error") == "http 403" or result.get("error_code") == "rate_limited"
+    if result.get("ok") or not blocked:
         return result
 
     client_id, client_secret = _reddit_oauth_credentials()
     if not client_id or not client_secret:
-        return _reddit_auth_required_error()
+        return result if result.get("error_code") == "rate_limited" else _reddit_auth_required_error()
 
     token_result = reddit.fetch_oauth_token(client_id, client_secret)
     if not token_result.get("ok"):

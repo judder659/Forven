@@ -115,6 +115,20 @@ def test_fetch_preview_reddit_403_reports_auth_required(monkeypatch):
     assert "client_id/client_secret" in res["error"]
 
 
+def test_fetch_preview_reddit_rate_limit_without_key_says_so(monkeypatch):
+    limited = {"ok": False, "error_code": "rate_limited", "error": "Reddit asked Forven to wait 300s"}
+    monkeypatch.delenv("REDDIT_CLIENT_ID", raising=False)
+    monkeypatch.delenv("REDDIT_CLIENT_SECRET", raising=False)
+    monkeypatch.setattr(
+        "forven.research_sources.url_ingest.get_research_sources_block",
+        lambda: {"reddit": {"client_id": None, "client_secret": None}},
+    )
+    with patch("forven.research_sources.url_ingest.reddit.inspect_reddit_thread", return_value=limited):
+        res = fetch_preview("https://www.reddit.com/r/x/comments/1/")
+    assert res["error_code"] == "rate_limited"
+    assert "wait 300s" in res["error"]
+
+
 def test_fetch_preview_reddit_403_retries_with_oauth(monkeypatch):
     fail = {"ok": False, "error_code": "http_4xx", "error": "http 403"}
     success = {

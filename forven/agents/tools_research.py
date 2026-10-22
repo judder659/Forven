@@ -912,7 +912,11 @@ def _tool_inspect_youtube_video(params: dict) -> str:
 
 @register_tool(
     name="discover_reddit_posts",
-    description="Search Reddit for posts matching a query across registered subreddits (benchmarking-lane only).",
+    description=(
+        "Search Reddit for posts matching a query across registered subreddits (benchmarking-lane only). "
+        "Without a Reddit key this uses Reddit's public feeds, which allow about one Reddit call a minute, "
+        "so search once and inspect only the most promising thread."
+    ),
     input_schema={
         "type": "object",
         "properties": {
@@ -938,7 +942,7 @@ def _tool_discover_reddit_posts(params: dict) -> str:
     if not subs:
         return json.dumps({"ok": False, "error": "no subs configured for reddit"})
     try:
-        from forven.research_sources.reddit import _client, search_reddit_posts
+        from forven.research_sources.reddit import _client, cached_access_token, oauth_credentials, search_reddit_posts
     except ImportError:
         return json.dumps({"ok": False, "error": "reddit research helper unavailable"})
     rate_per_min = _coerce_positive_int(cfg.get("rate_limit_per_min"), 30)
@@ -946,7 +950,9 @@ def _tool_discover_reddit_posts(params: dict) -> str:
     query = str(params.get("query") or "").strip()
     limit = _coerce_positive_int(params.get("limit"), 10)
     try:
-        result = search_reddit_posts(query, subs=list(subs), limit=limit, client=client)
+        # With a Reddit app key, the OAuth API; without one, the public feeds.
+        token = cached_access_token(*oauth_credentials(cfg))
+        result = search_reddit_posts(query, subs=list(subs), limit=limit, client=client, access_token=token)
     except Exception as exc:
         return json.dumps({"ok": False, "error": str(exc) or "reddit search failed"})
     return _wrap_untrusted(result)
@@ -975,14 +981,15 @@ def _tool_inspect_reddit_thread(params: dict) -> str:
     if cfg is None:
         return json.dumps({"ok": False, "error": "reddit source is disabled in research_sources settings"})
     try:
-        from forven.research_sources.reddit import _client, inspect_reddit_thread
+        from forven.research_sources.reddit import _client, cached_access_token, inspect_reddit_thread_with_auth, oauth_credentials
     except ImportError:
         return json.dumps({"ok": False, "error": "reddit research helper unavailable"})
     rate_per_min = _coerce_positive_int(cfg.get("rate_limit_per_min"), 30)
     client = _client(rate_per_min=rate_per_min)
     permalink = str(params.get("permalink") or "").strip()
     try:
-        result = inspect_reddit_thread(permalink, client=client)
+        token = cached_access_token(*oauth_credentials(cfg))
+        result = inspect_reddit_thread_with_auth(permalink, client=client, access_token=token)
     except Exception as exc:
         return json.dumps({"ok": False, "error": str(exc) or "reddit inspect failed"})
     return _wrap_untrusted(result)
