@@ -74,7 +74,7 @@ def _bot_owns_runtime_loops() -> bool:
 
 # Channel alias map lives in forven.discord_channels (shared with the API);
 # config.json "discord_channels" / "discord_owner_id" override the defaults.
-from forven.discord_channels import AVAILABLE_CHANNELS_KV_KEY, load_channel_map
+from forven.discord_channels import AVAILABLE_CHANNELS_KV_KEY, load_channel_map, resolve_channel_id
 
 
 def _load_discord_config() -> tuple[dict, dict, int]:
@@ -88,6 +88,20 @@ def _load_discord_config() -> tuple[dict, dict, int]:
 
 
 CHANNELS, CHANNEL_NAMES, OWNER_ID = _load_discord_config()
+
+
+def _channel_id(alias) -> str | None:
+    """Channel id for an alias. Falls back to a fresh lookup, so a process
+    started before the bot first connected still finds the server's channels."""
+    return CHANNELS.get(str(alias)) or resolve_channel_id(alias)
+
+
+def refresh_channel_map() -> None:
+    """Re-resolve aliases (e.g. after the bot publishes its server's channels)."""
+    global CHANNELS, CHANNEL_NAMES
+    CHANNELS, CHANNEL_NAMES, _ = _load_discord_config()
+    refresh_respond_channels()
+
 
 def _load_respond_channels() -> set[str]:
     """Limit conversational bot replies to a small operator-approved set."""
@@ -105,7 +119,10 @@ def _load_respond_channels() -> set[str]:
             aliases = [item.strip() for item in configured.split(",") if item.strip()]
         else:
             aliases = list(DEFAULT_RESPONSE_CHANNEL_ALIASES)
-    return {channel_id for alias, channel_id in CHANNELS.items() if alias in aliases}
+    # Only real matches: an alias with no channel of its own must not make the
+    # bot chat in the catch-all channel.
+    matched = load_channel_map(fallback=False)
+    return {channel_id for alias, channel_id in matched.items() if alias in aliases}
 
 
 # Channels where the bot should respond conversationally (no prefix needed)
@@ -674,6 +691,7 @@ class ForvenBot(commands.Bot):
                     "channels": channels,
                 },
             )
+            refresh_channel_map()
         except Exception:
             log.debug("Failed to publish available Discord channels", exc_info=True)
 
@@ -857,7 +875,7 @@ class ForvenBot(commands.Bot):
         log_activity("info", "bot", boot_msg)
 
         try:
-            channel = self.get_channel(int(CHANNELS.get("general", "0")))
+            channel = self.get_channel(int(_channel_id("general") or "0"))
             if channel:
                 await channel.send(f"```\n{boot_msg}\n```")
         except Exception as e:
@@ -902,7 +920,7 @@ class ForvenBot(commands.Bot):
                 assigned_channel = AGENT_CHANNEL_MAP.get(self.agent_id or "", "")
             except Exception:
                 assigned_channel = ""
-            assigned_channel_id = str(CHANNELS.get(assigned_channel, "")) if assigned_channel else ""
+            assigned_channel_id = str(_channel_id(assigned_channel) or "") if assigned_channel else ""
             if not is_dm:
                 if assigned_channel_id and channel_id != assigned_channel_id and not mentioned:
                     return
@@ -1608,7 +1626,7 @@ class ForvenBot(commands.Bot):
 
                 if isinstance(result, dict) and result.get("error") and target_channel:
                     try:
-                        channel_id = CHANNELS.get(str(target_channel), str(target_channel))
+                        channel_id = (_channel_id(target_channel) or str(target_channel))
                         channel = self.get_channel(int(channel_id))
                         if not channel:
                             channel = await self.fetch_channel(int(channel_id))
@@ -1624,7 +1642,7 @@ class ForvenBot(commands.Bot):
                 log.error("Agent %s task %d error: %s", agent_dict["id"], task_dict["id"], e)
                 if target_channel:
                     try:
-                        channel_id = CHANNELS.get(str(target_channel), str(target_channel))
+                        channel_id = (_channel_id(target_channel) or str(target_channel))
                         channel = self.get_channel(int(channel_id))
                         if not channel:
                             channel = await self.fetch_channel(int(channel_id))
@@ -1742,7 +1760,7 @@ class ForvenBot(commands.Bot):
                         )
                     if delivery_channel:
                         try:
-                            channel_id = CHANNELS.get(delivery_channel, delivery_channel)
+                            channel_id = (_channel_id(delivery_channel) or delivery_channel)
                             channel = self.get_channel(int(channel_id))
                             if not channel:
                                 channel = await self.fetch_channel(int(channel_id))
@@ -1928,7 +1946,7 @@ class ForvenBot(commands.Bot):
                 if delivery_channel:
                     try:
                         # Resolve string channel names to IDs
-                        channel_id = CHANNELS.get(delivery_channel, delivery_channel)
+                        channel_id = (_channel_id(delivery_channel) or delivery_channel)
                         channel = self.get_channel(int(channel_id))
                         if not channel:
                             channel = await self.fetch_channel(int(channel_id))
@@ -2007,7 +2025,7 @@ def get_bot() -> ForvenBot:
 
 async def send(channel_name: str, message: str, channel_id: str | None = None, agent_id: str | None = None):
     """Send a message to a named channel or specific channel ID."""
-    target_id = channel_id or CHANNELS.get(channel_name)
+    target_id = channel_id or _channel_id(channel_name)
     if not target_id:
         raise ValueError(f"Unknown channel: {channel_name}. Available: {list(CHANNELS.keys())}")
 
@@ -2027,7 +2045,7 @@ async def send(channel_name: str, message: str, channel_id: str | None = None, a
 
 async def send_thread(channel_name: str, title: str, message: str, channel_id: str | None = None, embeds: list[dict] | None = None, agent_id: str | None = None):
     """Send a message into a newly created thread in a named channel."""
-    target_id = channel_id or CHANNELS.get(channel_name)
+    target_id = channel_id or _channel_id(channel_name)
     if not target_id:
         raise ValueError(f"Unknown channel: {channel_name}")
 
@@ -2137,7 +2155,7 @@ def send_thread_sync(channel_name: str, title: str, message: str, channel_id: st
         if delivered is not None:
             return delivered
 
-    target_id = channel_id or CHANNELS.get(channel_name)
+    target_id = channel_id or _channel_id(channel_name)
     if not target_id:
         raise ValueError(f"Unknown channel: {channel_name}")
     if _discord_channel_circuit_open(target_id):
@@ -2203,7 +2221,7 @@ def send_sync(channel_name: str, message: str, channel_id: str | None = None) ->
         if delivered is not None:
             return delivered
 
-    target_id = channel_id or CHANNELS.get(channel_name)
+    target_id = channel_id or _channel_id(channel_name)
     if not target_id:
         raise ValueError(f"Unknown channel: {channel_name}")
     if _discord_channel_circuit_open(target_id):
@@ -2344,7 +2362,7 @@ def run_discord_audit(send_probe: bool = False) -> dict:
                 "actor": "gateway",
                 "token": main_token,
                 "channel_alias": alias,
-                "channel_id": CHANNELS.get(alias),
+                "channel_id": _channel_id(alias),
                 "probe_send": send_probe,
             }
         )
