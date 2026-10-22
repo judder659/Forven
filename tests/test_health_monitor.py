@@ -247,6 +247,29 @@ class TestAlertDispatch:
             assert mock_emit.call_args[1]["severity"] == "info"
             assert mock_emit.call_args[1]["channel_name"] == "heartbeat"
 
+    def test_amber_blip_without_warning_sends_no_recovery(self):
+        state = HealthState()
+        green = {"ai_providers": ComponentStatus(name="ai_providers", state=State.GREEN, message="ok")}
+        amber = {"ai_providers": ComponentStatus(name="ai_providers", state=State.AMBER, message="slow")}
+
+        with patch(_EMIT_TARGET) as mock_emit:
+            _dispatch_alerts(state, green, amber)
+            _dispatch_alerts(state, amber, green)
+            mock_emit.assert_not_called()
+
+    def test_recovery_after_sent_warning_still_fires(self):
+        state = HealthState()
+        green = {"scheduler": ComponentStatus(name="scheduler", state=State.GREEN, message="ok")}
+        amber = {"scheduler": ComponentStatus(name="scheduler", state=State.AMBER, message="slow")}
+
+        with patch(_EMIT_TARGET):
+            _dispatch_alerts(state, green, amber)
+            _dispatch_alerts(state, green, amber)  # second entry reaches the warn threshold
+        with patch(_EMIT_TARGET) as mock_emit:
+            _dispatch_alerts(state, amber, green)
+            mock_emit.assert_called_once()
+            assert mock_emit.call_args[0][0] == "health_recovery"
+
     def test_no_change_no_alert(self):
         state = HealthState()
         cs = ComponentStatus(name="scheduler", state=State.GREEN)

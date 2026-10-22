@@ -126,6 +126,9 @@ class HealthState:
         self._alerts: deque[HealthAlert] = deque(maxlen=HEALTH_MAX_ALERTS)
         self._last_alerted: dict[str, datetime] = {}
         self._consecutive_warns: dict[str, int] = {}
+        # Components whose current AMBER episode actually sent a warning. An
+        # AMBER blip that never warned must not send a "Recovered" notice.
+        self._warned: set[str] = set()
         self._recovery_counts: dict[str, list[float]] = {}  # timestamps
         self._checked_at: datetime | None = None
 
@@ -196,6 +199,15 @@ class HealthState:
 
     def clear_warn(self, component: str) -> None:
         self._consecutive_warns.pop(component, None)
+
+    def mark_warned(self, component: str) -> None:
+        self._warned.add(component)
+
+    def pop_warned(self, component: str) -> bool:
+        """True if a warning went out since the component was last GREEN."""
+        warned = component in self._warned
+        self._warned.discard(component)
+        return warned
 
     def get_warn_count(self, component: str) -> int:
         return self._consecutive_warns.get(component, 0)
@@ -908,6 +920,13 @@ def _dispatch_alerts(
         # State improved — recovery
         if new_state == State.GREEN and old_state in (State.AMBER, State.RED):
             state.clear_warn(name)
+            warned = state.pop_warned(name)
+            if old_state == State.AMBER and not warned:
+                # A short AMBER blip below the warning threshold never told the
+                # operator anything, so a "Recovered" notice would be pure noise
+                # (the ai_providers check flapped this way on every one-off
+                # provider timeout).
+                continue
             dedupe_key = f"{base_key}:recovery"
             alert = HealthAlert(
                 severity=Severity.INFO,
@@ -991,6 +1010,7 @@ def _dispatch_alerts(
                     )
                     if _notification_landed(result):
                         state.mark_notified(dedupe_key)
+                        state.mark_warned(name)
                 except Exception:
                     log.warning("Failed to emit warning notification for %s", name)
             continue
@@ -1341,7 +1361,10 @@ def check_ai_providers() -> ComponentStatus:
     is what lets a provider outage light the prominent CriticalAlertsBanner.
     """
     try:
-        from forven.provider_runtime_health import get_provider_health_runtime
+        from forven.provider_runtime_health import (
+            get_provider_health_runtime,
+            is_persistently_degraded,
+        )
 
         runtime = get_provider_health_runtime()
     except Exception as exc:
@@ -1350,7 +1373,9 @@ def check_ai_providers() -> ComponentStatus:
         return ComponentStatus(name="ai_providers", state=State.AMBER, message=f"Check failed: {exc}")
 
     down = [e for e in runtime if e.get("state") == "down"]
-    degraded = [e for e in runtime if e.get("state") == "degraded"]
+    # One-off timeouts between successful calls stay GREEN (see
+    # DEGRADED_STREAK_THRESHOLD); auth/quota failures stay RED immediately.
+    degraded = [e for e in runtime if is_persistently_degraded(e)]
     if down:
         names = ", ".join(f"{e.get('provider')} ({e.get('kind')})" for e in down)
         return ComponentStatus(
