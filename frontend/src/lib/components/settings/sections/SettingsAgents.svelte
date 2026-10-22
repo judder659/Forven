@@ -91,6 +91,21 @@
 		}
 	}
 
+	// Claude Code keeps its own login; connecting only checks it is signed in.
+	async function connectCliProvider(provider: string) {
+		setProviderBusy(provider, true);
+		setProviderError(provider, null);
+		try {
+			await setForvenAuthProvider(provider, {});
+			setProviderMessage(provider, 'Connected');
+			await loadAuthProviders();
+		} catch (e) {
+			setProviderError(provider, e instanceof Error ? e.message : 'Failed to connect');
+		} finally {
+			setProviderBusy(provider, false);
+		}
+	}
+
 	async function saveProviderBaseUrl(provider: string) {
 		const url = (providerBaseUrlInput[provider] ?? '').trim();
 		if (!url) {
@@ -324,7 +339,7 @@
 					{@const msg = providerActionMessage[key]}
 					{@const err = providerActionError[key]}
 					{@const oauth = providerOAuthState[key]}
-					{@const isBaseUrlProvider = provider.requires_token === false && !provider.supports_oauth}
+					{@const isBaseUrlProvider = provider.connect_mode !== 'cli' && provider.requires_token === false && !provider.supports_oauth}
 					{@const statusColor =
 						provider.status === 'active'
 							? 'text-emerald-400 border-emerald-900 bg-emerald-500/10'
@@ -511,7 +526,22 @@
 								</p>
 							{:else}
 								<div class="flex flex-wrap items-end gap-2">
-									{#if isBaseUrlProvider}
+									{#if provider.connect_mode === 'cli'}
+										<p class="flex-1 min-w-[14rem] text-xs text-sc-ink2">
+											Runs the Claude Code program on this computer with its own login (your Claude plan or an API key).
+											{#if provider.cli && !provider.cli.logged_in}
+												Sign in first from a terminal: <span class="font-mono text-sc-ink">{provider.login_command}</span>
+											{/if}
+										</p>
+										<button
+											type="button"
+											on:click={() => connectCliProvider(key)}
+											disabled={busy}
+											class="terminal-button-primary text-[12px]"
+										>
+											{busy ? 'Checking…' : 'Connect'}
+										</button>
+									{:else if isBaseUrlProvider}
 										<label class="flex-1 min-w-[14rem]">
 											<span class="block text-xs text-sc-ink2 mb-1">Base URL</span>
 											<input

@@ -768,7 +768,59 @@ def _status_from_expiry(expires_ms: int | None) -> tuple[str, str | None]:
     return "active", f"{minutes}m remaining"
 
 
+def _build_claude_code_provider_payload() -> dict:
+    """Claude Code keeps its own login, so its card reports the local install.
+
+    "configured" means the operator connected it here; the status says whether
+    ``claude`` is installed and signed in right now.
+    """
+    from forven.providers import claude_code
+
+    connected_here = bool(get_profile(claude_code.PROVIDER))
+    cli = claude_code.auth_status()
+    ready = bool(cli["installed"] and cli["logged_in"])
+    detail = None if ready else cli["error"]
+    if not connected_here:
+        status = "not_configured"
+    else:
+        status = "active" if ready else "needs_reauth"
+    payload = {
+        "provider": claude_code.PROVIDER,
+        "configured": connected_here,
+        "status": status,
+        "expires_at": None,
+        "expires_in": None,
+        "has_refresh_token": False,
+        "login_command": claude_code.LOGIN_COMMAND,
+        "refresh_command": claude_code.LOGIN_COMMAND,
+        "supports_oauth": False,
+        "requires_token": False,
+        "base_url": None,
+        "connect_mode": "cli",
+        "cli": {
+            "installed": bool(cli["installed"]),
+            "logged_in": bool(cli["logged_in"]),
+            "auth_method": cli["auth_method"],
+            "path": cli["cli_path"],
+            "detail": detail,
+            "install_url": claude_code.INSTALL_URL,
+        },
+    }
+    try:
+        from forven import model_selection
+
+        payload["connected"] = model_selection.provider_is_connected(claude_code.PROVIDER) and ready
+    except Exception:
+        payload["connected"] = connected_here and ready
+    payload["reconnect_required"] = connected_here and not ready
+    if detail and connected_here:
+        payload["last_refresh_error"] = detail
+    return payload
+
+
 def _build_auth_provider_payload(provider: str) -> dict:
+    if provider == "claude-code":
+        return _build_claude_code_provider_payload()
     profile = get_profile(provider) or {}
     token = str(profile.get("access") or profile.get("token") or profile.get("api_key") or "").strip()
     base_url = _get_provider_base_url(provider, profile)
@@ -4627,8 +4679,33 @@ def get_agent_model_options(refresh: bool = False):
     return _legacy_agent_model_options(force_refresh=refresh)
 
 
+def _connect_claude_code() -> dict:
+    """Connect the operator's own signed-in Claude Code. No credential is sent
+    or stored: Forven only records that it may run ``claude``."""
+    from forven.providers import claude_code
+
+    cli = claude_code.auth_status(force=True)
+    if not cli["installed"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{cli['error']} Install it from {claude_code.INSTALL_URL}, sign in, then connect again.",
+        )
+    if not cli["logged_in"]:
+        raise HTTPException(status_code=400, detail=f"{cli['error']} Then connect again.")
+    upsert_profile(claude_code.PROVIDER, {"auth_method": cli["auth_method"] or "unknown"})
+    try:
+        from forven.model_selection import mark_provider_connected
+
+        mark_provider_connected(claude_code.PROVIDER)
+    except Exception:
+        log.exception("failed to mark %s connected", claude_code.PROVIDER)
+    return {"ok": True, "provider": claude_code.PROVIDER}
+
+
 def upsert_auth_provider(provider: str, body: AuthProviderProfileBody):
     normalized_provider = _normalize_auth_provider(provider)
+    if normalized_provider == "claude-code":
+        return _connect_claude_code()
     existing_profile = get_profile(normalized_provider) or {}
 
     access_token = str((body.access_token or body.access or body.token or body.api_key or "").strip())
@@ -4760,10 +4837,36 @@ def _verify_provider_key(provider: str, token: str) -> tuple[str, str]:
     return "unreachable", last_error or "no endpoint responded"
 
 
+def _test_claude_code() -> dict:
+    """Ask the operator's own ``claude`` for a one-word answer."""
+    import asyncio
+
+    from forven.providers import claude_code
+
+    claude_code.clear_auth_cache()
+    try:
+        text, _usage = asyncio.run(claude_code.call_text(
+            "haiku", [{"role": "user", "content": "Reply with the single word OK."}], "You are terse.",
+            timeout=120,
+        ))
+    except claude_code.ClaudeCodeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    cli = claude_code.auth_status()
+    method = {"claude.ai": "your Claude plan", "api_key": "an API key"}.get(str(cli["auth_method"]), cli["auth_method"] or "its own login")
+    return {
+        "ok": True,
+        "provider": claude_code.PROVIDER,
+        "status": _build_auth_provider_payload(claude_code.PROVIDER)["status"],
+        "message": f"Claude Code answered ({text.strip()[:40]}), signed in with {method}",
+    }
+
+
 def test_auth_provider(provider: str):
     normalized_provider = _normalize_auth_provider(provider)
     if not get_profile(normalized_provider):
         raise HTTPException(status_code=404, detail=f"provider profile not configured: {normalized_provider}")
+    if normalized_provider == "claude-code":
+        return _test_claude_code()
 
     if normalized_provider == "lmstudio":
         profile = get_profile(normalized_provider) or {}

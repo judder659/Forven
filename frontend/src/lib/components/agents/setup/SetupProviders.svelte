@@ -119,6 +119,7 @@
 	}
 
 	function accessText(provider: ForvenAuthProviderStatus): string {
+		if (provider.connect_mode === 'cli') return 'Your own Claude Code login on this computer';
 		if (provider.requires_token === false && !provider.supports_oauth) return 'Local server: needs its base URL';
 		return provider.supports_oauth ? 'Sign in, or paste an API key' : 'Paste an API key';
 	}
@@ -171,6 +172,10 @@
 								<dt class="text-sc-ink3">Sign-in</dt>
 								<dd class="m-0 text-sc-ink2">{provider.expires_in}</dd>
 							{/if}
+							{#if provider.connect_mode === 'cli' && provider.cli}
+								<dt class="text-sc-ink3">Login</dt>
+								<dd class="m-0 truncate text-sc-ink2" title={provider.cli.path ?? ''}>{provider.cli.logged_in ? (provider.cli.auth_method === 'claude.ai' ? 'Your Claude plan' : provider.cli.auth_method === 'api_key' ? 'An API key' : (provider.cli.auth_method ?? 'Signed in')) : (provider.cli.detail ?? 'Not signed in')}</dd>
+							{/if}
 							{#if provider.base_url}
 								<dt class="text-sc-ink3">Server</dt>
 								<dd class="m-0 truncate font-plex-mono text-[11.5px] text-sc-ink2">{provider.base_url}</dd>
@@ -184,7 +189,7 @@
 						{:else}
 							<div class="flex flex-wrap gap-1.5 pt-0.5">
 								<button type="button" class="rounded border border-sc-line2 px-2 py-0.5 text-[11.5px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40" disabled={busy !== null} on:click={() => test(key)}>{busy === `test:${key}` ? 'Testing…' : 'Test'}</button>
-								<button type="button" class={`rounded border px-2 py-0.5 text-[11.5px] disabled:opacity-40 ${state.key === 'reauth' ? 'border-[#7fb2ff]/50 text-[#a9cbff] hover:border-[#7fb2ff]' : 'border-sc-line2 text-sc-ink2 hover:border-sc-ink hover:text-sc-ink'}`} disabled={busy !== null} on:click={() => (reauthing = key)}>{provider.supports_oauth ? 'Sign in again' : 'Replace key'}</button>
+								<button type="button" class={`rounded border px-2 py-0.5 text-[11.5px] disabled:opacity-40 ${state.key === 'reauth' ? 'border-[#7fb2ff]/50 text-[#a9cbff] hover:border-[#7fb2ff]' : 'border-sc-line2 text-sc-ink2 hover:border-sc-ink hover:text-sc-ink'}`} disabled={busy !== null} on:click={() => (reauthing = key)}>{provider.connect_mode === 'cli' ? 'Check sign-in' : provider.supports_oauth ? 'Sign in again' : 'Replace key'}</button>
 								{#if state.key === 'down' || state.key === 'degraded'}
 									<button type="button" class="rounded border border-sc-line2 px-2 py-0.5 text-[11.5px] text-sc-ink2 hover:border-sc-ink hover:text-sc-ink disabled:opacity-40" disabled={busy !== null} title="Forget the recorded failures; the next call records a fresh state." on:click={() => clearStatus(key)}>{busy === `clear:${key}` ? 'Clearing…' : 'Clear status'}</button>
 								{/if}

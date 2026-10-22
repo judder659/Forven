@@ -120,6 +120,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 	together: 'Together AI',
 	'opencode-zen': 'OpenCode Zen',
 	'opencode-go': 'OpenCode GO',
+	'claude-code': 'Claude Code',
 	lmstudio: 'LM Studio',
 	nvidia: 'NVIDIA',
 };

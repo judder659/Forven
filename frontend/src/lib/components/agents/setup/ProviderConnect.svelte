@@ -34,7 +34,8 @@
 
 	$: key = String(provider.provider);
 	$: name = providerLabel(key);
-	$: usesBaseUrl = provider.requires_token === false && !provider.supports_oauth;
+	$: usesCli = provider.connect_mode === 'cli';
+	$: usesBaseUrl = !usesCli && provider.requires_token === false && !provider.supports_oauth;
 
 	let token = '';
 	let baseUrl = '';
@@ -68,6 +69,25 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	/** Claude Code keeps its own login: connecting just checks it is signed in. */
+	async function connectCli() {
+		busy = true;
+		error = null;
+		try {
+			await setForvenAuthProvider(key, {});
+			dispatch('connected');
+		} catch (err) {
+			error = err instanceof Error ? err.message : `${name} could not be connected.`;
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function copyLoginCommand() {
+		copied = await copyTextToClipboard(provider.login_command);
+		if (copied) setTimeout(() => (copied = false), 2000);
 	}
 
 	async function saveBaseUrl() {
@@ -245,6 +265,32 @@
 					<button type="button" class="rounded-md border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" on:click={copyLink}>{copied ? 'Copied' : 'Copy link'}</button>
 				{/if}
 				<button type="button" class="rounded-md border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" on:click={cancelOAuth}>Cancel</button>
+			</div>
+		</div>
+	{:else if usesCli}
+		<div class="grid gap-2 text-[12px] text-sc-ink2">
+			<p class="m-0">
+				Forven runs the {name} program on this computer, so usage counts against whatever {name} is signed in with (your Claude plan or an API key). Forven never sees or stores that login.
+			</p>
+			{#if provider.cli && !provider.cli.installed}
+				<p class="m-0 text-[#e7b24a]">
+					{name} is not installed here.
+					{#if provider.cli.install_url}<a class="text-sc-ink underline" href={provider.cli.install_url} on:click|preventDefault={() => provider.cli?.install_url && openExternal(provider.cli.install_url)}>Install it ↗</a>,{/if}
+					sign in, then connect.
+				</p>
+			{:else if provider.cli && !provider.cli.logged_in}
+				<p class="m-0 text-[#e7b24a]">{name} is installed but not signed in.</p>
+			{/if}
+			{#if !provider.cli?.logged_in}
+				<p class="m-0 flex flex-wrap items-center gap-2">
+					Sign in once from a terminal:
+					<span class="rounded border border-sc-line2 bg-sc-bg px-1.5 py-0.5 font-plex-mono text-sc-ink">{provider.login_command}</span>
+					<button type="button" class="rounded border border-sc-line2 px-2 py-0.5 text-[11.5px] text-sc-ink2 hover:text-sc-ink" on:click={copyLoginCommand}>{copied ? 'Copied' : 'Copy'}</button>
+				</p>
+			{/if}
+			<div class="flex flex-wrap items-center gap-2">
+				<button type="button" class="rounded-md bg-sc-ink px-3 py-1.5 text-[12px] font-medium text-black hover:bg-white disabled:opacity-40" disabled={busy} on:click={connectCli}>{busy ? 'Checking…' : 'Connect'}</button>
+				<button type="button" class="rounded-md border border-sc-line2 px-3 py-1.5 text-[12px] text-sc-ink2 hover:text-sc-ink" on:click={() => dispatch('cancel')}>Cancel</button>
 			</div>
 		</div>
 	{:else if usesBaseUrl}

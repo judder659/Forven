@@ -75,7 +75,11 @@ _PROVIDER_ALIASES: dict[str, str] = {
 # opposite error — charging a genuinely-free local model the priciest rate we
 # ship — pauses the whole agent loop on $0.00 of real spend, which is the worse
 # failure and the one this exemption exists to prevent (AI-04 review).
-FREE_LOCAL_PROVIDERS: frozenset[str] = frozenset({"lmstudio", "ollama", "llamacpp"})
+#
+# Claude Code (``claude-code``) is listed too: it runs the operator's own
+# Claude Code login, so usage comes out of their Claude plan, not a per-token
+# bill Forven can price.
+FREE_LOCAL_PROVIDERS: frozenset[str] = frozenset({"lmstudio", "ollama", "llamacpp", "claude-code"})
 
 _ZERO_RATE: tuple[float, float] = (0.0, 0.0)
 

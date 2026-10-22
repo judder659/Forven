@@ -21,7 +21,8 @@ export type ForvenProvider =
 	| 'xai'
 	| 'together'
 	| 'opencode-zen'
-	| 'opencode-go';
+	| 'opencode-go'
+	| 'claude-code';
 
 // ============== Forven Classic Compatibility ==============
 
@@ -614,6 +615,17 @@ export interface ForvenAuthProviderStatus {
 	base_url?: string | null;
 	last_refresh_error?: string | null;
 	last_refresh_at?: string | null;
+	/** 'cli': a program on this computer that keeps its own login (Claude Code). */
+	connect_mode?: 'cli';
+	/** The local program's install and sign-in state, for connect_mode 'cli'. */
+	cli?: {
+		installed: boolean;
+		logged_in: boolean;
+		auth_method?: string | null;
+		path?: string | null;
+		detail?: string | null;
+		install_url?: string | null;
+	};
 }
 
 export interface ForvenAuthProviderProfilePayload {

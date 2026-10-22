@@ -139,11 +139,12 @@ def unmark_provider_connected(provider: str) -> None:
         log.info("provider %s unmarked (disconnected)", p)
 
 
+# Claude Code keeps its own login, so it is keyless here too.
 # Local OpenAI-compatible servers (e.g. LM Studio) are keyless: get_token()
 # returns "" by design and there is no spend to authorize. For these a
 # configured profile (a base URL) is enough to be usable — requiring a bearer
 # token would make them permanently unconnectable AND uncallable.
-_KEYLESS_PROVIDERS = {"lmstudio"}
+_KEYLESS_PROVIDERS = {"lmstudio", "claude-code"}
 
 
 def _provider_has_token(provider: str) -> bool:
