@@ -32,6 +32,65 @@ def _hl_coin(fs_symbol: str) -> str:
     return fs_symbol.split("-", 1)[0]
 
 
+# Hyperliquid lists Binance's 1000x tickers with a lowercase k prefix
+# (1000PEPE trades as kPEPE).
+_THOUSAND_PREFIX = "1000"
+_LISTED_TTL_SECONDS = 3600.0
+_listed_cache: dict = {"at": 0.0, "coins": None}
+
+
+def hl_listed_coins() -> dict[str, str] | None:
+    """Hyperliquid's listed perps as {UPPERCASE: exact name}, cached for an hour.
+
+    None when the listing can't be read, so callers fail open and fetch as before.
+    """
+    import time
+
+    from forven.market_data import post_hyperliquid_info
+
+    now = time.monotonic()
+    cached = _listed_cache.get("coins")
+    if cached is not None and now - float(_listed_cache.get("at") or 0.0) < _LISTED_TTL_SECONDS:
+        return cached
+    try:
+        meta = post_hyperliquid_info({"type": "meta"})
+        universe = meta.get("universe") if isinstance(meta, dict) else None
+        coins = {
+            str(a.get("name")).upper(): str(a.get("name"))
+            for a in universe or []
+            if isinstance(a, dict) and a.get("name")
+        }
+    except Exception as exc:  # noqa: BLE001 - listing is an optimisation, never a blocker
+        log.debug("Hyperliquid listing unavailable: %s", exc)
+        return cached
+    if not coins:
+        return cached
+    _listed_cache.update(at=now, coins=coins)
+    return coins
+
+
+def resolve_hl_coin(fs_symbol: str) -> str:
+    """The exact Hyperliquid perp name for a lake symbol.
+
+    Hyperliquid answers a candle request for a coin it doesn't list with an
+    HTTP 500, which the collector treated as a passing glitch and retried every
+    few minutes forever (HOT, RPL, SYN, TLM). Raise an "unknown symbol" error
+    instead, so the collector backs off and freezes the series like any other
+    unlisted symbol, and map 1000x tickers to Hyperliquid's k names.
+    """
+    base = _hl_coin(fs_symbol).upper()
+    listed = hl_listed_coins()
+    if listed is None:
+        return base
+    if base in listed:
+        return listed[base]
+    if base.startswith(_THOUSAND_PREFIX):
+        alias = "K" + base[len(_THOUSAND_PREFIX):]
+        if alias in listed:
+            return listed[alias]
+    raise ValueError(f"unknown symbol: {base} is not listed on Hyperliquid perps")
+
+
 def collect_hl_series(symbol: str, timeframe: str) -> int:
     """Incrementally persist HL candles for one (symbol, timeframe).
     Returns rows added. Raises on venue failure (callers tally per-symbol)."""
@@ -51,7 +110,7 @@ def collect_hl_series(symbol: str, timeframe: str) -> int:
     else:
         bars = _SEED_BARS
 
-    frame = fetch_hyperliquid_candles(_hl_coin(fs_symbol), bars=bars, interval=timeframe, clean=False)
+    frame = fetch_hyperliquid_candles(resolve_hl_coin(fs_symbol), bars=bars, interval=timeframe, clean=False)
     if frame is None or frame.empty:
         return 0
     # fetch_hyperliquid_candles returns a UTC-indexed frame; the lake writer
@@ -100,7 +159,7 @@ def repair_hl_gaps(symbol: str, timeframe: str) -> dict:
         # Fetch from the earliest repairable gap to now in a single API request.
         bars = min(_MAX_TAIL_BARS, (now_ms - min(start for start, _ in eligible)) // tf_ms + 1)
         fetched = fetch_hyperliquid_candles(
-            _hl_coin(fs_symbol), bars=int(bars), interval=timeframe, end_time=now_ms, clean=False,
+            resolve_hl_coin(fs_symbol), bars=int(bars), interval=timeframe, end_time=now_ms, clean=False,
         )
         if fetched is not None and not fetched.empty:
             out = fetched.reset_index()
