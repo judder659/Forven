@@ -1805,7 +1805,7 @@ class ForvenBot(commands.Bot):
                         # Brain tools
                         "assign_agent_task", "promote_strategy", "create_strategy",
                         # Backtesting tools
-                        "forven_run_backtest", "forven_list_datasets", "forven_get_results",
+                        "forven_run_backtest", "list_local_datasets", "forven_get_results",
                     }
                     chat_tools = [t for t in AGENT_TOOLS + BRAIN_TOOLS + BACKTESTING_TOOLS if t["name"] in _chat_tool_names]
                     if chat_tools:
@@ -1819,7 +1819,7 @@ class ForvenBot(commands.Bot):
                             "- **promote_strategy**: Promote a specific Strategy Container to the next lifecycle stage\n"
                             "- **create_strategy**: Create a new Strategy Container (S0000X)\n"
                             "- **forven_run_backtest**: Run a backtest via the Forven pipeline\n"
-                            "- **forven_list_datasets**: List available datasets\n"
+                            "- **list_local_datasets**: List available datasets and their ids\n"
                             "- **forven_get_results**: Retrieve backtest results\n\n"
                             "Use these tools proactively when the user asks you to do something. "
                             "Don't just describe what could be done — actually do it."
@@ -1864,7 +1864,7 @@ class ForvenBot(commands.Bot):
                         "- **write_file**: Write/append to workspace files (update lessons, log findings, evolve strategies)\n"
                         "- **run_backtest**: Run a strategy backtest and get fitness score\n\n"
                         "## Backtesting (Forven)\n"
-                        "- **forven_list_datasets**: List available backtesting datasets\n"
+                        "- **list_local_datasets**: List available backtesting datasets and their ids\n"
                         "- **forven_create_strategy**: Create a strategy on Forven Backtesting\n"
                         "- **forven_run_backtest**: Run a backtest with realistic fees\n"
                         "- **forven_run_optimization**: Run parameter optimization\n"

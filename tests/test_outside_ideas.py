@@ -230,3 +230,4 @@ def test_unknown_tool_suggests_real_tools(forven_db):
     assert "run_code" in shell_like
     assert "list_local_datasets" in _unknown_tool_message("get_local_datasets", "strategy-developer", "develop")
     assert "Use only the tools listed" in _unknown_tool_message("zzzz", "strategy-developer", "develop")
+

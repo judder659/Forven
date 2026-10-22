@@ -131,32 +131,46 @@ def _tool_write_file(path: str, content: str, append: bool = True) -> str:
 
 @register_tool(
     name="list_local_datasets",
-    description="List OHLCV datasets available in the local Forven storage. Returns symbol, timeframe, and row count.",
+    description=(
+        "List the OHLCV datasets Forven has: symbol, timeframe, rows, date range and the "
+        "dataset_id that forven_run_backtest, forven_run_optimization and forven_run_verdict take."
+    ),
     input_schema={
         "type": "object",
         "properties": {
             "symbol_filter": {"type": "string", "description": "Optional filter by symbol e.g. 'BTC'"},
+            "timeframe_filter": {"type": "string", "description": "Optional exact timeframe e.g. '4h'"},
         },
         "required": [],
     },
 )
-def _tool_list_local_datasets(symbol_filter: str | None = None) -> str:
-    """List OHLCV datasets available in local Forven storage."""
-    from forven.data import scan_datasets
+def _tool_list_local_datasets(symbol_filter: str | None = None, timeframe_filter: str | None = None) -> str:
+    """List the dataset catalog (the same one dataset ids resolve against)."""
+    import importlib
+
     from forven.dataeng.dead_markets import drop_dead_datasets
 
+    # The catalog in forven.api_domains.data (import cycle with api_core, so
+    # read through importlib as forven.backtest_dataset_ids does) also covers a
+    # remote data engine when one is configured.
+    rows = importlib.import_module("forven.api_domains.data").get_datasets_stub()
     # Markets whose data stopped for good are left out: nothing built on them can be tested.
-    datasets = drop_dead_datasets(scan_datasets())
+    datasets = drop_dead_datasets([dict(row) for row in rows or [] if isinstance(row, dict)])
     if symbol_filter:
         s = symbol_filter.upper()
-        datasets = [d for d in datasets if s in d["symbol"].upper()]
-    
+        datasets = [d for d in datasets if s in str(d.get("symbol") or "").upper()]
+    if timeframe_filter:
+        datasets = [d for d in datasets if str(d.get("timeframe") or "").strip() == timeframe_filter.strip()]
+
     if not datasets:
         return "No local datasets found."
-    
-    lines = ["Local datasets:"]
+
+    lines = ["Local datasets (dataset_id in brackets):"]
     for d in datasets:
-        lines.append(f"- {d['symbol']} {d['timeframe']} ({d['row_count']} rows) | {d['start_ts'][:10]} to {d['end_ts'][:10]}")
+        lines.append(
+            f"- {d.get('symbol')} {d.get('timeframe')} [{d.get('id')}] ({d.get('row_count')} rows) | "
+            f"{str(d.get('start_ts') or '')[:10]} to {str(d.get('end_ts') or '')[:10]}"
+        )
     return "\n".join(lines)
 
 @register_tool(

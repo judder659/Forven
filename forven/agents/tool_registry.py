@@ -753,6 +753,14 @@ def _process_tool_output(
     return candidate
 
 
+# Retired tool names still dispatched, so prompts, memories and transcripts that
+# name them keep working. They are not listed to agents.
+_TOOL_ALIASES: dict[str, str] = {
+    # Same catalog; list_local_datasets now shows the dataset ids too.
+    "forven_list_datasets": "list_local_datasets",
+}
+
+
 # Made-up tool names models reach for when they want to run code. Agents have no
 # shell; run_code (sandboxed Python) is the nearest real tool.
 _SHELL_LIKE_TOOL_WORDS = ("bash", "shell", "cmd", "command", "exec", "python", "terminal")
@@ -806,7 +814,7 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
             pass
 
         # ── Lookup ──
-        tool = _REGISTRY.get(tool_name)
+        tool = _REGISTRY.get(tool_name) or _REGISTRY.get(_TOOL_ALIASES.get(tool_name, ""))
         if not tool:
             result = _unknown_tool_message(tool_name, current_agent_id, _current_tools_context_var.get())
         else:
