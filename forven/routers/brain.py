@@ -318,12 +318,14 @@ def _attach_outcome_display(conn: Any, items: list[dict[str, Any]]) -> None:
             task_ids[int(item["id"])] = int(cycle[1:])
     tasks: dict[int, Any] = {}
     if task_ids:
-        tmarks = ",".join("?" for _ in task_ids)
+        # Older rows can share a cycle (one row per attempt), so dedupe first.
+        unique_task_ids = sorted(set(task_ids.values()))
+        tmarks = ",".join("?" for _ in unique_task_ids)
         tasks = {
             int(r["id"]): r
             for r in conn.execute(
                 f"SELECT id, status, error FROM tasks WHERE id IN ({tmarks})",
-                list(set(task_ids.values())),
+                unique_task_ids,
             ).fetchall()
         }
     for item in items:

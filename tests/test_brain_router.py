@@ -128,6 +128,8 @@ def test_list_decisions_labels_unsettled_legacy_rows(forven_db):
         quiet = _task("done")
         running = _task("pending")
     record_decision(cycle_id=f"B{timed_out:04d}", situation_summary="a", decision_json={})
+    # Before #256 every retry wrote its own row, so old cycles repeat.
+    record_decision(cycle_id=f"B{timed_out:04d}", situation_summary="a2", decision_json={})
     record_decision(cycle_id=f"B{quiet:04d}", situation_summary="b", decision_json={},
                     action_taken='{"tool_calls": []}')
     record_decision(cycle_id=f"B{running:04d}", situation_summary="c", decision_json={})
@@ -138,6 +140,7 @@ def test_list_decisions_labels_unsettled_legacy_rows(forven_db):
     assert r.status_code == 200
     by_summary = {i["situation_summary"]: i for i in r.json()["items"]}
     assert by_summary["a"]["outcome_display"] == "timed_out"
+    assert by_summary["a2"]["outcome_display"] == "timed_out"
     assert by_summary["b"]["outcome_display"] == "no_action"
     assert by_summary["c"]["outcome_display"] == "running"
     assert by_summary["d"]["outcome_display"] == "pending"
