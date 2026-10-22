@@ -192,7 +192,6 @@ CHAT_AUTO_READONLY_TOOL_NAMES: frozenset[str] = CHAT_ASK_TOOL_NAMES | frozenset(
     "get_ops_overview",
     "list_hypotheses",
     "list_bots",
-    "list_routines",
     "list_agent_tasks",
 })
 

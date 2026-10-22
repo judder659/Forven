@@ -45,7 +45,6 @@ export function inferPageKind(pathname: string): string {
 	if (p.startsWith('/strategy-creator')) return 'strategy_creator';
 	if (p.startsWith('/backtest')) return 'backtest';
 	if (p.startsWith('/brain')) return 'brain';
-	if (p.startsWith('/routines')) return 'routines';
 	if (p.startsWith('/integrations')) return 'integrations';
 	if (p.startsWith('/diagnostics')) return 'diagnostics';
 	const seg = p.split('/').filter(Boolean)[0];

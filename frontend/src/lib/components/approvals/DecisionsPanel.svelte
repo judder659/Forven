@@ -1,7 +1,7 @@
 <script lang="ts">
 	// "Waiting for your decision": every pending approval, with its details and
 	// the decision buttons inline. Replaces the old Approvals page. Agents ask
-	// for things here (demote a live strategy, add a routine, update a skill);
+	// for things here (demote a live strategy, update a skill);
 	// paper strategies never appear, the paper pool's rules retire those.
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { approveApproval, denyApproval, getApprovals, type ApprovalRecord } from '$lib/api/forven';

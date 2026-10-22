@@ -208,13 +208,6 @@ PAGES: list[dict] = [
         "actions": ["Watch background jobs and scheduler state"],
     },
     {
-        "route": "/routines",
-        "name": "Routines",
-        "kind": "routines",
-        "summary": "Scheduled recurring agent jobs that post results to Discord channels; plain-English local-time schedule builder.",
-        "actions": ["Create/edit a routine", "Pause/resume/run-now/preview", "Pick its Discord delivery channel"],
-    },
-    {
         "route": "/integrations",
         "name": "Integrations",
         "kind": "integrations",
@@ -365,19 +358,10 @@ HOWTOS: dict[str, dict] = {
         ],
         "routes": ["/bot-factory", "/bot-factory/editor"],
     },
-    "routines": {
-        "title": "Schedule a recurring agent job (routine)",
-        "steps": [
-            "Routines (/routines) → create: describe the job, set the schedule with the plain-English local-time builder.",
-            "Pick the Discord channel the results post to (bot-delivered).",
-            "Use preview to sanity-check output, run-now to test, pause/resume as needed.",
-        ],
-        "routes": ["/routines"],
-    },
     "approvals": {
         "title": "Answer agent requests (human gates)",
         "steps": [
-            "Requests only you can answer (demote a live strategy, add a routine, update a skill) wait under \"Waiting for your decision\" on the Agents page (/agents), with Approve/Deny buttons and details.",
+            "Requests only you can answer (demote a live strategy, update a skill) wait under \"Waiting for your decision\" on the Agents page (/agents), with Approve/Deny buttons and details.",
             "What runs by itself and what waits for you is set in Settings → Automation (/settings#automation).",
         ],
         "routes": ["/agents", "/settings"],

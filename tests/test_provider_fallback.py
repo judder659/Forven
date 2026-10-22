@@ -158,54 +158,6 @@ def test_agents_settings_validates_backup_provider(forven_db):
 
 
 # --------------------------------------------------------------------------- #
-# routine auto-pause + alert on a credential-class failure
-# --------------------------------------------------------------------------- #
-def test_is_credential_failure():
-    from forven.runtime_worker import _is_credential_failure
-    from forven.auth.store import CredentialError
-
-    assert _is_credential_failure(CredentialError("x"), "")
-    assert _is_credential_failure(ValueError(), "minimax has no API credentials configured")
-    assert _is_credential_failure(ValueError(), "credentials exist but could not be decrypted")
-    assert _is_credential_failure(ValueError(), "No auth profile for minimax")
-    assert not _is_credential_failure(ValueError(), "provider returned a 503 timeout")
-
-
-def test_credential_failure_pauses_routine_and_alerts(monkeypatch):
-    from forven import runtime_worker as rw
-    from forven.auth.store import CredentialError
-    import forven.control_plane.routines as routines
-    import forven.notifications as notifications
-
-    paused: list = []
-    alerts: list = []
-    monkeypatch.setattr(routines, "set_routine_enabled", lambda rid, enabled: paused.append((rid, enabled)))
-    monkeypatch.setattr(notifications, "emit_notification", lambda *a, **k: alerts.append(k) or {})
-
-    exc = CredentialError("minimax", "opaque")
-    rw._maybe_pause_routine_on_credential_failure(
-        {"id": 1}, {"routine_id": 7, "routine_name": "orb-regime-guard"}, exc, str(exc)
-    )
-    assert paused == [(7, False)]
-    assert len(alerts) == 1
-    assert alerts[0]["dedupe_key"] == "routine_cred_fail:7"
-    assert alerts[0]["severity"] == "critical"
-    assert alerts[0]["metadata"]["status"] == "opaque"
-
-    # a non-credential failure must NOT pause or alert
-    paused.clear()
-    alerts.clear()
-    rw._maybe_pause_routine_on_credential_failure({"id": 2}, {"routine_id": 7}, ValueError("boom"), "boom")
-    assert paused == [] and alerts == []
-
-    # a credential failure NOT tied to a routine must not pause anything
-    rw._maybe_pause_routine_on_credential_failure(
-        {"id": 3}, {}, CredentialError("minimax", "missing"), "minimax has no API credentials configured"
-    )
-    assert paused == []
-
-
-# --------------------------------------------------------------------------- #
 # B-7: openrouter is a dispatchable provider in ai._call_single
 # (previously raised ValueError("Unknown provider: openrouter") even WITH a key,
 #  killing every auxiliary task routed to the openrouter default)

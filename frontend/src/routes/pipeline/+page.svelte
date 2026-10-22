@@ -403,7 +403,7 @@
 
 		<!-- Scheduled jobs live on Agents → Schedules (filters, editing, toggles). -->
 		<section class="rounded-md border border-sc-line bg-sc-panel px-4 py-3 lg:col-span-2 text-xs text-sc-ink3">
-			Scheduled jobs, including routines, are on
+			Scheduled jobs are on
 			<a href="/agents?tab=schedules" class="text-sc-ink2 underline hover:text-sc-ink">Agents → Schedules</a>,
 			where you can also edit and pause them.
 		</section>

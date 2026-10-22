@@ -876,10 +876,9 @@ async def _run_brain_task(task: dict) -> None:
                 f"PnL: {post_mortem.get('pnl_pct', 0):+.2%}\n"
             )
 
-    # Phase 5 / P5-T05: honor the routine's configured tools_context so the
+    # Phase 5 / P5-T05: honor the payload's tools_context so the
     # operator-set per-context default-deny (e.g. scheduled => no research tools)
-    # actually binds. Routine-driven brain cycles carry tools_context in the
-    # payload (scheduler injects it). A brain task WITHOUT one is still being
+    # actually binds. A brain task WITHOUT one is still being
     # processed by the headless loop — autonomous by definition — so it
     # defaults to "scheduled" rather than ungated: an unlabeled brain_invoke
     # previously ran with the full toolset including factory_reset, which is
@@ -986,25 +985,13 @@ async def _run_brain_task(task: dict) -> None:
         )
 
     # Deliver the response to Discord when the payload names a channel
-    # (routines and generic scheduled brain jobs). The bot task-worker path
+    # (scheduled brain jobs). The bot task-worker path
     # posts payload.channel itself, but THIS is the API fallback worker —
-    # without this, routine responses silently stop at tasks.result whenever
+    # without this, scheduled responses silently stop at tasks.result whenever
     # the gateway isn't consuming the queue. send_sync is Discord REST, so it
     # works from this process; run it in a thread to keep the loop unblocked.
     delivery_channel = str(payload.get("channel") or "").strip()
     if delivery_channel:
-        routine_id = payload.get("routine_id")
-
-        def _record_run(status: str, error: str | None = None) -> None:
-            if routine_id is None:
-                return
-            try:
-                from forven.control_plane.routines import record_routine_run
-
-                record_routine_run(int(routine_id), status=status, error=error)
-            except Exception:
-                log.debug("record_routine_run failed for routine %s", routine_id, exc_info=True)
-
         def _post_to_discord() -> bool:
             from forven.bot import (
                 _render_operational_discord_reply,
@@ -1022,13 +1009,11 @@ async def _run_brain_task(task: dict) -> None:
         try:
             if not await asyncio.to_thread(_post_to_discord):
                 raise RuntimeError("send returned false (channel circuit open or missing access)")
-            _record_run("ok")
         except Exception as exc:
             log.warning(
                 "Brain task %s: Discord delivery to %r failed: %s",
                 task.get("id"), delivery_channel, exc,
             )
-            _record_run("error", f"Discord delivery failed: {exc}")
 
 
 def acquire_runtime_worker_lock(lock_name: str = "api_runtime_worker.lock") -> bool:
@@ -1375,87 +1360,6 @@ async def process_agent_tasks_once(concurrency: int = 5) -> int:
     return len(claimed)
 
 
-def _is_credential_failure(exc: Exception, error_text: str) -> bool:
-    """Whether a terminal brain-task failure is a provider-credential/config error
-    (as opposed to a transient one, which is handled by the retry branches above)."""
-    try:
-        from forven.auth.store import CredentialError
-        if isinstance(exc, CredentialError):
-            return True
-    except Exception:
-        pass
-    t = str(error_text or "").lower()
-    return (
-        "no api credentials configured" in t
-        or "could not be decrypted" in t
-        or "no auth profile" in t
-        or ("token" in t and "expired" in t)
-    )
-
-
-def _maybe_pause_routine_on_credential_failure(
-    task: dict, payload: dict, exc: Exception, error_text: str
-) -> None:
-    """A credential error won't fix itself, so re-running a routine every cycle just
-    floods the queue (this is exactly how the Brain silently failed for weeks). When a
-    routine-sourced brain task fails on credentials, pause the routine and surface a
-    prominent, deduped, status-aware alert so the operator can fix it once and re-enable.
-    """
-    try:
-        if not _is_credential_failure(exc, error_text):
-            return
-        routine_id = (payload or {}).get("routine_id")
-        if routine_id is None:
-            return
-        routine_id = int(routine_id)
-        routine_name = str((payload or {}).get("routine_name") or f"routine {routine_id}")
-
-        from forven.control_plane.routines import set_routine_enabled
-        set_routine_enabled(routine_id, False)
-
-        provider = getattr(exc, "provider", None)
-        status = getattr(exc, "status", None)
-        if status == "opaque":
-            fix = f"{provider} credentials can't be decrypted (encryption-key mismatch) — restore the key or re-add them"
-        elif status == "expired":
-            fix = f"{provider} token expired and couldn't refresh — re-authenticate"
-        elif provider:
-            fix = f"{provider} has no credentials — add them"
-        else:
-            fix = "the configured AI provider has no usable credentials"
-
-        try:
-            from forven.notifications import emit_notification
-            emit_notification(
-                "routine_credential_failure",
-                severity="critical",
-                source="brain",
-                title=f"Routine '{routine_name}' paused — AI provider credentials",
-                summary=f"{fix}. Auto-paused so it stops failing every cycle.",
-                body=(
-                    f"{str(error_text)[:400]}\n\n"
-                    "Fix it in Settings > Agents > AI providers (or configure a Backup AI "
-                    "provider there), then re-enable the routine."
-                ),
-                metadata={
-                    "routine_id": routine_id,
-                    "routine_name": routine_name,
-                    "provider": provider,
-                    "status": status,
-                },
-                dedupe_key=f"routine_cred_fail:{routine_id}",
-            )
-        except Exception:
-            log.exception("Failed to emit credential-failure notification for routine %s", routine_id)
-
-        log.warning(
-            "Auto-paused routine %s (%s) after a credential failure: %s",
-            routine_id, routine_name, str(error_text)[:200],
-        )
-    except Exception:
-        log.exception("Failed to handle credential failure for task %s", (task or {}).get("id"))
-
-
 def _seconds_since_last_brain_cycle(conn) -> float | None:
     """Seconds since the most recent brain_invoke (created/claimed/completed), or
     None if there has never been one."""
@@ -1640,10 +1544,6 @@ async def process_brain_tasks_once(limit: int | None = None) -> int:
                     exhausted_label="Provider retries exhausted",
                 )
             else:
-                # Non-transient terminal failure. If it's a provider-credential error
-                # on a scheduled routine, pause the routine + alert so it doesn't
-                # silently re-fail every cycle.
-                _maybe_pause_routine_on_credential_failure(task, payload, exc, error_detail)
                 with get_db() as conn:
                     conn.execute(
                         "UPDATE tasks SET status='failed', error=?, completed_at=? WHERE id=?",

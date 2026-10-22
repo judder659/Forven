@@ -70,8 +70,6 @@
 				return ['What approvals are pending?', 'What do the approval modes mean?'];
 			case 'agents':
 				return ['What does each agent do?', 'How do I change your model?', 'Any agent tasks running?'];
-			case 'routines':
-				return ['Help me set up a routine', 'What routines are scheduled?'];
 			case 'settings':
 				return ['Explain the gate presets', 'Walk me through going live safely', 'What does each section control?'];
 			case 'brain':
