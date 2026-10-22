@@ -958,6 +958,31 @@ def _m_2026_10_close_paper_live_promotion_approvals(conn: sqlite3.Connection) ->
     log.info("Closed %d paper-to-live promotion approval(s)", cur.rowcount or 0)
 
 
+def _m_2026_10_retire_routines(conn: sqlite3.Connection) -> None:
+    """Retire Brain routines: remove their scheduler jobs, close their proposals.
+
+    The /routines page, the routines API and the Brain's create_routine tool are
+    gone, so a leftover ``routine-*`` job has nothing left to run and a pending
+    ``routine_create`` approval has nothing left to create. The
+    ``brain_routines`` table itself is left in place. Idempotent.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "scheduler_jobs" in tables:
+        cur = conn.execute("DELETE FROM scheduler_jobs WHERE id LIKE 'routine-%'")
+        log.info("Removed %d routine scheduler job(s)", cur.rowcount or 0)
+    if "approvals" in tables:
+        cur = conn.execute(
+            """UPDATE approvals
+               SET status = 'expired',
+                   decision = 'Closed: routines were removed',
+                   decided_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'),
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now')
+               WHERE status = 'pending_approval'
+                 AND approval_type = 'routine_create'"""
+        )
+        log.info("Closed %d routine proposal(s)", cur.rowcount or 0)
+
+
 # Append new migrations to the END of this list. Never reorder, rename, or
 # delete existing entries — doing so will cause migrations to re-run on
 # databases that already applied them under the old name, or to silently
@@ -1030,6 +1055,7 @@ MIGRATIONS: list[Migration] = [
         name="2026_10_close_paper_live_promotion_approvals",
         up=_m_2026_10_close_paper_live_promotion_approvals,
     ),
+    Migration(name="2026_10_retire_routines", up=_m_2026_10_retire_routines),
 ]
 
 

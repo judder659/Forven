@@ -62,7 +62,6 @@ from forven.routers.tasks import router as tasks_router
 from forven.routers.trading import router as trading_router
 from forven.routers.websockets import router as websockets_router
 from forven.routers.quant_factory import router as quant_factory_router
-from forven.routers.routines import router as routines_router
 from forven.routers.profile import router as profile_router
 from forven.routers.webhooks import router as webhooks_router
 from forven.routers.updates import router as updates_router
@@ -798,7 +797,6 @@ app.include_router(updates_router)
 app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(agent_toolsets_router)
-app.include_router(routines_router)
 app.include_router(profile_router)
 app.include_router(breadth_router)
 app.include_router(strategies_router)

@@ -28,14 +28,14 @@ async function flush(): Promise<void> {
 function approval(overrides: Record<string, unknown>) {
 	return {
 		id: 1,
-		approval_type: 'routine_create',
-		target_type: 'brain_routine',
-		target_id: 'r-1',
+		approval_type: 'code_change',
+		target_type: 'task',
+		target_id: 't-1',
 		requested_status: null,
 		status: 'pending_approval',
 		actor: 'brain',
-		reason: 'Daily funding check',
-		payload: { name: 'Funding check' },
+		reason: 'Tighten the funding filter',
+		payload: {},
 		feedback: null,
 		decision: null,
 		error: null,
@@ -78,10 +78,10 @@ describe('DecisionsPanel', () => {
 		expect(api.getApprovals).toHaveBeenCalledWith({ status: 'pending_approval', limit: 100 });
 	});
 
-	it('approves a routine proposal inline and reloads the list', async () => {
+	it('approves a code change inline and reloads the list', async () => {
 		await render([approval({})]);
-		expect(target.textContent).toContain('New Routine Proposal');
-		expect(target.textContent).toContain('Daily funding check');
+		expect(target.textContent).toContain('Code Change');
+		expect(target.textContent).toContain('Tighten the funding filter');
 
 		api.getApprovals.mockResolvedValue([]);
 		button('decision-approve').click();

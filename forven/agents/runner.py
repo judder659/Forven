@@ -108,8 +108,8 @@ _OPERATOR_TRIGGERED_TASK_TYPES: frozenset[str] = frozenset({
 # create_hypothesis and every discover_/inspect_ tool. 'research' is still
 # strictly tighter than the pre-AI-02 behaviour (which was NO gating at all) —
 # codegen stays denied. The scheduled-context autonomy boundary that
-# tools_research.py's create_hypothesis comment protects is the ROUTINE/cron
-# brain-cycle path (runtime_worker resolves that context from the routine row),
+# tools_research.py's create_hypothesis comment protects is the scheduled
+# brain-cycle path (runtime_worker resolves that context from the task payload),
 # which this mapping does not touch.
 _INVESTIGATION_TASK_TYPES: frozenset[str] = frozenset({
     "research",

@@ -667,33 +667,6 @@ def _tool_list_bots() -> str:
 
 
 @register_tool(
-    name="list_routines",
-    description=(
-        "List scheduled routines (recurring agent jobs that post to Discord): "
-        "name, schedule, delivery channel, enabled state, and the job prompt."
-    ),
-    input_schema={"type": "object", "properties": {}, "required": []},
-    permissions={"brain", None},
-)
-def _tool_list_routines() -> str:
-    from forven.control_plane.routines import list_routines
-
-    routines = list_routines() or []
-    out = [
-        {
-            "id": r.get("id"),
-            "name": r.get("name"),
-            "schedule": r.get("cron_expr"),
-            "channel": r.get("channel"),
-            "enabled": r.get("enabled"),
-            "prompt": str(r.get("prompt") or "")[:160],
-        }
-        for r in routines[:50]
-    ]
-    return _json.dumps({"count": len(out), "routines": out}, indent=2, default=str)
-
-
-@register_tool(
     name="list_agent_tasks",
     description=(
         "List recent agent tasks (research, strategy development, repairs, ...): "

@@ -1,7 +1,7 @@
 """Discord channel alias map — shared by the bot gateway and the API.
 
-Lives outside ``forven/bot.py`` so API code (e.g. the /routines channel
-dropdown) can resolve aliases without importing the discord package.
+Lives outside ``forven/bot.py`` so API code can resolve aliases without
+importing the discord package.
 
 No channel ids ship with Forven: every install talks to its own Discord
 server. An alias resolves, in order, to:
@@ -102,14 +102,9 @@ def resolve_channel_id(alias: str | None) -> str | None:
     return load_channel_map().get(name)
 
 
-def channel_aliases() -> list[str]:
-    """Sorted alias names for UI dropdowns (aliases may share a channel id)."""
-    return sorted({*CHANNEL_ALIASES, *_configured_overrides()})
-
-
 # The bot gateway publishes the text channels it can actually post to (per
 # guild it is connected to) under this kv key on connect and on channel
-# create/delete/rename. This is what makes the routines channel picker work
+# create/delete/rename. This is what makes alias-by-name resolution work
 # on ANY user's Discord server — the alias map above is only a fallback for
 # setups where the bot has never connected.
 AVAILABLE_CHANNELS_KV_KEY = "discord:available_channels"

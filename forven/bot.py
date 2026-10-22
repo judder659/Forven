@@ -672,8 +672,7 @@ class ForvenBot(commands.Bot):
 
     def _publish_available_channels(self) -> None:
         """Publish the text channels this bot can post to (id + name) so the
-        API can offer a live channel picker (routines page) without importing
-        discord. Works on any user's server — no hardcoded channel ids.
+        API can resolve channel aliases by name without importing discord. Works on any user's server — no hardcoded channel ids.
         """
         if self.agent_id:
             return

@@ -44,7 +44,6 @@ _DETHRONE_APPROVAL_TYPE = "strategy_dethrone_recommendation"
 _PROMOTION_APPROVAL_TYPE = "strategy_promotion_approval"
 _REGIME_CHAMPION_APPROVAL_TYPE = "regime_champion_promotion"
 _SKILL_UPDATE_APPROVAL_TYPE = "skill_update_proposal"
-_ROUTINE_CREATE_APPROVAL_TYPE = "routine_create"
 _TASK_SUMMARY_COLUMNS = """
     id,
     display_id,
@@ -469,57 +468,6 @@ def _apply_promotion_approval(
         "strategy_id": strategy_id,
         "target_stage": recommended_target,
         "transition": transition,
-    }
-
-
-def _apply_routine_create(
-    approval: Mapping[str, object],
-    body: ApprovalDecisionBody,
-) -> dict[str, object]:
-    """Materialize a Brain-proposed routine after operator approval.
-
-    Reads the approval payload, validates fields against the routine helpers,
-    creates the row in ``brain_routines``, and lets the scheduler pick it up
-    on the next tick (sync_brain_routines_to_jobs).
-    """
-    from forven.control_plane import routines as control_plane_routines
-
-    payload = _approval_payload(approval)
-    name = str(payload.get("name") or "").strip()
-    prompt = str(payload.get("prompt") or "").strip()
-    cron_expr = str(payload.get("cron_expr") or "").strip()
-    tools_context = str(payload.get("tools_context") or "scheduled").strip() or "scheduled"
-    channel = str(payload.get("channel") or "").strip() or None
-
-    if not name or not prompt or not cron_expr:
-        raise HTTPException(
-            status_code=400, detail="Routine create approval missing name/prompt/cron_expr"
-        )
-
-    if control_plane_routines.get_routine_by_name(name) is not None:
-        raise HTTPException(
-            status_code=409, detail=f"Routine name {name!r} already exists"
-        )
-
-    try:
-        routine_id = control_plane_routines.create_routine(
-            name=name,
-            prompt=prompt,
-            cron_expr=cron_expr,
-            tools_context=tools_context,
-            channel=channel,
-            enabled=True,
-            created_by="brain",
-            approval_id=int(approval.get("id")) if approval.get("id") is not None else None,
-        )
-    except control_plane_routines.RoutineValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "routine_id": int(routine_id),
-        "name": name,
-        "cron_expr": cron_expr,
-        "tools_context": tools_context,
     }
 
 
@@ -1012,26 +960,6 @@ def _apply_approved_decision(
             "status": updated["status"] if updated else "approved",
             "strategy_id": promotion_result["strategy_id"],
             "target_stage": promotion_result["target_stage"],
-        }
-
-    if approval_type == _ROUTINE_CREATE_APPROVAL_TYPE:
-        routine_result = _apply_routine_create(approval, body)
-        log_activity(
-            "info",
-            "operator",
-            f"Routine create approved: {routine_result.get('name')} "
-            f"(routine_id={routine_result.get('routine_id')})",
-            {
-                "approval_id": approval_id,
-                "routine_id": routine_result.get("routine_id"),
-                "name": routine_result.get("name"),
-            },
-        )
-        return {
-            "ok": True,
-            "approval_id": approval_id,
-            "status": updated["status"] if updated else "approved",
-            **routine_result,
         }
 
     if approval_type == _SKILL_UPDATE_APPROVAL_TYPE:

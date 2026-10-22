@@ -1392,53 +1392,6 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 )
             return "ok", None
 
-        # Brain routine — operator-authored or Brain-authored NL prompt that
-        # fires brain_invoke with tools_context + skills resolved per-routine.
-        if kind == "brain_routine":
-            routine_id = payload.get("routine_id")
-            try:
-                from forven.control_plane import routines as control_plane_routines
-
-                routine = (
-                    control_plane_routines.get_routine(int(routine_id))
-                    if routine_id is not None
-                    else None
-                )
-            except Exception as exc:
-                log.error("brain_routine: failed to load routine %s: %s", routine_id, exc)
-                routine = None
-            if routine is None:
-                return "error", f"brain_routine: routine {routine_id!r} not found"
-            if not routine.get("enabled"):
-                return "ok", None
-            message = str(routine.get("prompt") or "").strip()
-            if not message:
-                return "error", f"brain_routine: routine {routine_id} has empty prompt"
-            with get_db() as conn:
-                create_pending_task(
-                    conn,
-                    "brain_invoke",
-                    {
-                        "source": "scheduled_routine",
-                        "job_id": job_id,
-                        "job_name": job_name,
-                        "routine_id": int(routine_id),
-                        "routine_name": routine.get("name"),
-                        "tools_context": routine.get("tools_context") or "scheduled",
-                        "channel": routine.get("channel") or None,
-                        "message": message,
-                    },
-                    priority=0,
-                    source="system",
-                )
-            try:
-                control_plane_routines.record_routine_run(
-                    int(routine_id), status="dispatched"
-                )
-            except Exception:
-                pass
-            return "ok", None
-
         # Scanner run — evaluate signals and optionally apply execution actions
         if kind == "scanner_run":
             from forven.scanner import run_scan
@@ -2467,16 +2420,6 @@ async def tick():
         log.error("Gauntlet stale recovery error: %s", e)
     _expire_old_pending_tasks()
     try:
-        from forven.control_plane.routines import DIRTY_FLAG_KEY as _ROUTINES_DIRTY_KEY
-
-        if (kv_get(_ROUTINES_DIRTY_KEY) or "").strip() == "1":
-            counts = sync_brain_routines_to_jobs()
-            kv_set(_ROUTINES_DIRTY_KEY, "0")
-            if any(counts.values()):
-                log.info("Brain routines reconciled: %s", counts)
-    except Exception as exc:
-        log.warning("Brain-routine sync failed: %s", exc)
-    try:
         from forven.control_plane.approvals import expire_overdue_approvals
 
         expired = expire_overdue_approvals()
@@ -2878,92 +2821,6 @@ async def run_scheduler_loop(interval_seconds: int = 30):
                     log.error("Failed to emit scheduler degraded alert: %s", _notify_exc)
 
         await asyncio.sleep(interval_seconds)
-
-
-_ROUTINE_JOB_PREFIX = "routine-"
-
-
-def sync_brain_routines_to_jobs() -> dict[str, int]:
-    """Reconcile ``brain_routines`` rows with ``scheduler_jobs`` entries.
-
-    Each enabled routine becomes a ``brain_routine`` scheduler job with id
-    ``routine-{routine_id}``. Disabled or deleted routines have their job
-    removed so the cron stops firing.
-
-    Returns counts ``{added, updated, removed}`` for telemetry.
-    """
-    from forven.control_plane import routines as control_plane_routines
-
-    routines = control_plane_routines.list_routines(enabled_only=False)
-    added = 0
-    updated = 0
-    removed = 0
-
-    with get_db() as conn:
-        existing_rows = conn.execute(
-            f"SELECT id, schedule_expr, payload, enabled FROM scheduler_jobs "
-            f"WHERE id LIKE '{_ROUTINE_JOB_PREFIX}%'"
-        ).fetchall()
-    existing = {row["id"]: dict(row) for row in existing_rows}
-
-    desired_ids: set[str] = set()
-    for routine in routines:
-        rid = int(routine["id"])
-        job_id = f"{_ROUTINE_JOB_PREFIX}{rid}"
-        cron_expr = str(routine.get("cron_expr") or "").strip()
-        if not cron_expr:
-            continue
-        desired_ids.add(job_id)
-        if not routine.get("enabled"):
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE scheduler_jobs SET enabled = 0 WHERE id = ?", (job_id,)
-                )
-            continue
-        name = f"Routine: {routine.get('name') or rid}"
-        payload = {
-            "kind": "brain_routine",
-            "routine_id": rid,
-        }
-        existing_row = existing.get(job_id)
-        if existing_row is None:
-            add_job(
-                job_id=job_id,
-                name=name,
-                schedule_type="cron",
-                schedule_expr=cron_expr,
-                command=f"brain_routine:{rid}",
-                timezone_str="UTC",
-                payload=payload,
-            )
-            added += 1
-        else:
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE scheduler_jobs SET name = ?, enabled = 1, "
-                    "schedule_type = 'cron', schedule_expr = ?, payload = ?, "
-                    "next_run_at = ? WHERE id = ?",
-                    (
-                        name,
-                        cron_expr,
-                        json.dumps(payload),
-                        _compute_next_run("cron", cron_expr, "UTC"),
-                        job_id,
-                    ),
-                )
-            updated += 1
-
-    stale_ids = [jid for jid in existing.keys() if jid not in desired_ids]
-    if stale_ids:
-        with get_db() as conn:
-            conn.execute(
-                f"DELETE FROM scheduler_jobs WHERE id IN "
-                f"({','.join('?' for _ in stale_ids)})",
-                stale_ids,
-            )
-        removed = len(stale_ids)
-
-    return {"added": added, "updated": updated, "removed": removed}
 
 
 def seed_forven_jobs():
