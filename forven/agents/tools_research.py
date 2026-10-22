@@ -155,6 +155,55 @@ def _attach_operator_source(hypothesis_id: str) -> None:
         logger.warning("Could not attach operator source %s to %s: %s", url, hypothesis_id, exc)
 
 
+def _current_outside_idea_task() -> bool:
+    """True for an outside-idea task: one queued to find and test a public idea."""
+    return str(_current_research_contract().get("lane") or "").strip().lower() == "benchmarking"
+
+
+_SOURCE_TYPE_BY_HOST = (
+    (("youtube.com", "youtu.be"), "youtube"),
+    (("reddit.com", "redd.it"), "reddit"),
+    (("github.com",), "github"),
+)
+
+
+def _outside_source_from_params(params: dict) -> dict[str, str] | None:
+    """The source link an outside idea must carry, or None when it is missing."""
+    from urllib.parse import urlparse
+
+    url = str(params.get("source_url") or "").strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    host = parsed.netloc.lower().split(":")[0]
+    source_type = "web"
+    for hosts, kind in _SOURCE_TYPE_BY_HOST:
+        if any(host == item or host.endswith("." + item) for item in hosts):
+            source_type = kind
+            break
+    return {
+        "url": url,
+        "source_type": source_type,
+        "title": str(params.get("source_title") or "").strip() or url,
+        "claimed_edge": str(params.get("claimed_edge") or "").strip() or "Not stated.",
+    }
+
+
+def _attach_outside_source(hypothesis_id: str, source: dict[str, str]) -> None:
+    """Link an outside idea to the public source it came from."""
+    try:
+        add_hypothesis_artifact(
+            hypothesis_id=hypothesis_id,
+            source_type=source["source_type"],
+            source_title=source["title"][:300],
+            source_ref=source["url"],
+            claimed_edge=source["claimed_edge"],
+            implementation_summary="Found by Strat Dev in an outside-idea task.",
+        )
+    except ValueError as exc:
+        logger.warning("Could not attach outside source %s to %s: %s", source["url"], hypothesis_id, exc)
+
+
 def _current_agent_task() -> dict[str, Any]:
     task_display_id = str(_current_task_display_id_var.get() or "").strip()
     if not task_display_id:
@@ -286,28 +335,18 @@ def _normalized_origin_role(explicit_role: object, *, origin_agent_id: str | Non
 
 
 def _youtube_benchmarking_access_error() -> str | None:
-    contract = _current_research_contract()
-    lane = str(contract.get("lane") or "").strip().lower()
-    if lane != "benchmarking":
-        return "youtube benchmarking tools are only available for benchmarking research tasks"
-    if not bool(contract.get("external_sources_allowed")):
-        return "youtube benchmarking tools are disabled because external benchmarking is not allowed"
-    allowed_types = contract.get("allowed_external_source_types")
-    normalized_allowed_types = (
-        [str(item).strip().lower() for item in allowed_types]
-        if isinstance(allowed_types, list)
-        else []
-    )
-    if "youtube" not in normalized_allowed_types:
-        return "youtube benchmarking tools are disabled because youtube is not an allowed external source type"
-    return None
+    error = _external_source_access_error("youtube")
+    return error.replace("youtube research tools", "youtube benchmarking tools") if error else None
 
 
 def _external_source_access_error(source_type: str) -> str | None:
-    """Return a human-readable error if the active research contract disallows this source type.
+    """Return a human-readable error if this task may not read *source_type*.
 
-    Checks lane == 'benchmarking', external_sources_allowed, and that `source_type` is in
-    `allowed_external_source_types`. Returns None when the contract permits the call.
+    Only outside-idea tasks carry a 'benchmarking' research contract
+    (forven.strategy_creation stamps it). Checks lane == 'benchmarking',
+    external_sources_allowed, that `source_type` is in
+    `allowed_external_source_types`, and that Settings > Research still allows
+    it. Returns None when the call may proceed.
     """
     contract = _current_research_contract()
     lane = str(contract.get("lane") or "").strip().lower()
@@ -323,6 +362,26 @@ def _external_source_access_error(source_type: str) -> str | None:
     )
     if source_type.lower() not in normalized_allowed_types:
         return f"{source_type} research tools are disabled because {source_type} is not an allowed external source type"
+    return _live_source_settings_error(source_type)
+
+
+def _live_source_settings_error(source_type: str) -> str | None:
+    """Settings > Research, read live: the contract is a snapshot taken when the
+    task was queued, so switching external research or a source off must also
+    stop tasks already in the queue."""
+    from forven.research_contract import get_effective_research_settings
+
+    try:
+        settings = get_effective_research_settings()
+    except Exception:
+        return None
+    if not bool(settings.get("external_benchmarking_enabled", True)):
+        return f"{source_type} research tools are disabled because external research is off in Settings > Research"
+    allowed_types = settings.get("allowed_external_source_types")
+    if isinstance(allowed_types, list) and source_type.lower() not in {
+        str(item).strip().lower() for item in allowed_types
+    }:
+        return f"{source_type} research tools are disabled because {source_type} is off in Settings > Research"
     return None
 
 
@@ -426,6 +485,19 @@ def _normalize_youtube_inspect_result(raw_result: Any) -> dict[str, Any]:
             "novelty_score": {"type": "number"},
             "derived_from_hypothesis_id": {"type": "string"},
             "feasibility": _FEASIBILITY_SCHEMA,
+            "source_url": {
+                "type": "string",
+                "description": (
+                    "Outside-idea tasks only (required there): the link to the video, post, article, "
+                    "repo or thread the idea came from. It is attached to the idea so its results "
+                    "can be traced back to the source."
+                ),
+            },
+            "source_title": {"type": "string", "description": "Title of the source (outside-idea tasks)."},
+            "claimed_edge": {
+                "type": "string",
+                "description": "What the source claims the rule earns or wins (outside-idea tasks).",
+            },
         },
         "required": ["title", "market_thesis", "mechanism", "disproof", "target_assets", "target_timeframes"],
     },
@@ -537,6 +609,20 @@ def _tool_create_hypothesis(params: dict) -> str:
                 ),
             })
 
+    outside_source = None
+    if not operator_task and _current_outside_idea_task():
+        outside_source = _outside_source_from_params(params)
+        if outside_source is None:
+            return json.dumps({
+                "ok": False,
+                "error_code": "source_url_required",
+                "error": "This is an outside-idea task: pass source_url, the link the idea came from.",
+                "guidance": (
+                    "Pass the http(s) link of the video, post, article, repo or thread you read with "
+                    "the inspect_* tools, plus source_title and claimed_edge."
+                ),
+            })
+
     origin_agent_id = _normalized_origin_agent_id(params.get("origin_agent_id"))
     lane = _normalize_lane(params.get("lane"))
     source_type = "operator_seed" if operator_task else _normalize_source_type(params.get("source_type"), lane)
@@ -572,6 +658,8 @@ def _tool_create_hypothesis(params: dict) -> str:
         return json.dumps({"ok": False, "error": str(exc)})
     if operator_task:
         _attach_operator_source(str(hypothesis["id"]))
+    elif outside_source is not None:
+        _attach_outside_source(str(hypothesis["id"]), outside_source)
     return json.dumps({"ok": True, "hypothesis": hypothesis})
 
 

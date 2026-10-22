@@ -199,6 +199,7 @@ const SPECS: Record<string, Spec> = {
   'bot-operations.brain_queue_max_pending': [1, null, 1],
   'research.strategy_creation_daily_budget': [0, 500, 1, E],
   'research.strategy_creation_max_in_flight': [1, null, 1],
+  'research.outside_idea_share_pct': [0, 100, 1, E],
   'research.agent_registration_daily_cap': [0, null, 1],
   'agents.assistant_max_tool_rounds': [2, 40, 1, E],
 

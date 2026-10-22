@@ -1803,7 +1803,7 @@ class ForvenBot(commands.Bot):
                         # Read / search
                         "read_file",
                         # Action tools
-                        "run_backtest", "run_shell", "write_file",
+                        "run_backtest", "write_file",
                         # Brain tools
                         "assign_agent_task", "promote_strategy", "create_strategy",
                         # Backtesting tools
@@ -1816,7 +1816,6 @@ class ForvenBot(commands.Bot):
                             "You have tools to look things up AND take actions when asked:\n"
                             "- **read_file**: Read workspace files\n"
                             "- **run_backtest**: Run a backtest for a specific Strategy Container\n"
-                            "- **run_shell**: Execute shell commands\n"
                             "- **write_file**: Create or update files\n"
                             "- **assign_agent_task**: Assign a task to an agent\n"
                             "- **promote_strategy**: Promote a specific Strategy Container to the next lifecycle stage\n"
@@ -1860,7 +1859,6 @@ class ForvenBot(commands.Bot):
                         "- **promote_strategy**: Change Strategy Container lifecycle status (Ideation -> Test -> Paper -> Live -> Archived)\n"
                         "- **create_strategy**: Create a new Strategy Container record (S0000X) in the database\n\n"
                         "## Research & Analysis\n"
-                        "- **run_shell**: Execute commands (backtests, data checks)\n"
                         "- **read_file**: Read workspace files (LESSONS.md, evolution_journal.md, memory/)\n"
                         "- **write_file**: Write/append to workspace files (update lessons, log findings, evolve strategies)\n"
                         "- **run_backtest**: Run a strategy backtest and get fitness score\n\n"

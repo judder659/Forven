@@ -2253,6 +2253,7 @@ export interface ResearchSettings {
 	allowed_external_source_types: string[];
 	/** Autonomous strategy-creation tasks per UTC day (forven/strategy_creation.py). */
 	strategy_creation_daily_budget?: number;
+	outside_idea_share_pct?: number;
 	/** Strategy-creation tasks allowed pending or running at once. */
 	strategy_creation_max_in_flight?: number;
 	/** Percent of the quick-screen window every candidate input feed must cover (0 = off). */

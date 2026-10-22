@@ -753,6 +753,31 @@ def _process_tool_output(
     return candidate
 
 
+# Made-up tool names models reach for when they want to run code. Agents have no
+# shell; run_code (sandboxed Python) is the nearest real tool.
+_SHELL_LIKE_TOOL_WORDS = ("bash", "shell", "cmd", "command", "exec", "python", "terminal")
+
+
+def _unknown_tool_message(tool_name: str, agent_id: str | None, context: str | None) -> str:
+    """'Unknown tool' plus the closest tools this agent can actually call, so a
+    misnamed call costs the agent one short round instead of a confused one."""
+    import difflib
+
+    try:
+        available = [t["name"] for t in get_tools_for_agent(agent_id, context=context)]
+    except Exception:
+        available = []
+    suggestions = difflib.get_close_matches(str(tool_name or ""), available, n=3, cutoff=0.5)
+    lowered = str(tool_name or "").lower()
+    if "run_code" in available and "run_code" not in suggestions and any(
+        word in lowered for word in _SHELL_LIKE_TOOL_WORDS
+    ):
+        suggestions.insert(0, "run_code")
+    if not suggestions:
+        return f"Unknown tool: {tool_name}. Use only the tools listed in your tool list."
+    return f"Unknown tool: {tool_name}. Did you mean: {', '.join(suggestions)}?"
+
+
 async def execute_tool(tool_name: str, tool_input: dict) -> str:
     """Dispatch a tool call — replaces the old elif chain in runner.py.
 
@@ -783,7 +808,7 @@ async def execute_tool(tool_name: str, tool_input: dict) -> str:
         # ── Lookup ──
         tool = _REGISTRY.get(tool_name)
         if not tool:
-            result = f"Unknown tool: {tool_name}"
+            result = _unknown_tool_message(tool_name, current_agent_id, _current_tools_context_var.get())
         else:
             # ── Permission check ──
             subjects = _permission_subjects(current_agent_id)

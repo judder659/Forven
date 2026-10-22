@@ -219,11 +219,6 @@ _DEFAULT_SETTINGS_PAYLOAD = {
     "remote_engine_url": "http://127.0.0.1:9050",
     "remote_engine_data_root": "",
     "setup_wizard_completed_at": None,
-    # Strict mode for the agent run_shell command guard (forven.sandbox.shell_guard).
-    # Off by default; run_shell itself is also disabled by default. When True,
-    # non-critical findings (high/medium/low) fail closed instead of warn-allow.
-    # Backend-only — there is no UI control for this.
-    "sandbox_shell_guard_strict": False,
     # Per-turn tool-round cap for the in-app assistant chat AND deepdive
     # sessions (each round = one full model call whose input grows with every
     # prior round, and with actions enabled each round can create real pipeline
