@@ -209,10 +209,25 @@ def _candidate_trade_gate(strategy_id: str, *, started_at: float, untestable_rea
     if check.status in REJECTED_CANDIDATE_STATUSES:
         return reject_unfit_candidate(strategy_id, check, task_display_id)
     if check.status == "ok":
-        return (
+        note = (
             f" Trade check: {check.trades} trades on {check.symbol} {check.timeframe} over the "
             f"quick-screen window (minimum {check.min_trades})."
         )
+        if check.screen:
+            note += f" Quick-screen preview on that window: {check.screen}."
+        if check.screen_failures:
+            note += (
+                " It would most likely FAIL the quick screen: " + "; ".join(check.screen_failures)
+                + ". Revise the idea (another market, side, timeframe or slower settings) and register "
+                "the corrected version under a new type_name, or say in your final answer that the "
+                "idea did not hold up."
+            )
+        elif check.screen:
+            note += (
+                " It clears the quick screen's profitability checks; the gauntlet still runs its "
+                "robustness tests and the held-back data check."
+            )
+        return note
     # Fails open (the quick screen still screens it); log so a skipped check is
     # distinguishable from a passed one when reading the yield numbers.
     log.info("candidate trade check skipped for %s: %s", strategy_id, check.detail)
@@ -377,44 +392,6 @@ def _persist_agent_verdict(strategy_id: str, verdict_result: dict) -> bool:
     return True
 
 
-@register_tool(
-    name="run_backtest",
-    description=(
-        # The old text promised "any strategy family ... accepted"; the engine
-        # (correctly) rejects families with no registered runtime class as
-        # orphans, and agents filed the mismatch as an infra bug (2026-07-06,
-        # oi_expansion_momentum). The contract must match the gate.
-        "Quick backtest of a strategy family with parameters you pass (asset + strategy_type + "
-        "params); nothing needs saving first. For a saved strategy (an S-id) use "
-        "forven_run_backtest. strategy_type must be a REGISTERED runtime family: "
-        "a pre-built param family or a custom class registered under "
-        "forven/strategies/custom/. A family with no registered class is rejected as "
-        "an orphan (it would silently produce zero signals) — register the class "
-        "first, or compose from known param families. Returns trades and metrics "
-        "(Sharpe, win rate, profit factor, max drawdown, fitness score)."
-    ),
-    input_schema={
-        "type": "object",
-        "properties": {
-            "asset": {"type": "string", "description": "Coin symbol: BTC, ETH, SOL, or other valid dataset symbol"},
-            "timeframe": {"type": "string", "description": "Chart timeframe: 1m, 5m, 15m, 1h, 4h, 1d (default 1h)"},
-            "strategy_type": {
-                "type": "string",
-                "description": (
-                    "Strategy family name — a pre-built param family or a registered "
-                    "custom class TYPE_NAME. Unregistered/invented family names are "
-                    "rejected (no runtime class = zero signals)."
-                ),
-            },
-            "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
-            "bars": {"type": "integer", "description": "Number of bars to backtest against (default 8760 = 365 days of 1h). ALWAYS use at least 8760 bars (1 year) for reliable results."},
-            "start_date": {"type": "string", "description": "Optional inclusive UTC window start."},
-            "end_date": {"type": "string", "description": "Optional inclusive UTC window end."},
-            "as_of": {"type": "string", "description": "Optional point-in-time data cutoff."},
-        },
-        "required": ["asset", "strategy_type", "params"],
-    },
-)
 def _sandbox_runtime_type_for(strategy_type: str) -> str:
     """Resolve an agent-registered TYPE_NAME to the runtime the worker executes.
 
@@ -445,6 +422,45 @@ def _sandbox_runtime_type_for(strategy_type: str) -> str:
     return str(row["runtime_type"]) if row and row["runtime_type"] else normalized
 
 
+@register_tool(
+    name="run_backtest",
+    description=(
+        # The old text promised "any strategy family ... accepted"; the engine
+        # (correctly) rejects families with no registered runtime class as
+        # orphans, and agents filed the mismatch as an infra bug (2026-07-06,
+        # oi_expansion_momentum). The contract must match the gate.
+        "Quick backtest of a strategy family with parameters you pass (asset + strategy_type + "
+        "params); nothing needs saving first. For a saved strategy (an S-id) use "
+        "forven_run_backtest. strategy_type must be a REGISTERED runtime family: "
+        "a pre-built param family or a custom class registered under "
+        "forven/strategies/custom/. A family with no registered class is rejected as "
+        "an orphan (it would silently produce zero signals) — register the class "
+        "first, or compose from known param families. Without bars or dates it tests the quick "
+        "screen's own window. Returns metrics (Sharpe, win rate, profit factor, max drawdown, "
+        "fitness score) and a quick-screen preview listing the checks it would fail."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "asset": {"type": "string", "description": "Coin symbol: BTC, ETH, SOL, or other valid dataset symbol"},
+            "timeframe": {"type": "string", "description": "Chart timeframe: 1m, 5m, 15m, 1h, 4h, 1d (default 1h)"},
+            "strategy_type": {
+                "type": "string",
+                "description": (
+                    "Strategy family name — a pre-built param family or a registered "
+                    "custom class TYPE_NAME. Unregistered/invented family names are "
+                    "rejected (no runtime class = zero signals)."
+                ),
+            },
+            "params": {"type": "object", "description": "Strategy parameters dict — any params your strategy needs"},
+            "bars": {"type": "integer", "description": "Number of bars to backtest against. Omit it (and the dates) to test the quick screen's own window."},
+            "start_date": {"type": "string", "description": "Optional inclusive UTC window start."},
+            "end_date": {"type": "string", "description": "Optional inclusive UTC window end."},
+            "as_of": {"type": "string", "description": "Optional point-in-time data cutoff."},
+        },
+        "required": ["asset", "strategy_type", "params"],
+    },
+)
 def _tool_run_backtest(params: dict) -> str:
     """Run a strategy backtest."""
     try:
@@ -474,13 +490,21 @@ def _tool_run_backtest(params: dict) -> str:
         if not sid:
             sid = _current_agent_id_var.get() or "agent-backtest"
 
+        timeframe = str(params.get("timeframe") or "1h")
+        bars = params.get("bars")
+        if not bars and not params.get("start_date") and not params.get("end_date"):
+            # No window asked for: test the quick screen's own window, so the
+            # preview below matches what the pipeline will judge.
+            from forven.evolution import _bars_for_validation_timeframe
+
+            bars = _bars_for_validation_timeframe(timeframe)
         result = backtest_strategy(
             strategy_id=sid,
             asset=asset,
             strategy_type=strategy_type,
             params=backtest_params,
-            bars=params.get("bars"),
-            timeframe=params.get("timeframe", "1h"),
+            bars=bars,
+            timeframe=timeframe,
             persist_legacy_run=False,
             regime_gate=False,
             sync_strategy_state=False,
@@ -501,7 +525,7 @@ def _tool_run_backtest(params: dict) -> str:
                 strategy_id=str(sid),
                 asset=str(asset),
                 strategy_type=str(strategy_type),
-                timeframe=str(params.get("timeframe", "1h")),
+                timeframe=timeframe,
                 params=backtest_params,
                 result=result,
                 fitness=fitness,
@@ -509,9 +533,15 @@ def _tool_run_backtest(params: dict) -> str:
         except Exception as exc:
             log.warning("Agent backtest persistence failed for %s: %s", sid, exc)
 
+        from forven.strategies.candidate_checks import quick_screen_preview
+
+        screen, screen_failures = quick_screen_preview(metrics)
         return json.dumps({
             "result_id": result_id,
             "persisted": persisted,
+            "window": f"{result.get('start_date') or '?'} to {result.get('end_date') or '?'}",
+            "quick_screen_preview": screen,
+            "quick_screen_failures": screen_failures,
             "total_trades": metrics.get("total_trades", 0),
             "win_rate": f"{metrics.get('win_rate', 0):.1%}",
             "sharpe": metrics.get("sharpe", 0),
@@ -1051,6 +1081,7 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 origin_agent_id=str(_current_agent_id_var.get() or "").strip() or None,
                 origin_task_id=str(_current_task_display_id_var.get() or "").strip() or None,
             )
+            result = _summarize_backtest_payload(result)
         elif tool_name == "forven_run_optimization":
             parameter_ranges = params.get("parameter_ranges")
             if not isinstance(parameter_ranges, dict):
@@ -1116,6 +1147,38 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
 
 
 # ── Register Forven Backtesting tools (routed through _tool_backtesting) ──
+
+_BACKTEST_TRADES_SHOWN = 3
+
+
+def _summarize_backtest_payload(result: object) -> object:
+    """Put a backtest's metrics first and keep only its last few trades.
+
+    The full trade list came first and agents read only the first 5,000
+    characters of a tool result, so most results reached them without any
+    metrics (2026-10: 29 of 721 showed a Sharpe).
+    """
+    if not isinstance(result, dict):
+        return result
+    trades = result.get("trades")
+    metrics = result.get("metrics")
+    summary: dict = {}
+    if isinstance(metrics, dict):
+        from forven.strategies.candidate_checks import quick_screen_preview
+
+        summary["metrics"] = metrics
+        screen, screen_failures = quick_screen_preview(metrics)
+        if screen:
+            summary["quick_screen_preview"] = screen
+            summary["quick_screen_failures"] = screen_failures
+    for key, value in result.items():
+        if key not in ("metrics", "trades", "equity_curve"):
+            summary[key] = value
+    if isinstance(trades, list):
+        summary["trade_count"] = len(trades)
+        summary["last_trades"] = trades[-_BACKTEST_TRADES_SHOWN:]
+    return summary
+
 
 def _make_jbt_handler(name: str):
     """Create a handler that delegates to _tool_backtesting with a fixed tool name."""

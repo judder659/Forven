@@ -768,3 +768,98 @@ def test_create_strategy_tool_points_new_logic_to_register_strategy():
     description = _REGISTRY["forven_create_strategy"].description
     assert "register_strategy" in description
     assert "Any strategy family" not in description
+
+
+def test_run_backtest_tool_runs_the_backtest_through_the_registry(forven_db, monkeypatch):
+    """The run_backtest decorator sat on the runtime-type helper, so every call
+    returned the type name and no backtest ran (2026-10-01 to 2026-10-23)."""
+    import asyncio
+
+    from forven.agents.tool_registry import _REGISTRY
+
+    seen: list[dict] = []
+
+    def _fake_backtest_strategy(**kwargs):
+        seen.append(kwargs)
+        return {
+            "start_date": "2025-01-01T00:00:00+00:00",
+            "end_date": "2026-01-01T00:00:00+00:00",
+            "metrics": {
+                "total_trades": 30,
+                "sharpe": -0.9,
+                "profit_factor": 0.6,
+                "max_drawdown_pct": 0.05,
+                "total_return_pct": -0.12,
+                "in_sample": {"total_trades": 20, "sharpe": 0.4, "total_return_pct": -0.02},
+            },
+            "trades": [],
+        }
+
+    monkeypatch.setattr("forven.strategies.backtest.backtest_strategy", _fake_backtest_strategy)
+    monkeypatch.setattr("forven.quant_skills_extractor.record_backtest_for_learning", lambda **_kwargs: None)
+
+    handler = _REGISTRY["run_backtest"].handler
+    payload = json.loads(asyncio.run(handler({"asset": "BTC", "strategy_type": "rsi_momentum", "timeframe": "4h", "params": {}})))
+
+    assert len(seen) == 1
+    # No bars or dates: the quick screen's own window.
+    from forven.evolution import _bars_for_validation_timeframe
+
+    assert seen[0]["bars"] == _bars_for_validation_timeframe("4h")
+    assert payload["total_trades"] == 30
+    assert payload["window"].startswith("2025-01-01")
+    assert "Sharpe" in payload["quick_screen_preview"]
+    assert payload["quick_screen_failures"]
+
+
+def test_forven_run_backtest_payload_puts_metrics_before_a_short_trade_list():
+    trades = [{"entry_bar": index, "pnl_pct": 0.01} for index in range(200)]
+    summary = tools_mod._summarize_backtest_payload(
+        {"trades": trades, "equity_curve": [1, 2], "result_id": "r1", "metrics": {"total_trades": 200, "sharpe": 1.1}}
+    )
+
+    assert list(summary)[0] == "metrics"
+    assert summary["trade_count"] == 200
+    assert len(summary["last_trades"]) == 3
+    assert "trades" not in summary and "equity_curve" not in summary
+    assert summary["result_id"] == "r1"
+    assert '"sharpe"' in json.dumps(summary, indent=2)[:5000]
+
+
+def test_candidate_gate_reports_the_quick_screen_preview(forven_db, monkeypatch):
+    from forven.strategies.candidate_checks import CandidateTradeCheck
+
+    _insert_strategy("s-loser", stage="quick_screen")
+    _candidate_task("T0304", "s-loser")
+    monkeypatch.setattr(
+        "forven.strategies.candidate_checks.check_candidate_trades",
+        lambda *_a, **_k: CandidateTradeCheck(
+            "ok", trades=40, min_trades=20, symbol="SOL", timeframe="4h",
+            screen="return -13.98%, Sharpe -0.93",
+            screen_failures=("whole-window return -13.98% < 0.00%",),
+        ),
+    )
+
+    message = _gate("s-loser", "T0304")
+
+    assert "40 trades on SOL 4h" in message
+    assert "return -13.98%, Sharpe -0.93" in message
+    assert "FAIL the quick screen" in message and "new type_name" in message
+
+
+def test_quick_screen_preview_matches_the_fair_sample_rule():
+    from forven.strategies.candidate_checks import quick_screen_preview
+
+    summary, failures = quick_screen_preview(
+        {
+            "total_trades": 12,
+            "sharpe": -1.3,
+            "total_return_pct": -0.02,
+            "in_sample": {"total_trades": 28, "sharpe": 0.9, "total_return_pct": 0.04},
+        }
+    )
+    assert "in-sample/out-of-sample Sharpe 0.90/-1.30" in summary
+    assert any("out-of-sample Sharpe -1.30" in failure for failure in failures)
+    assert any("robustness below 0" in failure for failure in failures)
+
+    assert quick_screen_preview({}) == ("", [])

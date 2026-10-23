@@ -176,6 +176,8 @@ class CandidateTradeCheck:
     covers too little of the window to test it fairly) or ``unavailable`` (the
     check could not run; the candidate is left to the pipeline).
     ``short_feeds`` lists ``(column, first ISO date)`` for thin inputs.
+    ``screen`` and ``screen_failures`` preview the quick screen's profitability
+    verdict on the same backtest (see ``quick_screen_preview``).
     """
 
     status: str
@@ -185,6 +187,8 @@ class CandidateTradeCheck:
     timeframe: str = ""
     detail: str = ""
     short_feeds: tuple[tuple[str, str], ...] = ()
+    screen: str = ""
+    screen_failures: tuple[str, ...] = ()
 
 
 REJECTED_CANDIDATE_STATUSES = frozenset({"too_few_trades", "short_history"})
@@ -273,6 +277,57 @@ def _effective_trades(metrics: dict) -> int:
     return max(counts) if counts else 0
 
 
+def quick_screen_preview(metrics: object) -> tuple[str, list[str]]:
+    """Summarise a quick-screen-window backtest and the checks it would fail.
+
+    Returns ``(summary, failures)``: whole-window return, Sharpe, profit factor and
+    the in-sample/out-of-sample Sharpe when the blob is split, plus the
+    profitability failures of ``quick_screen_rule.fair_sample_failures``. Strategy
+    creation tasks used to learn only a trade count at registration, so nearly all
+    candidates went to a quick screen they visibly failed. ``("", [])`` when
+    nothing was measured.
+    """
+    from forven import quick_screen_rule
+
+    if not isinstance(metrics, dict) or not metrics:
+        return "", []
+    try:
+        from forven.policy import load_pipeline_config
+
+        cfg = load_pipeline_config().get("quick_screen") or {}
+    except Exception:  # noqa: BLE001 - a preview never fails on settings
+        cfg = {}
+    whole = quick_screen_rule.whole_window(metrics)
+
+    def _num(value: object) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    parts = []
+    total_return = _num(whole.get("total_return_pct"))
+    if total_return is not None:
+        parts.append(f"return {total_return * 100:+.2f}%")
+    sharpe = _num(whole.get("sharpe", whole.get("sharpe_ratio")))
+    if sharpe is not None:
+        parts.append(f"Sharpe {sharpe:.2f}")
+    profit_factor = quick_screen_rule.profit_factor_of(whole)
+    if profit_factor is not None:
+        parts.append("profit factor inf" if math.isinf(profit_factor) else f"profit factor {profit_factor:.2f}")
+    in_sample, out_of_sample = quick_screen_rule._slices(metrics)
+    is_sharpe = _num(in_sample.get("sharpe", in_sample.get("sharpe_ratio")))
+    oos_sharpe = _num(out_of_sample.get("sharpe", out_of_sample.get("sharpe_ratio")))
+    if is_sharpe is not None and oos_sharpe is not None:
+        parts.append(f"in-sample/out-of-sample Sharpe {is_sharpe:.2f}/{oos_sharpe:.2f}")
+    failures = list(quick_screen_rule.fair_sample_failures(metrics, cfg))
+    if is_sharpe is not None and oos_sharpe is not None and is_sharpe > 0 > oos_sharpe:
+        # The robustness score is the OOS/IS Sharpe ratio and must not be negative.
+        failures.append("out-of-sample Sharpe is negative while in-sample is positive (robustness below 0)")
+    return ", ".join(parts), failures
+
+
 def check_candidate_trades(strategy_id: str, *, budget_seconds: float = CANDIDATE_TRADE_CHECK_MAX_SECONDS) -> CandidateTradeCheck:
     """Backtest a just-registered candidate on its own market and timeframe.
 
@@ -343,8 +398,10 @@ def check_candidate_trades(strategy_id: str, *, budget_seconds: float = CANDIDAT
         status = "short_history"
     else:
         status = "ok" if trades >= min_trades else "too_few_trades"
+    screen, screen_failures = quick_screen_preview(metrics) if status == "ok" else ("", [])
     return CandidateTradeCheck(
-        status, trades=trades, min_trades=min_trades, symbol=symbol, timeframe=timeframe, short_feeds=short_feeds
+        status, trades=trades, min_trades=min_trades, symbol=symbol, timeframe=timeframe, short_feeds=short_feeds,
+        screen=screen, screen_failures=tuple(screen_failures),
     )
 
 
