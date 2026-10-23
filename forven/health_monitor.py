@@ -1322,15 +1322,25 @@ def check_pipeline_consistency() -> list[DataCheck]:
                 detail=f"{cnt} gauntlet strategies >{grace_hours}h without backtest",
             ))
 
-            # Gauntlet capacity check
-            from forven.lab_features import GAUNTLET_MAX
+            # Gauntlet capacity: a status line, never a failure. A full gauntlet is
+            # the WIP cap doing its job: new candidates wait as gate_contention and
+            # retry until a slot frees, so there is nothing for the operator to do.
+            # A gauntlet that stops moving is caught by the stalled-task and
+            # sustained-overflow checks instead.
+            from forven.lab_features import stage_wip_cap
             gauntlet_count = dist.get("gauntlet", 0)
-            pct = (gauntlet_count / GAUNTLET_MAX * 100) if GAUNTLET_MAX > 0 else 0
+            gauntlet_cap = stage_wip_cap("gauntlet")
+            if gauntlet_cap:
+                pct = gauntlet_count / gauntlet_cap * 100
+                detail = f"{gauntlet_count}/{gauntlet_cap} ({pct:.0f}%)"
+                if gauntlet_count >= gauntlet_cap:
+                    detail += "; full, new candidates wait for a slot"
+            else:
+                detail = f"{gauntlet_count} in gauntlet (no cap)"
             results.append(DataCheck(
                 name="gauntlet_capacity",
-                passed=pct < 90,
-                severity=Severity.WARNING if pct < 90 else Severity.CRITICAL,
-                detail=f"{gauntlet_count}/{GAUNTLET_MAX} ({pct:.0f}%)",
+                passed=True,
+                detail=detail,
             ))
 
     except Exception as exc:

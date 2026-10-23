@@ -358,6 +358,25 @@ describe('forge attention', () => {
 		expect(items[1].detail).toBe('Edge covers costs: 1.3x (need 2x)');
 	});
 
+	it('sends critical health checks to diagnostics', () => {
+		const items = buildAttention({
+			activeIds: new Set(),
+			explain: [],
+			fleet: null,
+			nowWorking: [],
+			rows: [],
+			health: {
+				data_checks: [
+					{ name: 'sqlite_health', passed: false, severity: 'critical', detail: 'SQLite check failed: locked' },
+					{ name: 'gauntlet_capacity', passed: true, severity: 'warning', detail: '51/50 (102%); full, new candidates wait for a slot' },
+				],
+			} as unknown as Parameters<typeof buildAttention>[0]['health'],
+			nameOf: (id) => id,
+		});
+		expect(items).toHaveLength(1);
+		expect(items[0]).toMatchObject({ key: 'health:sqlite_health', actionLabel: 'Open diagnostics', href: '/diagnostics' });
+	});
+
 	it('humanizes task types', () => {
 		expect(taskLabel('forven-testing-cycle')).toBe('Testing cycle');
 		expect(taskLabel('forven-data-refresh')).toBe('Data refresh');
