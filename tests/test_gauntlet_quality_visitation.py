@@ -106,3 +106,47 @@ def test_backfill_creates_higher_sharpe_first_under_limit(forven_db):
         lo_n = conn.execute("SELECT COUNT(*) c FROM gauntlet_workflows WHERE strategy_id=?", (lo,)).fetchone()["c"]
     assert hi_n >= 1, "higher-Sharpe stranded strategy must be served first"
     assert lo_n == 0, "lower-Sharpe strategy waits for a later pass under the limit"
+
+
+# --- list_active_workflow_ids: finished results first ----------------------
+
+def _finish_in_background(wf_id):
+    """Mark the first step running with a background job whose outcome is persisted."""
+    with get_db() as conn:
+        step = conn.execute(
+            "SELECT id FROM gauntlet_steps WHERE workflow_id=? ORDER BY order_index LIMIT 1", (wf_id,)
+        ).fetchone()
+        conn.execute(
+            "UPDATE gauntlet_steps SET status='running', attempt_count=1, output_json=? WHERE id=?",
+            (json.dumps({"background_job_id": "job-1", "background_attempt": 1, "status": "running"}), step["id"]),
+        )
+        conn.execute(
+            "INSERT INTO gauntlet_artifacts (workflow_id, step_id, artifact_type, artifact_key, payload_json, "
+            "created_at) VALUES (?, ?, 'background_outcome', 'job-1', '{\"status\": \"passed\"}', datetime('now'))",
+            (wf_id, step["id"]),
+        )
+        conn.commit()
+
+
+def test_finished_background_results_are_collected_before_older_queued_work(forven_db):
+    """2026-10-23: queued steps blocked on worker capacity never touch updated_at, so
+    oldest-first let them fill every visit slot while finished results went unread."""
+    queued = [_workflow(sharpe=1.0, age_seconds=_VISIT_STALENESS_SECONDS + 3600 + i) for i in range(3)]
+    finished = _workflow(sharpe=-1.0, age_seconds=_VISIT_STALENESS_SECONDS + 60)
+    _finish_in_background(finished)
+    assert list_active_workflow_ids(max_workflows=2)[0] == finished
+    assert set(list_active_workflow_ids()) == {*queued, finished}
+
+
+def test_a_job_still_in_flight_keeps_its_place(forven_db):
+    older = _workflow(sharpe=1.0, age_seconds=_VISIT_STALENESS_SECONDS + 3600)
+    in_flight = _workflow(sharpe=1.0, age_seconds=_VISIT_STALENESS_SECONDS + 60)
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_steps SET status='running', output_json=? WHERE workflow_id=? AND order_index="
+            "(SELECT MIN(order_index) FROM gauntlet_steps WHERE workflow_id=?)",
+            (json.dumps({"background_job_id": "job-2"}), in_flight, in_flight),
+        )
+        conn.commit()
+    order = list_active_workflow_ids()
+    assert order.index(older) < order.index(in_flight)

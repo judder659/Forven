@@ -125,6 +125,14 @@ RETRYABLE_BLOCK_REASON_CODES = _NO_DRAIN_REASON_CODES
 # is preserved as a guaranteed floor, with quality only re-ordering the fresh set.
 # ``json_valid`` guards malformed/empty metrics (-> NULL -> sorts last under DESC).
 _VISIT_STALENESS_SECONDS = 1800  # 30 min: hard fairness floor, never starve
+# 1 when a running step's background job has persisted its outcome (ready to collect).
+_FINISHED_RESULT_SQL = (
+    "EXISTS (SELECT 1 FROM gauntlet_steps done JOIN gauntlet_artifacts a "
+    "ON a.step_id = done.id AND a.artifact_type = 'background_outcome' "
+    "AND a.artifact_key = CASE WHEN json_valid(done.output_json) "
+    "THEN json_extract(done.output_json, '$.background_job_id') END "
+    "WHERE done.workflow_id = w.id AND done.status = 'running')"
+)
 _STRATEGY_QUALITY_SQL = "CASE WHEN json_valid(s.metrics) THEN json_extract(s.metrics, '$.sharpe') END"
 
 
@@ -824,7 +832,13 @@ def list_active_workflow_ids(*, max_workflows: int | None = None) -> list[str]:
     the periodic tick advances the most-promising strategies first WITHOUT ever
     starving a low-ranked one.
 
-    Two-tier order:
+    Order:
+      0. Finished results first — a workflow whose running step's background
+         job has already persisted its outcome only needs collecting. Queued
+         steps that hit full worker capacity do not touch ``updated_at``, so
+         without this tier a backlog of queued work fills every visit slot and
+         finished results wait hours to be read (2026-10-23: ~240 finished quick
+         screens sat unread for 2h behind ~700 queued ones; nothing drained).
       1. Anti-starvation floor — any workflow untouched for longer than
          ``_VISIT_STALENESS_SECONDS`` floats to the front, oldest-first. This
          preserves the previous strict oldest-first fairness as a hard floor: no
@@ -864,6 +878,8 @@ def list_active_workflow_ids(*, max_workflows: int | None = None) -> list[str]:
         f"LEFT JOIN gauntlet_steps parent ON parent.workflow_id = w.id AND parent.step_key = dep.value "
         f"WHERE COALESCE(parent.status, '') <> 'passed')))) "
         f"ORDER BY "
+        # Tier 0: a finished background job waiting to be collected.
+        f"{_FINISHED_RESULT_SQL} DESC, "
         # Tier: stale (anti-starvation) before fresh.
         f"{stale} DESC, "
         # Within stale: strict oldest-first (fresh rows -> NULL here, tier already split).
