@@ -30,16 +30,28 @@ def test_slow_strategy_reserves_larger_holdout_without_growing_selection(monkeyp
     assert wfa_only["minimum_validation_bars"] / 24 < 400
 
 
-def test_holdout_test_slice_holds_the_monte_carlo_baseline_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_holdout_holds_the_monte_carlo_baseline_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     # S11879 (2026-10-03): ~3 trades/week sized a 230-day holdout whose 30%
     # confirmation slice held 26 trades; every test passed, then the paper gate
     # rejected the 26-trade Monte Carlo baseline against gauntlet.min_trades=30.
+    # The confirmation now scores the whole holdout, so the holdout itself must
+    # hold the floor with headroom.
     rate = 0.435
     monkeypatch.setattr("forven.wfa_window.measured_trade_rate", lambda *a: (rate, "fixture"))
     settings = {"gauntlet": {"min_trades": 30}, "walk_forward": {"in_sample_pct": 0.7}}
     plan = optimization_history_requirements("S-test", "1h", 365, settings)
-    test_slice_trades = plan["minimum_validation_bars"] / 24 * (1 - 0.7) * rate
-    assert test_slice_trades >= 30 * 1.5 - 1e-9
+    holdout_trades = plan["minimum_validation_bars"] / 24 * rate
+    assert holdout_trades >= 30 * 1.5 - 1e-9
+
+
+def test_baseline_floor_no_longer_triples_the_holdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 73 strategies (2026-10-20..23) were dropped as insufficient_history because
+    # the holdout was sized for 1.5x the floor in its last 30% alone (~100 trades).
+    rate = 0.1  # one trade every ten days: the baseline floor binds
+    monkeypatch.setattr("forven.wfa_window.measured_trade_rate", lambda *a: (rate, "fixture"))
+    plan = optimization_history_requirements("S-test", "1h", 365, {"gauntlet": {"min_trades": 50}})
+    # 750 days of hourly bars for 75 trades, not 2,500 days (750 / 0.3).
+    assert plan["minimum_validation_bars"] == round(50 * 1.5 / rate) * 24
 
 
 @pytest.mark.parametrize("rate", [None, float("nan"), float("inf"), 0.0])

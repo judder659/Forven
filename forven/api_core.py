@@ -7657,7 +7657,7 @@ def _is_canonical_backtest_submit(
     windows produce metrics that do not describe the strategy as stored, and
     the best-of-Sharpe sync rule would stamp them onto the row permanently.
     """
-    if manual_execution_controls:
+    if manual_execution_controls or body.whole_window:
         return False
     if merged_params != base_params:
         return False
@@ -8035,6 +8035,7 @@ def post_backtest_submit(
             execution_controls=manual_execution_controls or None,
             as_of=(str(body.as_of).strip() or None) if body.as_of else None,
             data_venue=data_venue,
+            whole_window=bool(body.whole_window),
         )
     except HTTPException:
         raise
@@ -8123,6 +8124,8 @@ def post_backtest_submit(
         # Read by policy.resolve_best_symbol_timeframe: a variant's rows never
         # choose the stored strategy's market.
         "what_if": True if what_if else None,
+        # Robustness reruns over this result's window score it the same way.
+        "whole_window": True if body.whole_window else None,
     }
     if background_job:
         # Keep the job running until trades and chart artifacts are saved too.

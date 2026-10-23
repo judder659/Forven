@@ -121,7 +121,10 @@ def check_metrics_integrity(metrics: object) -> list[str]:
 
     is_trades = _to_int(is_block.get("total_trades"))
     oos_trades = _to_int(oos_block.get("total_trades"))
-    if is_trades is not None and oos_trades is not None:
+    # A whole-window run (the gauntlet's holdout confirmation) scores every bar
+    # out-of-sample, so its in-sample leg is empty on purpose, not lost.
+    whole_window = metrics.get("scored_window") == "whole"
+    if is_trades is not None and oos_trades is not None and not whole_window:
         if is_trades == 0 and oos_trades >= _MIN_ACTIVE_OOS_TRADES:
             anomalies.append(
                 f"in_sample reports 0 trades while out_of_sample has {oos_trades} — "
