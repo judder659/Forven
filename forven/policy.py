@@ -306,20 +306,18 @@ DEFAULT_PIPELINE_CONFIG = {
     # mode "strict" is the Strict paper preset (the pre-plan door). See
     # forven.paper_door.
     "paper_door": dict(paper_door.DEFAULTS),
-    # 2026-10 gate plan: paper is a managed pool (forven.paper_pool). A wider
-    # door needs a cap: at most max_strategies run at once (default measured in
-    # the gate-plan PR: ~85 ms of scan compute per strategy on 1,500 bars, so 40
-    # strategies stay under ~4% of one core at the 5-minute scan cadence, with a
-    # 3x allowance for candle loads), at most max_per_family in one strategy
-    # family and, if an operator sets one, max_per_market on one coin (0 = no
-    # limit; no per-coin limit by default since 2026-10-20). Strategies that pass
-    # the door while the pool is full wait in a queue ranked by trade pace and
-    # timeframe first, then their recorded evidence. Paper strategies whose forward record shows them losing are
-    # retired (archived as paper_retired:<why>), freeing their slot.
+    # 2026-10 gate plan: paper is a managed pool (forven.paper_pool). Caps are
+    # optional (0 = no limit) and all off by default: per coin since 2026-10-20,
+    # total and per family since 2026-10-23, because each paper strategy is its
+    # own simulated test (~85 ms of scan compute per strategy on 1,500 bars). If
+    # an operator sets a cap, strategies that pass the door while it is full
+    # wait in a queue ranked by trade pace and timeframe first, then their
+    # recorded evidence. Paper strategies whose forward record shows them
+    # losing are retired (archived as paper_retired:<why>).
     "paper_pool": {
-        "max_strategies": 40,
+        "max_strategies": 0,
         "max_per_market": 0,
-        "max_per_family": 10,
+        "max_per_family": 0,
         "retire_enabled": True,
         "retire_min_trades": 15,
         "retire_max_t_stat": -1.0,

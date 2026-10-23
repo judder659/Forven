@@ -420,6 +420,13 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                     apply_paper_coin_cap_migration(kv_get, kv_set)
             except Exception as exc:
                 log.warning("Paper coin-cap settings migration failed: %s", exc)
+            # Paper pool: the old total (40) and per-family (10) defaults lifted once.
+            try:
+                from forven.readiness_checks import apply_paper_caps_migration
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_paper_caps_migration(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("Paper caps settings migration failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()
