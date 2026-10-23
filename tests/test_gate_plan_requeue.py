@@ -171,7 +171,14 @@ def test_hygiene_sweep_does_not_judge_a_requeued_strategy_before_its_fresh_quick
     evolution._sweep_pipeline_hygiene()
     assert _stage("S-RQ5") == "quick_screen"
 
-    # The quick screen replaces the blob with its own verdict; losing numbers then count.
+    # The quick screen replaces the blob with its own verdict. While the fresh run is
+    # still going it owns the verdict, so the sweep waits for it.
     _set_metrics("S-RQ5", _FAILED_RUN_METRICS)
+    evolution._sweep_pipeline_hygiene()
+    assert _stage("S-RQ5") == "quick_screen"
+
+    # Once that run has ended, losing numbers count.
+    with get_db() as conn:
+        conn.execute("UPDATE gauntlet_workflows SET status = 'failed_gate' WHERE strategy_id = ?", ("S-RQ5",))
     evolution._sweep_pipeline_hygiene()
     assert _stage("S-RQ5") == "archived"

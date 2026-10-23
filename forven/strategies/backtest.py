@@ -4865,6 +4865,33 @@ def _coerce_bool_series(values: object, index: pd.Index, label: str) -> pd.Serie
     return series.fillna(False).astype(bool)
 
 
+def _is_signed_signal(values: object) -> bool:
+    """True for a numeric (non-bool) signal payload carrying any negative value."""
+    try:
+        array = np.asarray(values.to_numpy() if isinstance(values, pd.Series) else values)
+    except Exception:
+        return False
+    if array.dtype == bool or not np.issubdtype(array.dtype, np.number):
+        return False
+    with np.errstate(invalid="ignore"):
+        return bool(np.nanmin(array) < 0) if array.size else False
+
+
+def _coerce_signed_series(values: object, index: pd.Index, label: str) -> pd.Series:
+    """A signed (+1/-1/0) signal payload aligned to ``index`` like _coerce_bool_series."""
+    series = values.copy() if isinstance(values, pd.Series) else pd.Series(values, index=index)
+    if len(series) != len(index):
+        raise ValueError(f"{label} length mismatch: expected {len(index)} rows, got {len(series)}")
+    if not series.index.equals(index) and _is_default_range_index(series.index, len(index)):
+        series = pd.Series(series.to_numpy(), index=index)
+    if not series.index.equals(index):
+        series = series.reindex(index)
+        missing = int(series.isna().sum())
+        if missing:
+            raise ValueError(f"{label} index mismatch: {missing} rows could not be aligned to price index")
+    return pd.to_numeric(series, errors="coerce").fillna(0.0)
+
+
 def _empty_directional_signals(index: pd.Index) -> DirectionalSignals:
     return DirectionalSignals.empty(index)
 
@@ -4894,6 +4921,23 @@ def _normalize_directional_signal_payload(
             long_exits=_coerce_bool_series(payload[1], index, f"{label_prefix}.long_exits"),
             short_entries=_coerce_bool_series(payload[2], index, f"{label_prefix}.short_entries"),
             short_exits=_coerce_bool_series(payload[3], index, f"{label_prefix}.short_exits"),
+        )
+    elif isinstance(payload, (tuple, list)) and len(payload) == 2 and _is_signed_signal(payload[0]):
+        # Signed payload: +1 opens a long, -1 a short (exits likewise, or unsigned to
+        # close either side). Reading -1 as True used to turn short entries into long
+        # ones, and trade_mode='both' refused the payload outright.
+        entries = _coerce_signed_series(payload[0], index, f"{label_prefix}.entries")
+        if _is_signed_signal(payload[1]):
+            exits = _coerce_signed_series(payload[1], index, f"{label_prefix}.exits")
+            long_exits, short_exits = exits > 0, exits < 0
+        else:
+            long_exits = _coerce_bool_series(payload[1], index, f"{label_prefix}.exits")
+            short_exits = long_exits.copy()
+        normalized = DirectionalSignals(
+            long_entries=entries > 0,
+            long_exits=long_exits,
+            short_entries=entries < 0,
+            short_exits=short_exits,
         )
     elif isinstance(payload, (tuple, list)) and len(payload) == 2:
         entry_series = _coerce_bool_series(payload[0], index, f"{label_prefix}.entries")

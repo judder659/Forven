@@ -1265,7 +1265,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     subsection: 'lab-pipeline-paper-pool',
     backendSection: 'pipeline',
     backendPath: 'paper_pool.retire_idle_days',
-    description: 'Days without a paper trade (and none open) before a strategy is retired (0 = never).',
+    description: 'Days without a paper trade (and none open) before a strategy is retired (0 = never). A slow strategy gets 3 times its usual gap between backtest trades when that is longer.',
     usedBy: ['forven.paper_pool'],
     order: 11,
   },

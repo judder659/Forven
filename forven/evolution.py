@@ -109,6 +109,12 @@ def _is_terminal_quick_screen_gate_failure(reason: object) -> bool:
     if "dataqualityhold" in text:
         return False
 
+    # The fair-sample trade floor judged on an unwidened window (the evolution
+    # validation matrix, a stored blob) is no verdict: the gauntlet's quick_screen
+    # step widens a slow strategy's window to 4 years before counting its trades.
+    if "trades over the whole screen window" in text:
+        return False
+
     terminal_markers = (
         "duplicate with active strategy",
         "quick screen reject",
@@ -145,6 +151,14 @@ def _archive_terminal_quick_screen_gate_failure(
     # (deliberately NOT a _USER_ACTOR).
     reason = _normalize_gate_failure_text(gate_reason)
     if not _is_terminal_quick_screen_gate_failure(reason):
+        return False
+    from forven.gauntlet.store import has_active_workflow_for_strategy
+
+    # The testing cycle checks for a running workflow before its validation matrix,
+    # which takes ~40s; a workflow started meanwhile owns the verdict, and archiving
+    # here would cancel it mid-run (S20039, 2026-10-22).
+    if has_active_workflow_for_strategy(strategy_id):
+        log.info("Terminal quick-screen archive of %s deferred to its running workflow", strategy_id)
         return False
     transition = transition_stage(
         strategy_id,
@@ -1656,6 +1670,10 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
         except Exception:
             queued_ids = set()
         low_quality_sharpe = 0.3 if paper_door.is_strict(pipeline_config) else 0.0
+        from forven import quick_screen_rule
+        from forven.gauntlet.store import has_active_workflow_for_strategy
+
+        fair_sample = not quick_screen_rule.is_strict(pipeline_config.get("quick_screen"))
 
         for row in rows:
             strat_id = row["id"]
@@ -1675,10 +1693,14 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
             except Exception:
                 age_days = 0
 
-            sharpe = float(metrics.get("sharpe_ratio") or metrics.get("sharpe") or 0)
-            total_trades = int(metrics.get("total_trades") or 0)
+            # The top-level numbers are the out-of-sample slice. Under the fair-sample
+            # rule the quick screen judges the whole window, so the sweep reads the same
+            # whole-window view instead of overruling the gate on the 30% tail alone.
+            judged = quick_screen_rule.whole_window(metrics) if fair_sample else metrics
+            sharpe = float(judged.get("sharpe_ratio") or judged.get("sharpe") or 0)
+            total_trades = int(judged.get("total_trades") or 0)
             fitness = metrics.get("fitness")
-            cagr = metrics.get("cagr") or metrics.get("total_return") or metrics.get("total_return_pct")
+            cagr = judged.get("cagr") or judged.get("total_return") or judged.get("total_return_pct")
             # A re-queued strategy's metrics are not a quick-screen verdict until its
             # fresh quick screen writes them (dropping the stamp): until then the
             # quick-screen rules judge its age, not those numbers.
@@ -1753,6 +1775,17 @@ def _sweep_pipeline_hygiene() -> dict[str, int]:
                 elif judge_metrics and metrics and total_trades == 0 and age_days > _GAUNTLET_ZERO_TRADE_DAYS:
                     reason = "Zero trades after testing (broken strategy)"
 
+            if reason:
+                # A running gauntlet workflow owns the verdict: its timeframe sweep,
+                # window widening and quick-screen gate have not finished, and archiving
+                # here cancels it mid-run (1,213 workflows in 2026-10 alone).
+                try:
+                    if has_active_workflow_for_strategy(strat_id):
+                        log.debug("Pipeline sweep deferred %s to its running workflow: %s", strat_id, reason)
+                        reason = None
+                except Exception as exc:  # noqa: BLE001 - unknown means do not archive
+                    log.warning("Pipeline sweep workflow check failed for %s: %s", strat_id, exc)
+                    reason = None
             if reason:
                 try:
                     transition_stage(
@@ -2279,7 +2312,9 @@ def _run_testing_step_impl(code_first: bool = True) -> dict:
                                     (strat_id,),
                                 ).fetchone()
                                 _attempt_count = int(_attempts_row["cnt"] if _attempts_row else 0)
-                            if _attempt_count >= archive_attempts:
+                            from forven.gauntlet.store import has_active_workflow_for_strategy
+
+                            if _attempt_count >= archive_attempts and not has_active_workflow_for_strategy(strat_id):
                                 transition_stage(
                                     strat_id,
                                     "archived",
@@ -2714,6 +2749,21 @@ def get_evolution_status() -> dict:
 # scheduled side: forward retirement and filling free slots from the queue.
 
 
+def _backtest_trade_gap_days(raw_metrics: object) -> float | None:
+    """Average days between trades in a strategy's stored backtest, or None."""
+    from forven import paper_pool, quick_screen_rule
+
+    try:
+        metrics = json.loads(raw_metrics) if isinstance(raw_metrics, str) else raw_metrics
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(metrics, dict):
+        return None
+    return paper_pool.expected_trade_gap_days(
+        quick_screen_rule.whole_window_trades(metrics), quick_screen_rule.window_span_days(metrics)
+    )
+
+
 def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> list[dict]:
     """Archive paper strategies whose forward record retires them. Returns what it did."""
     from forven import live_evidence, paper_pool
@@ -2729,10 +2779,10 @@ def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> 
         for row in paper_pool.paper_rows(conn):
             since = str(row["stage_changed_at"] or "").strip() or str(row["created_at"] or "").strip() or None
             has_open, last_at = paper_pool.trade_activity(conn, str(row["id"]), since)
-            candidates.append((str(row["id"]), since, has_open, last_at))
+            candidates.append((str(row["id"]), since, has_open, last_at, _backtest_trade_gap_days(row["metrics"])))
     now = datetime.now(timezone.utc)
     out: list[dict] = []
-    for strategy_id, since, has_open, last_at in candidates:
+    for strategy_id, since, has_open, last_at, expected_gap in candidates:
         try:
             pnls = live_forward_pnls(strategy_id, since)
             reference = paper_pool.parse_ts(last_at) or paper_pool.parse_ts(since)
@@ -2749,6 +2799,7 @@ def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> 
                 has_open_trade=has_open,
                 sequential_state=seq_state,
                 sequential_reason=seq_reason,
+                expected_gap_days=expected_gap,
             )
         except Exception as exc:  # noqa: BLE001 — one unreadable strategy never stops the sweep
             log.warning("Paper retirement check failed for %s: %s", strategy_id, exc)
