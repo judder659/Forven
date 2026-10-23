@@ -66,7 +66,7 @@ def test_door_normalisation_rejects_garbage():
 def test_loaded_pipeline_config_carries_the_new_blocks(forven_db):
     cfg = policy.load_pipeline_config()
     assert cfg["paper_door"]["mode"] == "research"
-    assert cfg["paper_pool"]["max_strategies"] == 40
+    assert cfg["paper_pool"]["max_strategies"] == 0
     assert cfg["paper_trading"]["live_gate_mode"] == "sequential"
     assert policy._live_forward_minimums(cfg) == (30, 20)
 
@@ -541,15 +541,14 @@ def _pipeline_with_coin_cap(cap) -> dict:
     return {"paper_pool": {"max_strategies": 40, "max_per_market": cap, "max_per_family": 10}}
 
 
-def test_no_per_coin_paper_cap_by_default():
+def test_no_paper_caps_by_default():
     from forven import paper_pool
     from forven.policy import DEFAULT_PIPELINE_CONFIG
 
-    assert paper_pool.DEFAULTS["max_per_market"] == 0
-    assert DEFAULT_PIPELINE_CONFIG["paper_pool"]["max_per_market"] == 0
-    # The total (CPU) and per-family (anti-cloning) caps stay.
-    assert paper_pool.DEFAULTS["max_strategies"] == 40
-    assert paper_pool.DEFAULTS["max_per_family"] == 10
+    # Each paper strategy is its own test: no per-coin, total or per-family cap.
+    for key in ("max_per_market", "max_strategies", "max_per_family"):
+        assert paper_pool.DEFAULTS[key] == 0
+        assert DEFAULT_PIPELINE_CONFIG["paper_pool"][key] == 0
 
 
 def test_coin_cap_migration_lifts_the_old_default_once(forven_db):
@@ -579,6 +578,36 @@ def test_coin_cap_migration_with_nothing_stored(forven_db):
     from forven.readiness_checks import apply_paper_coin_cap_migration
 
     assert apply_paper_coin_cap_migration(kv_get, kv_set) == {"first_run": True, "max_per_market": None}
+    assert kv_get("forven:pipeline_thresholds") is None
+
+
+def test_paper_caps_migration_lifts_the_old_defaults_once(forven_db):
+    from forven.readiness_checks import apply_paper_caps_migration
+
+    kv_set("forven:pipeline_thresholds", _pipeline_with_coin_cap(0))
+    summary = apply_paper_caps_migration(kv_get, kv_set)
+    assert summary == {"first_run": True, "lifted": {"max_strategies": [40, 0], "max_per_family": [10, 0]}}
+    stored = kv_get("forven:pipeline_thresholds")["paper_pool"]
+    assert stored == {"max_strategies": 0, "max_per_market": 0, "max_per_family": 0}
+
+    # The operator sets caps again afterwards: the migration never touches them again.
+    kv_set("forven:pipeline_thresholds", _pipeline_with_coin_cap(0))
+    assert apply_paper_caps_migration(kv_get, kv_set)["first_run"] is False
+    assert kv_get("forven:pipeline_thresholds")["paper_pool"]["max_strategies"] == 40
+
+
+def test_paper_caps_migration_keeps_operator_values(forven_db):
+    from forven.readiness_checks import apply_paper_caps_migration
+
+    kv_set("forven:pipeline_thresholds", {"paper_pool": {"max_strategies": 60, "max_per_family": 10}})
+    assert apply_paper_caps_migration(kv_get, kv_set)["lifted"] == {"max_per_family": [10, 0]}
+    assert kv_get("forven:pipeline_thresholds")["paper_pool"] == {"max_strategies": 60, "max_per_family": 0}
+
+
+def test_paper_caps_migration_with_nothing_stored(forven_db):
+    from forven.readiness_checks import apply_paper_caps_migration
+
+    assert apply_paper_caps_migration(kv_get, kv_set) == {"first_run": True, "lifted": {}}
     assert kv_get("forven:pipeline_thresholds") is None
 
 

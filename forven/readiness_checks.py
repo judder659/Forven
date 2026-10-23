@@ -267,12 +267,57 @@ def apply_paper_coin_cap_migration(
         summary["max_per_market"] = [_OLD_PAPER_MAX_PER_MARKET, 0]
         log.warning(
             "Paper pool: the per-coin cap of %d is lifted (each paper strategy is its own "
-            "test); the total and per-family caps still apply. Set one again in Settings "
-            "if you want it.",
+            "test). Set one again in Settings if you want it.",
             _OLD_PAPER_MAX_PER_MARKET,
         )
     kv_set(
         PAPER_COIN_CAP_MIGRATION_KEY,
         {"applied_at": datetime.now(timezone.utc).isoformat(), "max_per_market": summary["max_per_market"]},
+    )
+    return summary
+
+
+PAPER_CAPS_MIGRATION_KEY = "forven:migrations:paper_caps_off_v1"
+# The paper pool's total and per-family cap defaults from the gate plan
+# (2026-10-19) until 2026-10-23, when both became 0 (no cap).
+_OLD_PAPER_CAPS = {"max_strategies": 40, "max_per_family": 10}
+
+
+def apply_paper_caps_migration(
+    kv_get: Callable[..., Any], kv_set: Callable[[str, Any], None]
+) -> dict[str, Any]:
+    """Once per install, lift the old total and per-family paper caps from stored settings.
+
+    Each paper strategy is its own simulated test, so the default total cap
+    (``paper_pool.max_strategies``, 40) and per-family cap (``max_per_family``,
+    10) went to 0 (none), like the per-coin cap before them. Installs that saved
+    their pipeline settings store the old values, so a stored 40 / 10 is set to
+    0 once; an operator who sets a cap again afterwards keeps it. Any other
+    stored value is the operator's and is left alone.
+
+    Idempotent. Run it under the settings mutation lock. Returns
+    ``{"first_run": bool, "lifted": {key: [old, 0]}}``.
+    """
+    first_run = not kv_get(PAPER_CAPS_MIGRATION_KEY)
+    summary: dict[str, Any] = {"first_run": first_run, "lifted": {}}
+    if not first_run:
+        return summary
+    pipeline_config = kv_get(PIPELINE_STORAGE_KEY)
+    block = pipeline_config.get("paper_pool") if isinstance(pipeline_config, dict) else None
+    if isinstance(block, dict):
+        for key, old in _OLD_PAPER_CAPS.items():
+            if block.get(key) in (old, str(old)):
+                block[key] = 0
+                summary["lifted"][key] = [old, 0]
+        if summary["lifted"]:
+            kv_set(PIPELINE_STORAGE_KEY, pipeline_config)
+            log.warning(
+                "Paper pool: caps lifted %s (each paper strategy is its own test). "
+                "Set one again in Settings if you want it.",
+                ", ".join(f"{k} {v[0]} -> 0" for k, v in summary["lifted"].items()),
+            )
+    kv_set(
+        PAPER_CAPS_MIGRATION_KEY,
+        {"applied_at": datetime.now(timezone.utc).isoformat(), "lifted": summary["lifted"]},
     )
     return summary

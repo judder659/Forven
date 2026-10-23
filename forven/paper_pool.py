@@ -4,15 +4,15 @@ The 2026-10 gate plan opened the paper door (forven.paper_door) so research
 strategies reach forward testing instead of dying on selection-bias tests. A
 wide door needs three things so paper stays useful:
 
-* **A cap.** ``max_strategies`` strategies paper-trade at once (0 = no cap). The
-  default of 40 comes from a measured scan cost: one strategy's signal plus
-  execution pass costs about 45-85 ms per bar close on a 4-core machine, so 40
-  strategies fit well inside one 1h bar even on a slow install while leaving the
-  live scanner its CPU.
-* **An evidence-ranked queue with a diversity cap.** A strategy that passes the
-  door while the pool is full (or while its family already holds
-  ``max_per_family`` paper strategies, or its market ``max_per_market`` when an
-  operator sets one) waits in
+* **An optional cap.** ``max_strategies`` strategies paper-trade at once (0 = no
+  cap, the default since 2026-10-23: each paper strategy is its own simulated
+  test, so the pool is bounded by retirement, not a slot count). One strategy's
+  signal plus execution pass costs about 45-85 ms per bar close on a 4-core
+  machine, so an operator on a slow install can set a cap here.
+* **An evidence-ranked queue for optional caps.** When an operator sets a cap, a
+  strategy that passes the door while the pool is full (or while its family
+  already holds ``max_per_family`` paper strategies, or its market
+  ``max_per_market``) waits in
   ``paper_queue``, ranked by trade pace and timeframe first (what the 2026-10
   forward replay found predictive) and the evidence the door recorded as a
   tie-breaker (``evidence_score``). Free slots go to the
@@ -44,12 +44,13 @@ from typing import Any, Callable, Mapping
 log = logging.getLogger("forven.paper_pool")
 
 DEFAULTS: dict[str, Any] = {
-    "max_strategies": 40,  # 0 = no cap
-    # 0 = no per-market cap. Off by default since 2026-10-20: each paper
-    # strategy is its own simulated test, so several on one coin cost nothing
-    # but CPU, which max_strategies already bounds.
+    # 0 = no cap. All three caps are off by default (per coin since 2026-10-20,
+    # total and per family since 2026-10-23): each paper strategy is its own
+    # simulated test, so several at once cost nothing but CPU, and losing ones
+    # are retired below.
+    "max_strategies": 0,
     "max_per_market": 0,
-    "max_per_family": 10,  # 0 = no per-family cap
+    "max_per_family": 0,
     "retire_enabled": True,
     "retire_min_trades": 15,
     "retire_max_t_stat": -1.0,
