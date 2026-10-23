@@ -150,7 +150,7 @@ def test_strategy_developer_brief_has_process_rules_and_no_held_back_steering():
         "most liquid coins",
         "the quick screen's minimum trade count",
         "other than BTC",
-        "plain EMA/MACD crosses",
+        "fast EMA/MACD crosses",
         "ORB/ROC breakouts",
         "RSI 30/70 fades on majors",
         "naive taker-flow momentum",
@@ -159,10 +159,11 @@ def test_strategy_developer_brief_has_process_rules_and_no_held_back_steering():
         "calendar/flow effects",
         "standalone funding-rate fades",
         "plain Bollinger fades on alts",
-        "Donchian/SuperTrend continuation",
+        "Slow trend rules",
+        "quick_screen_preview",
     ):
         assert required in brief
-    for required in ("known dead ends", "parameter_space()", "minimum trade count"):
+    for required in ("known dead ends", "parameter_space()", "minimum trade count", "Test before you register"):
         assert required in AUTONOMOUS_TASK_DESCRIPTION
 
     # Steering designs by held-back outcomes would contaminate future held-back

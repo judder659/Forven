@@ -38,19 +38,41 @@ _last_idle_logged: str | None = None
 _SOURCE_CONTENT_CHARS = 20_000
 PREVIEW_CONTENT_CHARS = 4_000
 
-_BUILD_STEPS = (
+_IMPLEMENT_STEP = (
     "Implement the idea as a strategy module. Declare its timeframe in default_params as "
     "`_timeframe` (e.g. \"4h\"): the strategy is stored and screened at that timeframe, and "
-    "undeclared it falls back to the idea's timeframe or 1h. Register it with register_strategy, "
-    "passing the hypothesis_id. Registration backtests it on its own market and timeframe; if it "
-    "reports too few trades, fix the entry logic and register a corrected version under a "
-    "new type_name. Variants of the same idea (another market or timeframe) reuse the same "
-    "hypothesis_id.",
-    "Backtest as needed to check the strategy does what the idea says. Do not tune parameters "
-    "until it passes the gates: every strategy is also tested on recent data you cannot see, "
-    "and fitting the past does not survive that test.",
-    "Finish by naming the hypothesis_id, the registered strategy ids, and the result that "
-    "would prove the idea wrong.",
+    "undeclared it falls back to the idea's timeframe or 1h."
+)
+_PREVIEW_TEXT = (
+    "run_backtest with no bars or dates tests the quick screen's own window and returns a "
+    "quick_screen_preview with the checks it would fail."
+)
+_REGISTER_STEPS = (
+    "Register the passing variant with register_strategy, passing the hypothesis_id. "
+    "Registration backtests it again and reports the same preview; if it reports too few "
+    "trades or checks it would fail, fix it and register a corrected version under a new "
+    "type_name. Variants of the same idea (another market or timeframe) reuse the same "
+    "hypothesis_id. If no variant passes, register the closest one and say plainly in your "
+    "final answer that the idea did not hold up.",
+    "Finish by naming the hypothesis_id, the registered strategy ids, the variants you tested "
+    "with their preview results, and the result that would prove the idea wrong.",
+)
+_BUILD_STEPS = (
+    _IMPLEMENT_STEP,
+    f"Test before you register. {_PREVIEW_TEXT} Try a few honest variants of the idea (long, "
+    "short or both sides; the assigned coin and one or two other liquid coins with long "
+    "history; a slower setting) and keep the ones that pass. Every strategy is also tested "
+    "later on recent data you cannot see, so prefer a variant that passes on several coins "
+    "with round settings over one tuned to a single result.",
+    *_REGISTER_STEPS,
+)
+# Outside claims and operator ideas are tested as stated, so only the market,
+# timeframe and side may vary.
+_AS_STATED_BUILD_STEPS = (
+    _IMPLEMENT_STEP,
+    f"Test before you register. {_PREVIEW_TEXT} Keep the rule as stated; you may try it on "
+    "another liquid coin or timeframe the idea allows, and on both sides if it trades both.",
+    *_REGISTER_STEPS,
 )
 
 
@@ -66,10 +88,12 @@ AUTONOMOUS_TASK_DESCRIPTION = "Write one new trading idea and build a strategy f
         "with enough history (see the data schema in your context; list_local_datasets shows "
         "what is stored).",
         "Avoid what has already failed: read the failure patterns and strategy-family outcomes "
-        "in your context, and do not rebuild known dead ends (plain EMA/MACD crosses, ORB/ROC "
+        "in your context, and do not rebuild known dead ends (fast EMA/MACD crosses, ORB/ROC "
         "breakouts, RSI 30/70 fades on majors, naive taker-flow momentum, volatility risk premium "
         "trades, prior-day high/low sweeps, calendar/flow effects, standalone funding-rate fades, "
-        "plain Bollinger fades on alts, generic Donchian/SuperTrend continuation). Design for an "
+        "plain Bollinger fades on alts). Slow trend rules (channel breakouts, long moving-average "
+        "trends, volatility-squeeze breakouts on 4h or slower, held for weeks) are allowed when "
+        "your tests show them passing on the coin. Design for an "
         "edge across the full history and most liquid coins that trades rarely (1h or slower "
         "bars, a handful of trades a month) with an expected move per trade of at least twice "
         "the round-trip cost, while still reaching the quick screen's minimum trade count. "
@@ -116,7 +140,7 @@ def _outside_task_description(source_types: list[str]) -> str:
             "disproof (the result that would show the claim is wrong), and source_url, source_title "
             "and claimed_edge from the source. The point is to check the claim, so build the rule "
             "as the source states it. Do not improve it; say in notes where the data forced a change.",
-            *_BUILD_STEPS,
+            *_AS_STATED_BUILD_STEPS,
         )
     )
 
@@ -321,7 +345,7 @@ def _operator_task_description(idea: dict[str, Any], source: dict[str, Any] | No
                 "show it is wrong). Fill in what the operator left out. If it needs a second "
                 "asset's series, a second timeframe, or an input with no local feed, say so in "
                 "feasibility and stop.",
-                *_BUILD_STEPS,
+                *_AS_STATED_BUILD_STEPS,
             )
         ),
         "",
