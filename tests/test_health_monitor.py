@@ -641,7 +641,6 @@ class TestCheckPipelineConsistency:
             results = check_pipeline_consistency()
             assert any(not r.passed for r in results)
 
-
     def test_full_gauntlet_is_a_status_line_not_a_failure(self):
         """A full gauntlet is the WIP cap working: candidates wait, nothing to act on."""
         mock_conn = MagicMock()
