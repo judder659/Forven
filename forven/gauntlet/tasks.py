@@ -1773,6 +1773,10 @@ def run_confirmation_backtest(workflow: dict[str, Any], step: dict[str, Any]) ->
                 start=str(validation_window.get("start") or "").strip() or None,
                 end=str(validation_window.get("end") or "").strip() or None,
                 as_of=_workflow_as_of(workflow),
+                # The optimizer never saw the holdout: score all of it, not
+                # its last 30%. Without a holdout the rolling window keeps the
+                # usual split.
+                whole_window=bool(str(validation_window.get("start") or "").strip()),
             ),
             skip_auto_trash=True,
         )

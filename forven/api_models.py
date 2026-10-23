@@ -159,6 +159,10 @@ class BacktestSubmitBody(BaseModel):
     # streams stay canonical; a venue run never refreshes the strategy's
     # stored metrics or promotes it.
     data_venue: str | None = Field(default=None, max_length=64)
+    # Score the whole window instead of its last 30%: the leading bars are
+    # only indicator warmup. The gauntlet's confirmation run sets it so the
+    # optimizer's holdout is judged in full.
+    whole_window: bool = False
 
 
 class StrategyHeatmapAxis(BaseModel):

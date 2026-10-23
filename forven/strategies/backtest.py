@@ -267,13 +267,27 @@ def _resolve_worker_strategy_class(original_strategy_type: str, family_strategy_
     return _resolve_strategy_class(original_strategy_type)
 
 
+def _oos_split_index(n_rows: int, warmup: int, whole_window: bool = False) -> int:
+    """Where out-of-sample trades start counting in an ``n_rows`` frame.
+
+    Normally the last 30%. With ``whole_window`` the whole frame after its
+    ``warmup`` context bars is out-of-sample: the gauntlet's confirmation run
+    scores the optimizer's holdout this way, because parameter selection never
+    saw any of it (splitting it 70/30 again threw away 70% of the untouched
+    evidence and forced the holdout to be ~3x longer)."""
+    if whole_window:
+        return max(1, min(int(warmup), n_rows - 1))
+    return int(n_rows * 0.70)
+
+
 def _in_and_out_of_sample_frames(
-    df: "pd.DataFrame", warmup: int
+    df: "pd.DataFrame", warmup: int, whole_window: bool = False
 ) -> tuple["pd.DataFrame", "pd.DataFrame", "pd.Timestamp"]:
     """Split a backtest frame into its in-sample head (first 70%) and the
     out-of-sample tail padded with ``warmup`` context bars, plus the timestamp
-    where out-of-sample trades start counting."""
-    split_idx = int(len(df) * 0.70)
+    where out-of-sample trades start counting. ``whole_window`` makes the
+    in-sample head just the warmup context (see :func:`_oos_split_index`)."""
+    split_idx = _oos_split_index(len(df), warmup, whole_window)
     return df.iloc[:split_idx], df.iloc[max(0, split_idx - warmup):], df.index[split_idx]
 
 
@@ -294,6 +308,7 @@ def _isolated_backtest_worker(
     execution_controls: dict | None = None,
     initial_capital: float = 10000.0,
     asset: str | None = None,
+    whole_window: bool = False,
 ) -> dict:
     """Run IS/OOS signal walks in an isolated child process.
 
@@ -324,11 +339,13 @@ def _isolated_backtest_worker(
         if strategy_obj is None and not checker and family_strategy_type not in _VECTORIZABLE_TYPES:
             return {"error": f"Unknown strategy type: {original_strategy_type}"}
 
-    is_df, oos_context_df, oos_start_timestamp = _in_and_out_of_sample_frames(df, warmup)
+    is_df, oos_context_df, oos_start_timestamp = _in_and_out_of_sample_frames(df, warmup, whole_window)
     oos_df = df.iloc[len(is_df):]
 
     try:
-        is_trades = _run_signal_walk(
+        # Whole-window scoring: the in-sample head is only warmup context, which
+        # can never trade, so there is no walk to run.
+        is_trades = [] if whole_window else _run_signal_walk(
             checker, is_df, params, warmup, leverage, strategy_obj,
             strategy_type=family_strategy_type,
             fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=regime_gate,
@@ -6087,6 +6104,7 @@ def backtest_strategy(
     execution_controls: dict | None = None,
     as_of: str | None = None,
     data_venue: str | None = None,
+    whole_window: bool = False,
 ) -> dict:
     """Run a backtest for a single strategy over historical candles.
 
@@ -6580,6 +6598,7 @@ def backtest_strategy(
                 execution_controls,
                 resolved_initial_capital,
                 asset,
+                whole_window=whole_window,
             )
             try:
                 worker_result = _wait_for_worker_result(executor, future, backtest_timeout)
@@ -6622,6 +6641,7 @@ def backtest_strategy(
                             execution_controls,
                             resolved_initial_capital,
                             asset,
+                            whole_window=whole_window,
                         )
                         worker_result = _wait_for_worker_result(executor, future, backtest_timeout)
                 except Exception as retry_e:
@@ -6660,6 +6680,7 @@ def backtest_strategy(
                 execution_controls,
                 resolved_initial_capital,
                 asset,
+                whole_window=whole_window,
             )
 
     check_work_budget()
@@ -6672,7 +6693,7 @@ def backtest_strategy(
     oos_trades = worker_result["oos_trades"]
     oos_metrics = worker_result["oos_metrics"]
 
-    split_idx = int(len(df) * 0.70)
+    split_idx = _oos_split_index(len(df), warmup, whole_window)
     oos_df = df.iloc[split_idx:]
 
     is_sharpe = float(is_metrics.get("sharpe", 0) or 0)
@@ -6687,6 +6708,9 @@ def backtest_strategy(
         "in_sample": is_metrics,
         "out_of_sample": oos_metrics,
         "robustness": robustness_score,
+        # "whole": everything after the warmup is out-of-sample and the
+        # in-sample leg is empty by design (see metrics_integrity).
+        "scored_window": "whole" if whole_window else "split",
         # Flatten primary keys for legacy compatibility
         # NOTE: These top-level fields use OOS values. Gate functions (brain.py)
         # should read from the nested "in_sample"/"out_of_sample" dicts for

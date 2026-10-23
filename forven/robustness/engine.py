@@ -702,6 +702,9 @@ def _result_context_from_detail(result_id: str) -> dict:
         "slippage_bps": _coerce_float(config.get("slippage_bps"), 0.0) if config.get("slippage_bps") is not None else None,
         "params": config.get("params") if isinstance(config.get("params"), dict) else {},
         "definition_json": config.get("definition_json") if isinstance(config.get("definition_json"), dict) else None,
+        # A whole-window baseline (the gauntlet's holdout confirmation) is
+        # rerun the same way so its reruns score the bars it scored.
+        "whole_window": bool(config.get("whole_window")),
     }
 
 
@@ -1438,6 +1441,7 @@ def _run_param_jitter_analysis(body: ParamJitterBody, *, outer_budget_s: float |
             regime_gate=False,  # Robustness tests evaluate param stability, not regime fit
             sync_strategy_state=False,  # perturbed params must never overwrite stored metrics or auto-promote
             as_of=body.as_of,
+            whole_window=bool(baseline_context.get("whole_window")),
         )
 
     def _reference() -> dict:
@@ -1649,6 +1653,8 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
     )
     if candles.empty:
         raise HTTPException(400, "No candle data available for cost-stress reruns.")
+    # Replaying the baseline's own window: score it as the baseline did.
+    whole_window = bool(not requested_window and baseline_ctx is not None and baseline_ctx.get("whole_window"))
 
     baseline_run = backtest_strategy(
         strategy_id=body.strategy_id,
@@ -1666,6 +1672,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         # non-default fees) — its metrics must not refresh the strategy row.
         sync_strategy_state=False,
         as_of=body.as_of,
+        whole_window=whole_window,
     )
     baseline_error = str(baseline_run.get("error") or "").strip()
     if baseline_error:
@@ -1685,6 +1692,7 @@ def _run_cost_stress_analysis(body: CostStressBody) -> dict:
         regime_gate=False,  # Cost-stress tests parameter sensitivity, not regime fit
         sync_strategy_state=False,  # stressed costs must never overwrite stored metrics or auto-promote
         as_of=body.as_of,
+        whole_window=whole_window,
     )
     stressed_error = str(stressed_run.get("error") or "").strip()
     if stressed_error:

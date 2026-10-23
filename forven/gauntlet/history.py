@@ -6,7 +6,7 @@ import math
 import importlib
 from typing import Any
 
-# Expected confirmation-slice trades over the gate's floor: 1.5x keeps a
+# Expected confirmation trades over the gate's floor: 1.5x keeps a
 # Poisson shortfall near 1% at a 30-trade floor.
 _BASELINE_HEADROOM = 1.5
 
@@ -45,12 +45,12 @@ def optimization_history_requirements(
         # selection window is its in-sample prefix), so the holdout only has to
         # hold the OOS trades themselves, not a 1 / (1 - train_ratio) multiple.
         required_days = (max(2 * min_trades, 10) * folds) / rate
-        # The confirmation backtest still splits the holdout train/test, and
-        # Monte Carlo and the regime split run on its test slice. Size that
-        # slice for the gate's baseline floor, with headroom for cadence
-        # drift, or a strategy clears every test and then fails the gate on
-        # its trade count (S11879-S11881, 2026-10-03).
-        baseline_days = baseline_trades * _BASELINE_HEADROOM / (rate * (1 - train_ratio))
+        # The confirmation backtest scores the whole holdout, and Monte Carlo
+        # and the regime split run on its trades. Size the holdout for the
+        # gate's baseline floor, with headroom for cadence drift, or a
+        # strategy clears every test and then fails the gate on its trade
+        # count (S11879-S11881, 2026-10-03).
+        baseline_days = baseline_trades * _BASELINE_HEADROOM / rate
         required_days = max(required_days, baseline_days)
         validation_bars = max(validation_bars, math.ceil(required_days * 1440 / minutes))
     return {
