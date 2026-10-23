@@ -188,8 +188,8 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 			title: friendlyName(check.name),
 			meta: 'System',
 			detail: check.detail,
-			actionLabel: 'Open ops',
-			href: '/ops',
+			actionLabel: 'Open diagnostics',
+			href: '/diagnostics',
 		});
 	}
 

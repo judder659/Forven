@@ -642,6 +642,35 @@ class TestCheckPipelineConsistency:
             assert any(not r.passed for r in results)
 
 
+    def test_full_gauntlet_is_a_status_line_not_a_failure(self):
+        """A full gauntlet is the WIP cap working: candidates wait, nothing to act on."""
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = [{"stage": "gauntlet", "cnt": 51}]
+        mock_conn.execute.return_value.fetchone.return_value = {"cnt": 0}
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        with patch("forven.db.get_db", return_value=mock_conn), \
+                patch("forven.lab_features.stage_wip_cap", return_value=50):
+            results = check_pipeline_consistency()
+        capacity = next(r for r in results if r.name == "gauntlet_capacity")
+        assert capacity.passed
+        assert capacity.detail.startswith("51/50 (102%)")
+        assert "wait for a slot" in capacity.detail
+
+    def test_gauntlet_without_cap(self):
+        mock_conn = MagicMock()
+        mock_conn.execute.return_value.fetchall.return_value = [{"stage": "gauntlet", "cnt": 7}]
+        mock_conn.execute.return_value.fetchone.return_value = {"cnt": 0}
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        with patch("forven.db.get_db", return_value=mock_conn), \
+                patch("forven.lab_features.stage_wip_cap", return_value=None):
+            results = check_pipeline_consistency()
+        capacity = next(r for r in results if r.name == "gauntlet_capacity")
+        assert capacity.passed
+        assert capacity.detail == "7 in gauntlet (no cap)"
+
+
 class TestCheckSqliteHealth:
     def test_healthy_db(self, forven_db):
         result = check_sqlite_health()

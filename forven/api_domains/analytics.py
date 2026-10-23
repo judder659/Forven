@@ -504,9 +504,9 @@ def get_dashboard_actions_stub() -> list[dict[str, object]]:
     actions.append(
         {
             "id": "open-pipeline",
-            "label": "Open Backtest Manager",
-            "description": "Review strategy phases and active handoffs in the Backtest File Manager.",
-            "href": "/backtest",
+            "label": "Open Strategy Lab",
+            "description": "Review strategy phases and pending handoffs in the Strategy Lab.",
+            "href": "/lab",
             "priority": 70,
             "kind": "info",
         }
