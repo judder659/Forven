@@ -272,7 +272,7 @@ def strategy_row(conn, strategy_id: str):
 
 def paper_rows(conn) -> list:
     return conn.execute(
-        "SELECT id, name, type, runtime_type, params, symbol, stage, stage_changed_at, created_at "
+        "SELECT id, name, type, runtime_type, params, metrics, symbol, stage, stage_changed_at, created_at "
         "FROM strategies WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading')"
     ).fetchall()
 
@@ -440,8 +440,14 @@ def retirement_reason(
     has_open_trade: bool,
     sequential_state: str | None = None,
     sequential_reason: str = "",
+    expected_gap_days: float | None = None,
 ) -> tuple[str, str] | None:
-    """(code, detail) when a paper strategy's forward record retires it, else None. Pure."""
+    """(code, detail) when a paper strategy's forward record retires it, else None. Pure.
+
+    ``expected_gap_days`` is the strategy's average gap between backtest trades: the
+    idle limit stretches to ``IDLE_GAP_MULTIPLE`` of it, so a strategy that trades
+    once a month is not retired for an ordinary quiet spell.
+    """
     n = len(pnls)
     if n >= knobs["retire_min_trades"] and n >= 2:
         avg = mean(pnls)
@@ -455,9 +461,30 @@ def retirement_reason(
             return "drawdown", f"forward drawdown {drawdown:.1%} reached {knobs['retire_max_drawdown_pct']:.0%}"
     if knobs["retire_on_sequential_fail"] and sequential_state == "fail":
         return "sequential_fail", sequential_reason or "forward trades contradict the backtest"
-    if knobs["retire_idle_days"] and not has_open_trade and days_idle is not None and days_idle >= knobs["retire_idle_days"]:
-        return "idle", f"no trade for {int(days_idle)} days (limit {knobs['retire_idle_days']})"
+    idle_limit = idle_limit_days(knobs["retire_idle_days"], expected_gap_days)
+    if idle_limit and not has_open_trade and days_idle is not None and days_idle >= idle_limit:
+        return "idle", f"no trade for {int(days_idle)} days (limit {idle_limit})"
     return None
+
+
+# A slow strategy may sit this many of its own average trade gaps without a trade
+# before it counts as idle: a monthly trader goes 60 days quiet ~14% of the time.
+IDLE_GAP_MULTIPLE = 3.0
+
+
+def idle_limit_days(base_days: int, expected_gap_days: float | None) -> int:
+    """Days without a trade before retirement: the setting, or longer for a slow strategy (0 = never)."""
+    if not base_days:
+        return 0
+    gap = expected_gap_days if expected_gap_days is not None and math.isfinite(expected_gap_days) else 0.0
+    return max(int(base_days), int(math.ceil(max(0.0, gap) * IDLE_GAP_MULTIPLE)))
+
+
+def expected_trade_gap_days(trades: float | None, span_days: float | None) -> float | None:
+    """Average days between trades over a backtest window, or None when unmeasured."""
+    if not trades or trades <= 0 or not span_days or span_days <= 0:
+        return None
+    return float(span_days) / float(trades)
 
 
 def trade_activity(conn, strategy_id: str, since: str | None) -> tuple[bool, str | None]:
