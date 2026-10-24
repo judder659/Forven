@@ -56,8 +56,8 @@ def _pipeline_settings_wip_cap(settings: dict, stage: str) -> int | None | objec
         return _coerce_wip_cap(stage_caps.get(stage))
     return _UNSET
 
-# Pipeline saturation: stop creating new strategies when tradable pipeline
-# containers exceed this threshold. Only resume generation once the count drops
+# Pipeline saturation: stop creating new strategies when the queue (strategies in
+# quick_screen or gauntlet) exceeds this threshold. Only resume generation once the count drops
 # below PIPELINE_RESUME_THRESHOLD.
 PIPELINE_SATURATION_THRESHOLD = 100
 PIPELINE_RESUME_THRESHOLD = 60
@@ -133,9 +133,14 @@ def is_pipeline_saturated() -> tuple[bool, int, str]:
     try:
         from forven.db import get_db, kv_get
         with get_db() as conn:
+            # Only strategies still waiting on the pipeline count. Paper and live
+            # ones are finished work: paper has no cap since #267, so counting
+            # them would keep new ideas paused once paper alone passed the
+            # resume threshold (2026-10-24: 63 paper + 7 live/prebuilt left
+            # room for 10 queued strategies under a resume threshold of 80).
             row = conn.execute(
                 """SELECT COUNT(*) AS c FROM strategies
-                   WHERE LOWER(TRIM(stage)) NOT IN ('archived', 'rejected', 'backtest_failed')"""
+                   WHERE LOWER(TRIM(stage)) IN ('quick_screen', 'gauntlet')"""
             ).fetchone()
         active_count = int(row["c"]) if row else 0
 

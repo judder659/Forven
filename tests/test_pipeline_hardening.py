@@ -3336,3 +3336,19 @@ def test_hygiene_keeps_promotable_gauntlet_strategy(forven_db, monkeypatch):
             "SELECT stage FROM strategies WHERE id = ?", ("unprom-promotable",)
         ).fetchone()["stage"]
     assert stage == "gauntlet"
+
+
+def test_pipeline_saturation_ignores_paper_and_live(forven_db):
+    """Paper has no cap: a large paper book must not keep new ideas paused."""
+    from forven.lab_features import is_pipeline_saturated
+
+    for i in range(150):
+        _insert_strategy(f"pap-{i:04d}", stage="paper")
+    for i in range(3):
+        _insert_strategy(f"live-{i:04d}", stage="live_graduated")
+    for i in range(4):
+        _insert_strategy(f"gnt-{i:04d}", stage="gauntlet")
+
+    saturated, active_count, _ = is_pipeline_saturated()
+    assert saturated is False
+    assert active_count == 4
