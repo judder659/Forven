@@ -114,6 +114,7 @@ _USER_ACTORS = {"api", "manual", "user", "ui", "pipeline_sweep", "gauntlet_sweep
 # transition_stage only honours decay_tracker or forced _USER_ACTORS.
 _SYSTEM_FORCE_ACTORS = {"decay_kill_switch", "auto_archive", "evolution_terminal_archive", "paper_retirement", "probation"}
 _OPERATOR_OWNED_STAGES = {"paper", "live_graduated"}
+_LIVE_STAGES = {"live_graduated", "deployed"}
 _TERMINAL_DETHRONE_STAGES = {"archived", "rejected", "backtest_failed"}
 
 # Stages where a strategy is operator-owned: its stored default params and
@@ -661,13 +662,18 @@ def _strategy_approval_snapshot(conn, strategy_id: str) -> dict | None:
         cutoff = (
             datetime.now(timezone.utc) - timedelta(days=_SNAPSHOT_FORWARD_WINDOW_DAYS)
         ).isoformat()
+        # A live strategy is judged on its live trades only: multi-coin paper
+        # legs and its paper history are sized off the paper book and say
+        # nothing about how it trades live.
+        forward_kind = "live" if _normalize_stage(row["stage"]) in _LIVE_STAGES else "paper"
         forward_row = conn.execute(
             "SELECT COUNT(*) AS c, SUM(pnl_pct) AS pnl_sum, "
             "SUM(CASE WHEN pnl_pct > 0 THEN 1 ELSE 0 END) AS wins "
             "FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
             "AND status = 'CLOSED' AND pnl_pct IS NOT NULL "
+            "AND LOWER(COALESCE(execution_type, 'live')) LIKE ? "
             "AND datetime(closed_at) >= datetime(?)",
-            (strategy_id, cutoff),
+            (strategy_id, f"{forward_kind}%", cutoff),
         ).fetchone()
 
         return {
@@ -686,6 +692,7 @@ def _strategy_approval_snapshot(conn, strategy_id: str) -> dict | None:
             },
             "forward": {
                 "window_days": _SNAPSHOT_FORWARD_WINDOW_DAYS,
+                "trade_kind": forward_kind,
                 "closed_trades": int(forward_row["c"]) if forward_row else 0,
                 "realized_pnl_pct_sum": (
                     round(float(forward_row["pnl_sum"]), 4)
@@ -764,6 +771,21 @@ def _requires_operator_dethrone_approval(current_stage: str, target_stage: str) 
     if current_rank is None or target_rank is None:
         return False
     return target_rank < current_rank
+
+
+def _on_probation(conn, strategy_id: str) -> bool:
+    """True while the strategy's live probation record is open (active, paused or demoting).
+
+    Read straight from the table (forven.probation imports this module).
+    An unreadable record counts as not on probation (the dethrone card stays).
+    """
+    try:
+        row = conn.execute(
+            "SELECT state FROM strategy_probation WHERE strategy_id = ?", (strategy_id,)
+        ).fetchone()
+    except Exception:
+        return False
+    return bool(row) and row["state"] in probation_rules.IN_PROBATION
 
 
 def _paper_dethrone_soak_block(conn, strategy_id: str, current_stage: str) -> str | None:
@@ -1710,6 +1732,27 @@ def _transition_stage_impl(
                     "retire by the paper pool's rules."
                 ),
                 "paper_retirement_rules_decide",
+            )
+
+        if (
+            current_stage == "live_graduated"
+            and _requires_operator_dethrone_approval(current_stage, normalized_target)
+            and not force
+            and actor.lower() not in _USER_ACTORS
+            and _on_probation(conn, strategy_id)
+        ):
+            # Probation owns a probation strategy's demotion: its hourly check
+            # judges the live trades against the backtest and demotes by itself
+            # (forven.probation). An automated request (an agent's, say) is
+            # recorded on the strategy's history, not queued as a dethrone card.
+            requested = str(reason or "").strip()
+            return _record_blocked_transition(
+                (
+                    f"{actor} asked to move {strategy_id} from live_graduated to {normalized_target}"
+                    f"{f' ({requested})' if requested else ''}. Not applied: probation's hourly "
+                    "check decides demotion from its live trades."
+                ),
+                "probation_decides",
             )
 
         if _requires_operator_dethrone_approval(current_stage, normalized_target) and not force:

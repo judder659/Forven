@@ -391,12 +391,18 @@ def _tool_get_gate_report(strategy_id: str) -> str:
     return _json.dumps(out, indent=2, default=str)
 
 
+_LIVE_STAGES = {"live_graduated", "deployed"}
+
+
 @register_tool(
     name="get_recent_trades",
     description=(
         "Read recent trades and/or open positions from the ledger, optionally "
         "filtered by strategy id and status (OPEN or CLOSED). Includes paper, live, "
-        "and bot trades with entry/exit prices and PnL."
+        "and bot trades with entry/exit prices and PnL. For a live strategy "
+        "(live_graduated, incl. probation) only its live trades are returned unless "
+        "execution_type says otherwise: judge a live strategy on live trades, never "
+        "on its paper or multi-coin paper legs."
     ),
     input_schema={
         "type": "object",
@@ -404,14 +410,20 @@ def _tool_get_gate_report(strategy_id: str) -> str:
             "status": {"type": "string", "description": "Optional: OPEN or CLOSED."},
             "strategy_id": {"type": "string", "description": "Optional strategy id filter."},
             "limit": {"type": "integer", "description": "Max rows (default 20, max 50)."},
+            "execution_type": {
+                "type": "string",
+                "description": "Optional: live, paper, or all. Default: live for a live strategy, else all.",
+            },
         },
         "required": [],
     },
     # risk-manager: read-only introspection for the scheduled risk audit.
     permissions={"brain", "role:risk-manager", None},
 )
-def _tool_get_recent_trades(status: str = "", strategy_id: str = "", limit: int = 20) -> str:
-    from forven.db import get_open_trades, get_recent_trades
+def _tool_get_recent_trades(
+    status: str = "", strategy_id: str = "", limit: int = 20, execution_type: str = ""
+) -> str:
+    from forven.db import get_db, get_open_trades, get_recent_trades
 
     try:
         cap = max(1, min(int(limit or 20), 50))
@@ -420,17 +432,33 @@ def _tool_get_recent_trades(status: str = "", strategy_id: str = "", limit: int 
     want_status = str(status or "").strip().upper()
     sid = str(strategy_id or "").strip()
 
-    if want_status == "OPEN":
+    kind = str(execution_type or "").strip().lower()
+    if sid:
+        # Read this strategy's own trades: the last 200 rows of the whole ledger
+        # can hold none of a slow live strategy's trades among the paper flood.
+        with get_db() as conn:
+            stage_row = conn.execute("SELECT stage FROM strategies WHERE id = ?", (sid,)).fetchone()
+            rows = [
+                dict(r)
+                for r in conn.execute(
+                    "SELECT * FROM trades WHERE ? IN (strategy_id, strategy) "
+                    "ORDER BY datetime(opened_at) DESC, id DESC LIMIT 500",
+                    (sid,),
+                ).fetchall()
+            ]
+        if want_status:
+            rows = [r for r in rows if str(r.get("status") or "").upper() == want_status]
+        if not kind and stage_row and str(stage_row["stage"] or "").strip().lower() in _LIVE_STAGES:
+            kind = "live"
+    elif want_status == "OPEN":
         rows = get_open_trades() or []
     else:
         rows = get_recent_trades(limit=200) or []
         if want_status:
             rows = [r for r in rows if str(r.get("status") or "").upper() == want_status]
-    if sid:
-        rows = [
-            r for r in rows
-            if sid in (str(r.get("strategy_id") or ""), str(r.get("strategy") or ""))
-        ]
+    if kind in {"live", "paper"}:
+        # An untagged trade counts as live, as in forven.probation.
+        rows = [r for r in rows if str(r.get("execution_type") or "live").lower().startswith(kind)]
 
     out = [
         {
@@ -449,7 +477,10 @@ def _tool_get_recent_trades(status: str = "", strategy_id: str = "", limit: int 
         }
         for r in rows[:cap]
     ]
-    return _json.dumps({"count": len(out), "trades": out}, indent=2, default=str)
+    result: dict = {"count": len(out), "trades": out}
+    if kind in {"live", "paper"}:
+        result["execution_type"] = kind
+    return _json.dumps(result, indent=2, default=str)
 
 
 @register_tool(
