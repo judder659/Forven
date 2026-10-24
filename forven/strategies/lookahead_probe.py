@@ -565,6 +565,35 @@ def detect_execution_crash(strategy_obj) -> str | None:
     return None
 
 
+def probe_signal_sides(strategy_obj) -> dict[str, bool] | None:
+    """Which sides the strategy's own signals open on the synthetic frame.
+
+    A strategy file that emits short entries but never declares a trade mode is
+    resolved long_only, which silently drops every short in backtests and in
+    paper/live alike. Registration uses this to store the sides the code actually
+    trades. Returns ``{"long": bool, "short": bool}``, or None when the strategy
+    has no vectorized signals or the probe cannot run (never blocks intake).
+    """
+    if strategy_obj is None or not hasattr(strategy_obj, "generate_signals"):
+        return None
+    try:
+        from forven.strategies.backtest import _normalize_directional_signal_payload
+
+        df = _build_synthetic_ohlcv()
+        payload = strategy_obj.generate_signals(df)
+        if payload is None:
+            return None
+        # Any trade_mode other than long_only/short_only/both keeps both sides as emitted.
+        signals = _normalize_directional_signal_payload(payload, df.index, trade_mode="as_emitted")
+        return {
+            "long": bool(signals.long_entries.any()),
+            "short": bool(signals.short_entries.any()),
+        }
+    except Exception as exc:  # noqa: BLE001 - advisory probe, never blocks registration
+        log.info("Signal-side probe inconclusive: %s", exc)
+        return None
+
+
 def _format_crash_reason(entry_point: str, exc: BaseException) -> str:
     msg = str(exc)
     hint = ""
@@ -586,4 +615,5 @@ __all__ = [
     "detect_lookahead",
     "detect_execution_crash",
     "probe_lookahead",
+    "probe_signal_sides",
 ]

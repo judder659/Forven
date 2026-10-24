@@ -619,6 +619,26 @@ def register_custom_strategy_file(
     )
 
 
+def _inferred_trade_mode(params: dict, meta: dict) -> str | None:
+    """The trade mode a file's own signals call for when it declares none.
+
+    Without a ``trade_mode`` the engine resolves long_only, so a file that opens
+    shorts would be screened, gauntleted and traded on its long half only, with
+    no warning. The sandbox probe reports which sides the code opened; store
+    those. An explicit trade_mode or side hint always wins.
+    """
+    from forven.strategies.base import normalize_trade_mode
+
+    if normalize_trade_mode(params.get("trade_mode")) is not None:
+        return None
+    if str(params.get("position") or params.get("direction") or "").strip():
+        return None
+    sides = meta.get("signal_sides")
+    if not isinstance(sides, dict) or not sides.get("short"):
+        return None
+    return "both" if sides.get("long") else "short_only"
+
+
 def register_imported_strategy_file(
     *,
     module_name: str,
@@ -795,6 +815,10 @@ def register_imported_strategy_file(
         idea_timeframe = _idea_timeframe(_hypothesis_id)
         if idea_timeframe:
             stored_params["_timeframe"] = idea_timeframe
+
+    inferred_mode = _inferred_trade_mode(stored_params, meta)
+    if inferred_mode:
+        stored_params["trade_mode"] = inferred_mode
 
     with get_db() as conn:
         strategy_id, _display, _base = create_strategy_container(
