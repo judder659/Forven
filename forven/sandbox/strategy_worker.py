@@ -229,7 +229,7 @@ def _validate_custom_module(workdir: Path) -> dict:
 
     from forven.strategies import registry
     from forven.strategies.certification import certify_execution_strategy
-    from forven.strategies.lookahead_probe import detect_execution_crash, probe_lookahead
+    from forven.strategies.lookahead_probe import detect_execution_crash, probe_lookahead, probe_signal_sides
 
     # Belt-and-suspenders re-scan in the child (the parent already scanned before
     # write; re-checking here means the worker never imports an unscanned module).
@@ -321,6 +321,11 @@ def _validate_custom_module(workdir: Path) -> dict:
     # and, until now, every payload was missing them and read as "verifiable" by default.
     lookahead = probe_lookahead(probe)
     execution_crash_reason = detect_execution_crash(probe)
+    signal_sides = probe_signal_sides(probe)
+    try:
+        declared_modes = sorted(str(m) for m in (probe.supported_trade_modes or ()))
+    except Exception:
+        declared_modes = None
 
     return {
         "ok": True,
@@ -340,6 +345,8 @@ def _validate_custom_module(workdir: Path) -> dict:
         "lookahead_comparisons": int(lookahead.comparisons),
         "bounded_lookback": lookahead.bounded_lookback,
         "execution_crash_reason": execution_crash_reason,
+        "signal_sides": signal_sides,
+        "supported_trade_modes": declared_modes,
     }
 
 

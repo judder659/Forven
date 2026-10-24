@@ -794,6 +794,7 @@ def validate_backtest_risk_controls(
 
 
 _WARNED_TRADE_MODES: set[str] = set()
+_WARNED_DROPPED_SHORTS: set[str] = set()
 
 
 def _normalize_trade_mode_value(value: object) -> str | None:
@@ -4959,6 +4960,15 @@ def _normalize_directional_signal_payload(
         )
 
     if trade_mode == "long_only":
+        if label_prefix not in _WARNED_DROPPED_SHORTS and bool(normalized.short_entries.any()):
+            # The strategy opened shorts but runs long_only (usually a file that
+            # declares no trade_mode): say so once instead of dropping them silently.
+            _WARNED_DROPPED_SHORTS.add(label_prefix)
+            log.warning(
+                "%s emitted %d short entries that trade_mode='long_only' ignores; "
+                "set trade_mode='both' to trade them",
+                label_prefix, int(normalized.short_entries.sum()),
+            )
         normalized.short_entries = pd.Series(False, index=index, dtype=bool)
         normalized.short_exits = pd.Series(False, index=index, dtype=bool)
     elif trade_mode == "short_only":
