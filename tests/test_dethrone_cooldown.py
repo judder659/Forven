@@ -233,8 +233,9 @@ def test_dethrone_payload_has_evidence_and_snapshot(forven_db):
     from forven.brain import transition_stage
 
     sid = _seed_strategy("S-CD-EVID", stage="live_graduated")
-    _seed_closed_trade("T-CD-1", sid, 1.2)
-    _seed_closed_trade("T-CD-2", sid, -0.5)
+    _seed_closed_trade("T-CD-1", sid, 1.2, execution_type="live")
+    _seed_closed_trade("T-CD-2", sid, -0.5, execution_type="live")
+    _seed_closed_trade("T-CD-3", sid, -4.0)  # paper: not part of a live strategy's record
 
     evidence = {
         "trigger": "decay_tracker",
@@ -259,6 +260,7 @@ def test_dethrone_payload_has_evidence_and_snapshot(forven_db):
     assert snapshot["symbol"] == "BTC"
     assert snapshot["backtest"]["sharpe"] == 2.5
     assert snapshot["backtest"]["trades"] == 87
+    assert snapshot["forward"]["trade_kind"] == "live"
     assert snapshot["forward"]["closed_trades"] == 2
     assert snapshot["forward"]["wins"] == 1
 

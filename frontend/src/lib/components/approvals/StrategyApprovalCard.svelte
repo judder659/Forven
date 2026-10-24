@@ -188,7 +188,7 @@
 				<div class="metric"><div class="metric-label">BT trades</div><div class="metric-value">{intOrDash(snapshot.backtest?.trades)}</div></div>
 			</div>
 			<div class="metric-grid">
-				<div class="metric"><div class="metric-label">Fwd trades ({intOrDash(snapshot.forward?.window_days)}d)</div><div class="metric-value">{intOrDash(snapshot.forward?.closed_trades)}</div></div>
+				<div class="metric"><div class="metric-label">Fwd {snapshot.forward?.trade_kind ? `${snapshot.forward.trade_kind} ` : ''}trades ({intOrDash(snapshot.forward?.window_days)}d)</div><div class="metric-value">{intOrDash(snapshot.forward?.closed_trades)}</div></div>
 				<div class="metric"><div class="metric-label">Fwd wins</div><div class="metric-value">{intOrDash(snapshot.forward?.wins)}</div></div>
 				<div class="metric"><div class="metric-label">Fwd PnL % sum</div><div class="metric-value {Number(snapshot.forward?.realized_pnl_pct_sum) < 0 ? 'metric-value--bad' : ''}">{num(snapshot.forward?.realized_pnl_pct_sum)}</div></div>
 				<div class="metric"><div class="metric-label">In stage since</div><div class="metric-value metric-value--small">{fmtDate(snapshot.stage_changed_at)}</div></div>

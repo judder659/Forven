@@ -1943,6 +1943,8 @@ export interface StrategySnapshot {
 	} | null;
 	forward?: {
 		window_days?: number | null;
+		/** 'live' for a live strategy (live trades only), else 'paper'. */
+		trade_kind?: 'live' | 'paper' | null;
 		closed_trades?: number | null;
 		realized_pnl_pct_sum?: number | null;
 		wins?: number | null;
