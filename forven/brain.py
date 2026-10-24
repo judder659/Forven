@@ -2779,8 +2779,31 @@ def escalate_to_engineer(
         # "pipeline is slow/stalled" reports. Never let the stamp break reporting.
         "throughput_preset": _safe_effective_throughput_preset(),
     }
-    # First-class operator notification — the triage queue. Deduped by title so a
-    # repeated report of the same bug doesn't spam, while distinct bugs each show.
+    # A report that repeats an open (unacknowledged) one is recorded on that
+    # report instead of opening another: agents re-file the same defect under a
+    # new title every few hours, which buried the inbox in copies.
+    try:
+        from forven.bug_report_dedupe import find_open_duplicate, record_repeat
+
+        existing = find_open_duplicate(title, context)
+        if existing is not None:
+            repeats = record_repeat(
+                existing, title=title, requesting_agent=requesting_agent, severity=severity,
+            )
+            log.info(
+                "Bug report %r folded into open report #%s (%s repeats)",
+                title, existing["id"], repeats,
+            )
+            return {
+                "status": "duplicate",
+                "queue": "operator_triage",
+                "approval_id": 0,
+                "duplicate_of": existing["id"],
+                "duplicate_title": existing["title"],
+            }
+    except Exception as exc:  # noqa: BLE001 - dedupe must never stop a report
+        log.warning("bug-report dedupe failed for %r: %s", title, exc)
+    # First-class operator notification — the triage queue.
     _severity_to_notif = {"low": "info", "medium": "warn", "high": "fail", "critical": "critical"}
     try:
         from forven.notifications import emit_notification

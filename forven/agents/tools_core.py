@@ -325,7 +325,11 @@ def _tool_get_local_ohlcv(
         "that you cannot resolve with your own tools. It records the bug for human / Claude-Code "
         "review (a notification + the review log) — NO autonomous code change is made; the system "
         "is fixed through the normal dev workflow. Provide a clear description of the problem, what "
-        "you tried, and what files/systems are affected."
+        "you tried, and what files/systems are affected. File each defect once: a report that repeats "
+        "an open one is merged into it. These are by design, not bugs: a paper strategy holding "
+        "positions on other coins under its own ID (multi-coin paper); avg_trade_pct being smaller "
+        "than the fee+slippage rate (costs apply to the position, returns are measured on equity); "
+        "an agent refused work on a strategy another agent owns."
     ),
     input_schema={
         "type": "object",
@@ -370,6 +374,17 @@ def _tool_request_fix(params: dict) -> str:
             severity=severity,
             context=context if isinstance(context, dict) else {},
         )
+        if result.get("status") == "duplicate":
+            return json.dumps({
+                "status": "duplicate",
+                "queue": "operator_triage",
+                "duplicate_of": result.get("duplicate_of"),
+                "message": (
+                    f"Already reported and still open: {result.get('duplicate_title')}. "
+                    "Your report was added to it as a repeat. Do not file it again under "
+                    "another title; carry on with your task."
+                ),
+            })
         return json.dumps({
             "status": result.get("status", "reported"),
             "queue": result.get("queue", "operator_triage"),
