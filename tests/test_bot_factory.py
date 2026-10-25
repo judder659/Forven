@@ -1263,6 +1263,9 @@ class TestBotLifecyclePhase2:
         bot_id = create_bot({"name": "S", "model": "gpt-4.1-mini"})
         set_bot_status(bot_id, "running", pid=999_999)
         monkeypatch.setattr(mgr, "_is_pid_alive", lambda pid: False)
+        # On Windows the bot sandbox is on by default and would spawn a real
+        # low-integrity process, bypassing the Popen fake below.
+        monkeypatch.setattr(mgr, "bot_sandbox_status", lambda: None)
 
         class FakeProc:
             pid = 4242

@@ -228,12 +228,14 @@ jobs:
             tests/test_strategy_portability.py
 
   # Many installs run Forven as plain Windows Python (no WSL, no Docker), but
-  # development happens on Linux. This job is what notices Windows-only
-  # breakage: file paths, file locking, subprocess spawning, and the
-  # PowerShell launcher scripts that only exist for Windows.
-  backend-windows:
+  # development happens on Linux. This job is the per-PR Windows check: the
+  # PowerShell launcher, plus the tests that cover Windows-only code paths
+  # (file locking, process spawning, the bot sandbox, console windows).
+  # The whole suite takes ~1h40m on a Windows runner (vs ~8 min on Linux),
+  # so it runs nightly in windows-full.yml instead of on every PR.
+  windows:
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 40
 
     steps:
       - name: Check out repository
@@ -288,34 +290,35 @@ jobs:
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-launcher.ps1
 
-      # Same split as the Linux job: parallel lane, then the subprocess-heavy
-      # sandbox suites one at a time.
-      - name: Run full backend test suite (parallel lane)
+      # Tests whose code takes a different path on Windows, plus the
+      # strategy-sandbox security set (it spawns worker processes, which work
+      # differently without fork).
+      - name: Windows-specific backend tests
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          QUARANTINE=()
-          SERIAL_LANE=(
-            tests/test_strategy_worker_parity.py
-            tests/test_strategy_portability.py
-          )
-          DESELECT=()
-          for node in "${QUARANTINE[@]}"; do
-            DESELECT+=(--deselect "$node")
-          done
-          IGNORE=()
-          for f in "${SERIAL_LANE[@]}"; do
-            IGNORE+=(--ignore "$f")
-          done
-          python -m pytest -q -n auto --dist loadfile -rfE --durations=40 "${DESELECT[@]}" "${IGNORE[@]}"
-
-      - name: Run subprocess-heavy suites (serial lane)
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          python -m pytest -q -rfE \
-            tests/test_strategy_worker_parity.py \
-            tests/test_strategy_portability.py
+          python -m pytest -q -n auto --dist loadfile -rfE \
+            tests/test_bot_os_isolation.py \
+            tests/test_bot_factory.py \
+            tests/test_bot_stale_recovery_loop.py \
+            tests/test_daemon_startup_recovery.py \
+            tests/test_watchdog_owner.py \
+            tests/test_runtime_health.py \
+            tests/test_selfheal.py \
+            tests/test_no_console_window_spawns.py \
+            tests/test_workspace_path_safety.py \
+            tests/test_claude_code_provider.py \
+            tests/test_harden_agents.py \
+            tests/test_strategy_frame_contract.py \
+            tests/test_manual_backtest_api_wiring.py \
+            tests/test_arch_api_core.py \
+            tests/test_gate_plan_agent_tooling.py \
+            tests/test_sandbox_ast_guard.py \
+            tests/test_ast_guard_bypasses.py \
+            tests/test_strategy_worker_db_jail.py \
+            tests/test_registry_custom_module_guard.py \
+            tests/test_redact.py \
+            tests/test_db_kv_bootstrap.py
 
   frontend:
     runs-on: ubuntu-latest
