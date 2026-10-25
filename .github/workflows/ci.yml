@@ -233,7 +233,7 @@ jobs:
   # PowerShell launcher scripts that only exist for Windows.
   backend-windows:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
 
     steps:
       - name: Check out repository
@@ -307,7 +307,7 @@ jobs:
           for f in "${SERIAL_LANE[@]}"; do
             IGNORE+=(--ignore "$f")
           done
-          python -m pytest -q -n auto --dist loadfile -rfE "${DESELECT[@]}" "${IGNORE[@]}"
+          python -m pytest -q -n auto --dist loadfile -rfE --durations=40 "${DESELECT[@]}" "${IGNORE[@]}"
 
       - name: Run subprocess-heavy suites (serial lane)
         if: ${{ !cancelled() }}
