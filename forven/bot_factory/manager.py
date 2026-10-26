@@ -539,6 +539,10 @@ class BotManager:
 
     def __init__(self):
         self._processes = {}
+        # Bots whose previous run was still alive when recovery ran (the old
+        # backend hadn't finished stopping them). Recovery skipped them; the
+        # monitor restarts each one once that old run exits. bot_id -> old pid.
+        self._awaiting_exit: dict[str, int] = {}
         self._monitor_task: asyncio.Task | None = None
         self._start_locks: dict[str, threading.Lock] = {}
         self._start_locks_guard = threading.Lock()
@@ -728,6 +732,7 @@ class BotManager:
         CREATE_NEW_PROCESS_GROUP can be unreliable. Targets only the
         specific PID to avoid killing the parent process.
         """
+        self._awaiting_exit.pop(bot_id, None)  # an operator stop is final
         process = self._processes.get(bot_id)
         pid = None
 
@@ -858,6 +863,10 @@ class BotManager:
         cycle = 0
         while True:
             try:
+                self._respawn_exited_survivors()
+            except Exception as e:
+                logger.error("Bot respawn after restart failed: %s", e)
+            try:
                 cycle += 1
                 running = get_running_bots()
                 now = datetime.now(timezone.utc)
@@ -929,6 +938,42 @@ class BotManager:
 
             await asyncio.sleep(_MONITOR_INTERVAL)
 
+    def _respawn_exited_survivors(self) -> None:
+        """Start bots whose pre-restart run outlived recovery and has now exited.
+
+        On a restart the old backend may still be stopping its bots when the
+        new one recovers them, so recovery sees a live PID and skips the bot;
+        a moment later that old run exits and the bot sat stopped until someone
+        pressed Start. A bot an operator stopped in the meantime is not in
+        ``_awaiting_exit`` (``stop_bot`` drops it), and a paused bot stays paused.
+        """
+        from forven.db import get_bot_status
+
+        for bot_id, old_pid in list(self._awaiting_exit.items()):
+            if _is_pid_alive(old_pid):
+                continue  # the old run is still trading; it may be adopted for good
+            self._awaiting_exit.pop(bot_id, None)
+            if bot_id in self._processes:
+                continue
+            status = get_bot_status(bot_id) or {}
+            current_pid = status.get("pid")
+            if current_pid and current_pid != old_pid and _is_pid_alive(current_pid):
+                continue  # something already started a new run
+            if status.get("status") not in ("running", "error", "stopped"):
+                continue
+            try:
+                logger.info("Bot %s: run from before the restart (PID %s) exited, restarting it", bot_id, old_pid)
+                set_bot_status(bot_id, "stopped")
+                self.start_bot(bot_id)
+                log_activity(
+                    "info", "bot_factory",
+                    f"Bot '{(get_bot(bot_id) or {}).get('name', bot_id)}' restarted after its pre-restart run exited",
+                    {"bot_id": bot_id, "old_pid": old_pid},
+                )
+            except Exception as e:
+                logger.error("Failed to restart bot %s after restart: %s", bot_id, e)
+                set_bot_status(bot_id, "error", error_message=f"Recovery failed: {e}")
+
     def _reconcile_orphans(self) -> None:
         """Close OPEN paper trades whose owning bot is neither tracked here nor
         alive on its recorded PID. Shared by the startup recovery and the
@@ -984,6 +1029,7 @@ class BotManager:
 
             if pid and _is_pid_alive(pid):
                 logger.info("Bot %s is still alive (PID %s), skipping recovery", bot_id, pid)
+                self._awaiting_exit[bot_id] = int(pid)
                 continue
 
             # Bot was running but process is dead — re-spawn
