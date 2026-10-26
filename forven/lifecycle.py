@@ -22,23 +22,10 @@ from __future__ import annotations
 
 import logging
 
+from forven.db import is_auto_resumable
 from forven.task_progress import list_resumable_tasks, mark_interrupted, resume_task
 
 log = logging.getLogger("forven.lifecycle")
-
-# Task types that are safe to auto-resume from scratch even WITHOUT a checkpoint:
-# they are idempotent / read-mostly research/analysis work with no half-applied
-# side effects. Anything that places orders or mutates external/exchange state
-# (trade_execution, phantom_repair) is deliberately excluded — those must be
-# re-driven by their own reconciliation paths, not blindly re-queued.
-_IDEMPOTENT_RESUMABLE_TASK_TYPES = {
-    "research",
-    "backtest",
-    "deepdive",
-    "analysis",
-    "general",
-    "develop_candidate",
-}
 
 
 def mark_in_flight_tasks_interrupted() -> int:
@@ -93,9 +80,8 @@ def resume_interrupted_tasks_on_startup() -> int:
         task_id = task.get("id")
         if not isinstance(task_id, int):
             continue
-        has_checkpoint = int(task.get("checkpoint_count") or 0) > 0
-        task_type = str(task.get("type") or task.get("task_type") or "").strip().lower()
-        if not (has_checkpoint or task_type in _IDEMPOTENT_RESUMABLE_TASK_TYPES):
+        task_type = task.get("type") or task.get("task_type")
+        if not is_auto_resumable(task_type, int(task.get("checkpoint_count") or 0)):
             skipped += 1
             continue
         try:
@@ -115,6 +101,7 @@ def resume_interrupted_tasks_on_startup() -> int:
 
 
 __all__ = [
+    "is_auto_resumable",
     "mark_in_flight_tasks_interrupted",
     "resume_interrupted_tasks_on_startup",
 ]

@@ -1,5 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
+import { lanGuard } from './lan-guard';
 
 const backendOrigin =
 	process.env.FORVEN_CLIENT_BASE ||
@@ -8,7 +9,7 @@ const backendOrigin =
 const isVitest = process.env.VITEST === 'true';
 
 export default defineConfig({
-	plugins: [sveltekit()],
+	plugins: [sveltekit(), lanGuard()],
 	// Prepare lazy UI dependencies together before serving a page. Discovering
 	// charts or markdown dependencies later replaces chunks an open tab still needs.
 	optimizeDeps: {
