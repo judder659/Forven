@@ -805,21 +805,53 @@ def init_db():
             _INITIALIZED_DATABASES.add(identity)
 
 
+# Task types that are safe to auto-resume from scratch even WITHOUT a checkpoint:
+# they are idempotent / read-mostly research/analysis work with no half-applied
+# side effects. Anything that places orders or mutates external/exchange state
+# (trade_execution, phantom_repair) is deliberately excluded — those must be
+# re-driven by their own reconciliation paths, not blindly re-queued.
+_IDEMPOTENT_RESUMABLE_TASK_TYPES = {
+    "research",
+    "backtest",
+    "deepdive",
+    "analysis",
+    "general",
+    "develop_candidate",
+}
+
+
+def is_auto_resumable(task_type: object, checkpoint_count: int) -> bool:
+    """True when a task cut off by a restart can be re-run without side effects."""
+    normalized = str(task_type or "").strip().lower()
+    return checkpoint_count > 0 or normalized in _IDEMPOTENT_RESUMABLE_TASK_TYPES
+
+
+# A task re-queued by this many restarts in a row is failed instead, so a task
+# that crashes the process can't bring it down on every start.
+_MAX_RESTART_REQUEUES = 2
+
+
 def recover_dangling_runtime_tasks() -> dict[str, int]:
     """Recover queue rows that were marked running in a dead process.
 
-    Agent tasks cannot safely resume mid-execution, so they are marked failed,
-    except a strategy-creation task that already registered a strategy for its
-    idea: it has delivered, so it completes. Brain/global tasks are safe to
-    requeue; when manual mode is active they are re-frozen as ``paused_manual``
-    instead of becoming runnable again.
+    A strategy-creation task that already registered a strategy for its idea
+    has delivered, so it completes. An agent task that can be re-run without
+    side effects (it saved a checkpoint, or its type is read-mostly, see
+    ``is_auto_resumable``) goes back to ``pending``, at most
+    ``_MAX_RESTART_REQUEUES`` times so a task that keeps killing the process
+    can't loop. Any other agent task is marked failed: it may have half-applied
+    side effects. The launchers stop the backend with a hard kill on Windows
+    (and after a short grace on Linux), so the graceful-shutdown hook that marks
+    tasks ``interrupted`` often never runs; this is the path that sees them.
+    Brain/global tasks are safe to requeue; when manual mode is active they are
+    re-frozen as ``paused_manual`` instead of becoming runnable again.
     """
     from forven.system_mode_policy import initial_queue_status_for_source, normalize_task_source
 
     now = datetime.now(timezone.utc).isoformat()
     agent_note = "Recovered after process restarted; task was previously running."
     brain_note = "Recovered after process restarted; queue item was previously running."
-    recovered = {"agent_completed": 0, "agent_failed": 0, "brain_requeued": 0}
+    recovered = {"agent_completed": 0, "agent_requeued": 0, "agent_failed": 0, "brain_requeued": 0}
 
     # Keep claim selection and state transition in one writer transaction so
     # fallback/API workers cannot duplicate work under contention.
@@ -851,9 +883,30 @@ def recover_dangling_runtime_tasks() -> dict[str, int]:
         recovered["agent_completed"] = len(delivered)
 
         agent_rows = conn.execute(
-            "SELECT id FROM agent_tasks WHERE status = 'running'"
+            """
+            SELECT t.id, t.type, t.output_data,
+                   (SELECT COUNT(*) FROM task_checkpoints c WHERE c.task_id = t.id) AS checkpoint_count
+            FROM agent_tasks t WHERE t.status = 'running'
+            """
         ).fetchall()
-        agent_ids = [str(row["id"]) for row in agent_rows]
+        agent_ids = []
+        for row in agent_rows:
+            try:
+                output = json.loads(row["output_data"]) if row["output_data"] else {}
+            except (TypeError, ValueError):
+                output = {}
+            output = output if isinstance(output, dict) else {}
+            requeues = int(output.get("restart_requeues") or 0)
+            if requeues < _MAX_RESTART_REQUEUES and is_auto_resumable(row["type"], int(row["checkpoint_count"] or 0)):
+                output["restart_requeues"] = requeues + 1
+                conn.execute(
+                    "UPDATE agent_tasks SET status='pending', started_at=NULL, completed_at=NULL, "
+                    "error=NULL, retry_at=NULL, output_data=? WHERE id=?",
+                    (json.dumps(output), int(row["id"])),
+                )
+                recovered["agent_requeued"] += 1
+            else:
+                agent_ids.append(str(row["id"]))
         if agent_ids:
             placeholders = ",".join("?" for _ in agent_ids)
             conn.execute(

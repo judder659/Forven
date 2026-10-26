@@ -127,11 +127,26 @@ kill_port_listener() {
 		warn "Stopping PID ${pid} listening on port ${port}"
 		kill "$pid" 2>/dev/null || true
 	done
-	sleep 1
-	pids="$(lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
+	# Wait for the processes to EXIT, not just to close the port: uvicorn stops
+	# listening first and then runs its shutdown (marks agent tasks interrupted,
+	# stops bots). Starting the new backend before that finishes let the old one
+	# stop bots the new one had just found alive and skipped.
+	local grace="${FORVEN_STOP_GRACE_SECONDS:-30}"
+	local waited=0 alive
+	while ((waited < grace)); do
+		alive=""
+		for pid in $pids; do
+			kill -0 "$pid" 2>/dev/null && alive="1"
+		done
+		[[ -z "$alive" ]] && break
+		sleep 1
+		waited=$((waited + 1))
+	done
 	for pid in $pids; do
-		warn "Force-stopping PID ${pid} on port ${port}"
-		kill -9 "$pid" 2>/dev/null || true
+		if kill -0 "$pid" 2>/dev/null; then
+			warn "Force-stopping PID ${pid} on port ${port} after ${grace}s"
+			kill -9 "$pid" 2>/dev/null || true
+		fi
 	done
 }
 

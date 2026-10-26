@@ -6,9 +6,9 @@
 	 * tool in `forven/agents/tools_brain.py`:
 	 *   {
 	 *     skill_name,
-	 *     description?,
-	 *     what_works_additions?: string[],
-	 *     what_doesnt_work_additions?: string[],
+	 *     proposed_description?: string | null,
+	 *     add_what_works?: string[],
+	 *     add_what_doesnt_work?: string[],
 	 *     metadata_updates?: { ... }   // confidence/sample_size stripped server-side
 	 *   }
 	 *
@@ -30,16 +30,16 @@
 			: null;
 
 	$: descriptionUpdate =
-		payload && typeof payload['description'] === 'string'
-			? (payload['description'] as string)
+		payload && typeof payload['proposed_description'] === 'string'
+			? (payload['proposed_description'] as string)
 			: null;
 
-	$: workAdds = Array.isArray(payload?.['what_works_additions'])
-		? (payload!['what_works_additions'] as unknown[]).map(String)
+	$: workAdds = Array.isArray(payload?.['add_what_works'])
+		? (payload!['add_what_works'] as unknown[]).map(String)
 		: [];
 
-	$: failAdds = Array.isArray(payload?.['what_doesnt_work_additions'])
-		? (payload!['what_doesnt_work_additions'] as unknown[]).map(String)
+	$: failAdds = Array.isArray(payload?.['add_what_doesnt_work'])
+		? (payload!['add_what_doesnt_work'] as unknown[]).map(String)
 		: [];
 
 	$: metaUpdates =
