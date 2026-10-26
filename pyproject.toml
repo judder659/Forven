@@ -42,11 +42,15 @@ dependencies = [
     "websockets>=13.0,<17",
     "slowapi>=0.1.9,<1",
     "pyarrow>=16.0.0,<25",
-    # Upper bounds on the math-critical deps so a future major can't silently
-    # break the numpy/pandas backtest engine on a fresh `pip install -e .`.
-    "pandas>=2.0,<4",
-    "numpy>=1.26,<3",
-    "scipy>=1.11,<2",
+    # Upper bounds on the math-critical deps so a new release can't silently
+    # break the backtest engine on a fresh install or after an update. They cap
+    # the next MINOR, not just the next major: numpy 2.5 / pandas 3.1 broke
+    # strategy validation on 10-24 without an API break. CI installs the newest
+    # versions inside these caps, so users get what CI tested. To take a new
+    # minor, raise the cap here and in requirements-ci.txt in its own PR.
+    "pandas>=2.0,<3.2",
+    "numpy>=1.26,<2.6",
+    "scipy>=1.11,<1.19",
     "requests>=2.31",
     "psutil>=5.9",
     # Live-execution path: a ccxt / hyperliquid-sdk / eth-account major can
@@ -55,7 +59,7 @@ dependencies = [
     "ccxt>=4.5.0,<5",
     "hyperliquid-python-sdk>=0.22.0,<1",
     "eth-account>=0.13.0,<1",
-    "scikit-learn>=1.5",
+    "scikit-learn>=1.5,<1.10",
     "discord.py>=2.3",
     # Backing store for the data lake — a major changes SQL/format behaviour.
     "duckdb>=1.1.0,<2",
