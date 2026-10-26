@@ -227,6 +227,99 @@ jobs:
             tests/test_strategy_worker_parity.py \
             tests/test_strategy_portability.py
 
+  # Many installs run Forven as plain Windows Python (no WSL, no Docker), but
+  # development happens on Linux. This job is the per-PR Windows check: the
+  # PowerShell launcher, plus the tests that cover Windows-only code paths
+  # (file locking, process spawning, the bot sandbox, console windows).
+  # The whole suite takes ~1h40m on a Windows runner (vs ~8 min on Linux),
+  # so it runs nightly in windows-full.yml instead of on every PR.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ci.txt
+          python -m pip install -e . --no-deps
+
+      # Parse every tracked PowerShell script so a syntax error in the
+      # launcher or start_all.ps1 fails here instead of on a user's PC.
+      - name: Parse PowerShell scripts
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $failed = $false
+          foreach ($file in (git ls-files '*.ps1')) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$null, [ref]$errors)
+            if ($errors) {
+              $failed = $true
+              foreach ($e in $errors) { Write-Output "::error file=$file,line=$($e.Extent.StartLineNumber)::$($e.Message)" }
+            }
+          }
+          if ($failed) { exit 1 }
+          Write-Output 'OK: all PowerShell scripts parse.'
+
+      # Windows PowerShell 5.1 (powershell.exe), the shell users actually have,
+      # not pwsh. Both tests run in temp folders and never touch a real install.
+      - name: Launcher PowerShell tests
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($t in @('tests/test_launcher_services.ps1', 'tests/test_launcher_controller.ps1')) {
+            Write-Output "Running $t"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $t
+            if ($LASTEXITCODE -ne 0) { throw "$t failed with exit code $LASTEXITCODE" }
+          }
+
+      - name: Build the desktop launcher
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-launcher.ps1
+
+      # Tests whose code takes a different path on Windows, plus the
+      # strategy-sandbox security set (it spawns worker processes, which work
+      # differently without fork).
+      - name: Windows-specific backend tests
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          python -m pytest -q -n auto --dist loadfile -rfE \
+            tests/test_bot_os_isolation.py \
+            tests/test_bot_factory.py \
+            tests/test_bot_stale_recovery_loop.py \
+            tests/test_daemon_startup_recovery.py \
+            tests/test_watchdog_owner.py \
+            tests/test_runtime_health.py \
+            tests/test_selfheal.py \
+            tests/test_no_console_window_spawns.py \
+            tests/test_workspace_path_safety.py \
+            tests/test_claude_code_provider.py \
+            tests/test_harden_agents.py \
+            tests/test_strategy_frame_contract.py \
+            tests/test_manual_backtest_api_wiring.py \
+            tests/test_arch_api_core.py \
+            tests/test_gate_plan_agent_tooling.py \
+            tests/test_sandbox_ast_guard.py \
+            tests/test_ast_guard_bypasses.py \
+            tests/test_strategy_worker_db_jail.py \
+            tests/test_registry_custom_module_guard.py \
+            tests/test_redact.py \
+            tests/test_db_kv_bootstrap.py
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 25

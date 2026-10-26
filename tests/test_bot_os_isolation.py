@@ -277,6 +277,9 @@ def test_concurrent_starts_spawn_one_copy(forven_db, monkeypatch):
 def test_warm_up_runs_only_when_the_sandbox_is_on(monkeypatch):
     calls = []
     monkeypatch.setattr(mgr, "bot_sandbox_status", lambda: calls.append(1))
+    # The warm-up also syncs the database lock, which on Windows checks the
+    # sandbox status a second time.
+    monkeypatch.setattr(mgr, "sync_database_lock", lambda **_: None)
     monkeypatch.setattr(mgr, "sandbox_enabled", lambda: False)
     mgr.warm_bot_sandbox()
     monkeypatch.setattr(mgr, "sandbox_enabled", lambda: True)
