@@ -209,7 +209,16 @@ function paperActionableBlockers(entry: PipelineExplainStrategy): PipelineExplai
 		return [{ reason: entry.gate_reason ?? '', code: '', kind: 'merit', source: '', action: null }];
 	}
 	const waits = blockers.filter((b) => b.action?.key === 'wait');
-	const actionable = blockers.filter((b) => b.action?.key !== 'wait' && !(waits.length > 0 && b.kind === 'contention'));
+	// A thin backtest edge is the operator's call only once paper has nothing
+	// else to wait for; the held-back test waits on the other checks, so it
+	// does not count.
+	const stillWaiting = waits.some((b) => b.code !== 'holdout_pending');
+	const actionable = blockers.filter(
+		(b) =>
+			b.action?.key !== 'wait' &&
+			!(waits.length > 0 && b.kind === 'contention') &&
+			!(stillWaiting && b.code === 'edge_below_costs'),
+	);
 	return actionable.length > 0 ? actionable : null;
 }
 
