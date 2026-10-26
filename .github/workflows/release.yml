@@ -52,6 +52,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          # Optional: an OpenRouter key (or any OpenAI-compatible endpoint via the
+          # RELEASE_NOTES_BASE_URL variable) to write plain-English notes.
+          RELEASE_NOTES_API_KEY: ${{ secrets.RELEASE_NOTES_API_KEY }}
+          RELEASE_NOTES_BASE_URL: ${{ vars.RELEASE_NOTES_BASE_URL }}
+          RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL }}
           KIND: ${{ inputs.kind || 'weekly' }}
           URGENT: ${{ inputs.urgent && '--urgent' || '' }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
