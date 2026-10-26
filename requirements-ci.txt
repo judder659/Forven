@@ -23,8 +23,8 @@ httpx>=0.25
 hyperliquid-python-sdk>=0.22.0,<1
 # Forven uses mcp.server.fastmcp, which was removed in MCP 2.x.
 mcp>=1.0,<2
-numpy>=1.26,<3
-pandas>=2.2,<4
+numpy>=1.26,<2.6
+pandas>=2.2,<3.2
 psutil>=5.9
 pyarrow>=16.0.0,<25
 pydantic>=2.7,<3
@@ -41,8 +41,8 @@ PyYAML>=6.0
 requests>=2.31
 rich>=13.0
 ruff>=0.4
-scikit-learn>=1.5
-scipy>=1.11,<2
+scikit-learn>=1.5,<1.10
+scipy>=1.11,<1.19
 slowapi>=0.1.9,<1
 trafilatura>=2.0
 # Pinned explicitly: dateparser (pulled in by trafilatura) needs tzlocal at
