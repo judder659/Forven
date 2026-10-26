@@ -82,9 +82,14 @@ def lake(forven_db, tmp_path, monkeypatch):
     consumers.clear_consumer_cache()
     sla.clear_policy_cache()
     lake_mod.clear_footer_cache()
+    # scan_datasets caches its result for 30s, and these tests write parquet
+    # files directly (no save path to invalidate it), so a scan by an earlier
+    # test on the same worker would otherwise be served here.
+    data_mod._invalidate_catalog_cache()
     yield root
     catalog_index.reset()
     consumers.clear_consumer_cache()
+    data_mod._invalidate_catalog_cache()
 
 
 def _add_strategy(sid: str, symbol: str, timeframe: str, stage: str) -> None:
