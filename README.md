@@ -121,7 +121,7 @@ Start from [`.env.example`](.env.example) and set only what you need. The settin
 | Setting | Default | What it does |
 |---|---|---|
 | `FORVEN_EXECUTION_MODE` | `paper` | `paper` is the only supported mode. `live` is unsupported; a real-money order also needs `FORVEN_ALLOW_MAINNET=1` and mainnet credentials. |
-| `FORVEN_BIND_HOST` | `127.0.0.1` | Localhost only. Binding to `0.0.0.0` or a LAN address requires `FORVEN_API_KEY`, or the app refuses to start. |
+| `FORVEN_BIND_HOST` | `127.0.0.1` | Localhost only, for both the API and the dashboard on :5173. Binding to `0.0.0.0` or a LAN address requires `FORVEN_API_KEY` and `FORVEN_OPERATOR_KEY`, or the app refuses to start; it also lets other devices open the dashboard. |
 | `FORVEN_API_KEY`, `FORVEN_OPERATOR_KEY` | unset | Protect the API and its dangerous endpoints. Set both if anything beyond your own machine can reach it. |
 | `START_BOT`, `START_DAEMON` | varies | Start the Discord bot and the separate trading daemon. |
 | `FORVEN_HOME` | `~/.forven` | Where the database, logs and workspace live. |
