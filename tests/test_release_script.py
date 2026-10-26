@@ -71,3 +71,20 @@ def test_discord_payload_is_one_embed_within_limits():
     assert embed["title"] == "Forven 0.3.0"
     assert len(embed["description"]) <= 4096
     assert embed["description"].endswith("and more in the full notes")
+
+
+def test_hand_written_notes_file_is_parsed_by_section():
+    text = "# comment\n\nNew:\n- A thing\n* Another\nFixes:\n- A fix\nSafety:\n\nstray line\n"
+
+    grouped = release.parse_notes_file(text)
+
+    assert grouped == {"New": ["A thing", "Another"], "Fixes": ["A fix"], "Safety": []}
+
+
+def test_committed_release_notes_files_parse_cleanly():
+    notes_dir = Path(__file__).resolve().parents[1] / "docs" / "release-notes"
+    for path in sorted(notes_dir.glob("v*.md")):
+        grouped = release.parse_notes_file(path.read_text(encoding="utf-8"))
+        assert sum(len(items) for items in grouped.values()) > 0, path.name
+        notes = self_update.parse_release_notes(release.tag_message(path.stem[1:], grouped, urgent=False))
+        assert [s["title"] for s in notes["sections"]] == [k for k in release.SECTIONS if grouped[k]]

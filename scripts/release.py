@@ -135,6 +135,24 @@ def discord_payload(version: str, grouped: dict[str, list[str]], urgent: bool, u
     }
 
 
+def parse_notes_file(text: str) -> dict[str, list[str]]:
+    """Read hand-written notes: ``New:`` / ``Fixes:`` / ``Safety:`` headers, ``- `` items."""
+    grouped: dict[str, list[str]] = {name: [] for name in SECTIONS}
+    current: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        header = line.rstrip(":").strip().title()
+        if line.endswith(":") and header in grouped:
+            current = header
+        elif line[:1] in {"-", "*"} and current is not None:
+            item = line[1:].strip()
+            if item:
+                grouped[current].append(item)
+    return grouped
+
+
 def pr_number(subject: str) -> int | None:
     for regex, group in ((MERGE_RE, 1), (SQUASH_RE, "number")):
         match = regex.match(subject)
@@ -260,7 +278,15 @@ def main(argv: list[str] | None = None) -> int:
 
     version = next_version(previous[1] if previous else None, args.kind)
     urgent = args.urgent
-    grouped = group_titles(titles)
+    # A hand-written docs/release-notes/vX.Y.Z.md, when one is committed for
+    # this version, replaces the notes built from PR titles.
+    notes_file = os.path.join("docs", "release-notes", f"v{version}.md")
+    if os.path.isfile(notes_file):
+        with open(notes_file, encoding="utf-8") as fh:
+            grouped = parse_notes_file(fh.read())
+        print(f"Using hand-written notes from {notes_file}")
+    else:
+        grouped = group_titles(titles)
     message = tag_message(version, grouped, urgent)
     print(f"Releasing v{version} at {sha[:9]} (previous: {previous_tag or 'none'})\n")
     print(message)
