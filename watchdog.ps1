@@ -847,6 +847,12 @@ try {
         }
         Write-Log $msg
         Stop-BackendProcesses -ListenerPids $backendListeners
+        if ($backendRestartForced) {
+            # An in-app update may declare new or bumped Python packages:
+            # install them before the backend imports anything.
+            & $python -m forven.preflight --install 2>&1 | ForEach-Object { Write-Log ("preflight: " + $_) }
+            if ($LASTEXITCODE -ne 0) { Write-Log "WARN: Python dependencies still unsatisfied after the update." }
+        }
         $backendLog = Join-Path $logRoot "unified_backend.log"
         $backendErr = Join-Path $logRoot "unified_backend.err.log"
         Move-LogAside -Path $backendLog -Keep $LogRetainCount
@@ -1038,6 +1044,22 @@ if (-not $labWorkerAlive -and $regimeLabEnabled) {
 }
 
 if (Test-LauncherServiceEnabled -Root $RepoRoot -Service frontend) {
+# --- Dashboard packages after an in-app update ---
+# Vite holds files in node_modules open, so stop it while changed npm packages
+# install; the check below then starts it again on the new ones.
+if ($backendRestartForced) {
+    & $python -m forven.frontend_deps check | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "Dashboard packages changed - reinstalling and restarting the frontend."
+        foreach ($frontendPid in @(Get-ListeningPids -Port $FrontendPort)) {
+            try { Stop-Process -Id $frontendPid -Force -ErrorAction Stop } catch {}
+        }
+        Start-Sleep -Seconds 2
+        & $python -m forven.frontend_deps install 2>&1 | ForEach-Object { Write-Log ("frontend_deps: " + $_) }
+        if ($LASTEXITCODE -ne 0) { Write-Log "WARN: npm install failed after the update." }
+    }
+}
+
 # --- Check Frontend ---
 [array]$frontendListeners = @(Get-ListeningPids -Port $FrontendPort)
 if ($frontendListeners.Count -eq 0) {

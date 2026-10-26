@@ -1,0 +1,3 @@
+# Source downloads (GitHub "Download ZIP", release archives) carry no git
+# history, so git fills in the release version here when it builds them.
+forven/_release_version.txt export-subst

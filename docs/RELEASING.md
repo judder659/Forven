@@ -32,3 +32,17 @@ Tick `dry_run` to see the version and notes without tagging anything.
 Add the changelog channel's webhook URL as the repository secret
 `DISCORD_RELEASE_WEBHOOK` (Settings → Secrets and variables → Actions). Without it the
 release still goes out; only the post is skipped.
+
+## What an update does on each install
+
+After the in-app update fast-forwards the checkout, the launcher (start_all or the
+Windows watchdog) restarts the backend. Before it does:
+
+- `python -m forven.preflight --install` installs any Python packages the update added or
+  whose required versions changed.
+- `python -m forven.frontend_deps check` compares `frontend/package-lock.json` with the
+  lockfile the dashboard's packages were installed from. If they differ, the launcher stops
+  Vite, runs `npm install`, and starts it again.
+
+Source downloads without git history (Download ZIP) get their version from
+`forven/_release_version.txt`, which git fills in when it builds the archive.

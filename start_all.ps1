@@ -1486,6 +1486,10 @@ try {
             try {
                 Stop-StartedProcessIfRunning -Process $backendProc
                 Stop-PortListeners -Port $backendPort
+                # The update may declare new or bumped Python packages: install
+                # them before the backend imports anything.
+                & $python -m forven.preflight --install
+                if ($LASTEXITCODE -ne 0) { Write-WarnMessage "Python dependencies still unsatisfied after the update; see the output above." }
                 $backendProc = Start-BackendService
                 $script:ServiceState["backend"].lastRestart = [DateTime]::Now
                 $script:ServiceState["backend"].unhealthyChecks = 0
@@ -1496,6 +1500,23 @@ try {
                 }
             } catch {
                 Write-WarnMessage "Self-update restart failed: $($_.Exception.Message)"
+            }
+            # Same for the dashboard's npm packages. Vite holds files in
+            # node_modules open, so stop it while they install, then restart it.
+            if (Test-LauncherServiceEnabled -Root $script:RepoRoot -Service frontend) {
+                & $python -m forven.frontend_deps check | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Info "Dashboard packages changed - reinstalling and restarting the frontend..."
+                    try {
+                        Stop-StartedProcessIfRunning -Process $frontendProc
+                        Stop-PortListeners -Port $frontendPort | Out-Null
+                        & $python -m forven.frontend_deps install
+                        if ($LASTEXITCODE -ne 0) { Write-WarnMessage "npm install failed after the update; see the output above." }
+                        $frontendProc = Start-FrontendService
+                    } catch {
+                        Write-WarnMessage "Frontend restart after the update failed: $($_.Exception.Message)"
+                    }
+                }
             }
             continue
         }
