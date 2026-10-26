@@ -3,7 +3,7 @@
 // dry-runs the real gates, so these labels describe the same verdict the
 // promotion path would reach; nothing here re-derives a gate.
 
-import type { PipelineExplainBlocker, PipelineExplainStrategy } from '$lib/api/lifecycle';
+import type { PipelineExplainBlocker, PipelineExplainProbationEvidence, PipelineExplainStrategy } from '$lib/api/lifecycle';
 
 export type Tone = 'ok' | 'info' | 'wait' | 'caution' | 'fail' | 'idle';
 
@@ -131,11 +131,38 @@ export function entryStatusMeta(
 		return { ...base, label: 'Ready for probation', short: 'ready', help: 'Every probation check passes. Start probation on the strategy page.' };
 	}
 	const failing = new Set(probation.failing ?? []);
-	const pick = (label: string, short: string, tone: Tone, help: string): StatusMeta => ({ ...base, label, short, tone, help });
-	if (failing.has('edge_covers_costs') && base.key === 'blocked_merit') {
-		return pick('Edge too thin', 'edge thin', 'fail', 'The backtest edge per trade does not cover trading costs with room to spare.');
+	const thin = failing.has('edge_covers_costs');
+	const held = paperHoldMeta(base, failing, probation);
+	if (held && thin) {
+		// A thin edge never changes on its own, but it is not what the strategy
+		// waits on while another check still holds it: name that check, tagged.
+		return {
+			...held,
+			label: `${held.label} · thin edge`,
+			help: `${held.help} Its backtest edge also covers costs less than twice, which probation asks for; you can bypass that when starting probation.`,
+		};
 	}
-	if (failing.has('held_back') && base.key === 'blocked_merit') {
+	if (held) return held;
+	if (thin && base.key === 'blocked_merit') {
+		return {
+			...base,
+			label: 'Edge too thin',
+			short: 'edge thin',
+			tone: 'fail',
+			help: 'The backtest edge per trade covers trading costs less than twice, which probation asks for. It keeps paper trading; you can start probation with a bypass if you trust it.',
+		};
+	}
+	return base;
+}
+
+/** The probation check that holds a paper strategy, leaving out the thin-edge check. */
+function paperHoldMeta(
+	base: StatusMeta,
+	failing: Set<string>,
+	probation: PipelineExplainProbationEvidence,
+): StatusMeta | null {
+	const pick = (label: string, short: string, tone: Tone, help: string): StatusMeta => ({ ...base, label, short, tone, help });
+	if (failing.has('held_back') && base.key === 'blocked_merit' && !failing.has('edge_covers_costs')) {
 		return pick('Failed held-back data', 'held back', 'fail', 'It lost on the data kept back from research.');
 	}
 	if (failing.has('paper_breakeven')) {
@@ -156,7 +183,7 @@ export function entryStatusMeta(
 	if (failing.has('capacity') || failing.has('live_admission')) {
 		return pick('No room live', 'no room', 'caution', 'Probation is full, or the live account has no room for it right now.');
 	}
-	return base;
+	return null;
 }
 
 export function statusMeta(status: string | null | undefined): StatusMeta {

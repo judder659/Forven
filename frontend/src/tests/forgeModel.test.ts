@@ -165,6 +165,10 @@ describe('forge status', () => {
 		expect(paper('blocked_merit', ['paper_breakeven', 'paper_confirmation']).label).toBe('Paper losing');
 		expect(paper('blocked_merit', ['paper_breakeven']).tone).toBe('caution');
 		expect(paper('blocked_merit', ['edge_covers_costs']).label).toBe('Edge too thin');
+		expect(paper('blocked_merit', ['edge_covers_costs', 'held_back']).label).toBe('Edge too thin');
+		// A thin edge is tagged onto the check the strategy still waits on.
+		expect(paper('blocked_merit', ['paper_confirmation', 'edge_covers_costs', 'held_back']).label).toBe('Confirming 1/3 · thin edge');
+		expect(paper('blocked_merit', ['paper_breakeven', 'edge_covers_costs']).label).toBe('Paper losing · thin edge');
 		expect(paper('slot_contention', ['capacity']).label).toBe('No room live');
 		expect(paper('waiting_evidence', ['cooldown']).label).toBe('Cooling down');
 		expect(paper('ready', []).label).toBe('Ready for probation');
@@ -325,10 +329,11 @@ describe('forge attention', () => {
 	it('leaves paper strategies that are only waiting on their paper results off the list', () => {
 		const wait = { key: 'wait', label: 'Wait' };
 		const slot = { key: 'review_slot', label: 'Review slot' };
-		const blocker = (reason: string, kind: string, action: { key: string; label: string }) => ({ reason, code: 'x', kind, source: 'probation_gate', action });
+		const blocker = (reason: string, kind: string, action: { key: string; label: string }, code = 'x') => ({ reason, code, kind, source: 'probation_gate', action });
+		const review = { key: 'review_strategy', label: 'Review' };
 		const losing = blocker('Paper at breakeven or better: paper result -2.04% since it entered paper', 'merit', wait);
 		const items = buildAttention({
-			activeIds: new Set(['S10', 'S11', 'S12', 'S13', 'S14']),
+			activeIds: new Set(['S10', 'S11', 'S12', 'S13', 'S14', 'S15']),
 			explain: [
 				explainEntry({ id: 'S10', status: 'blocked_merit', blockers: [losing] }),
 				explainEntry({
@@ -340,11 +345,21 @@ describe('forge attention', () => {
 				explainEntry({ id: 'S12', status: 'slot_contention', blockers: [losing, blocker('Room on the live account: S1227 holds SOL', 'contention', slot)] }),
 				// Every other check passes but there is no room live: the operator can make room.
 				explainEntry({ id: 'S13', status: 'slot_contention', blockers: [blocker('Room on the live account: S1227 holds SOL', 'contention', slot)] }),
-				// Waiting will never fix a backtest edge too thin for costs.
+				// A thin edge waits behind paper: losing on paper is not the operator's yet.
 				explainEntry({
 					id: 'S14',
 					status: 'blocked_merit',
-					blockers: [losing, blocker('Edge covers costs: 1.3x (need 2x)', 'merit', { key: 'review_strategy', label: 'Review' })],
+					blockers: [losing, blocker('Edge covers costs: 1.3x (need 2x)', 'merit', review, 'edge_below_costs')],
+				}),
+				// Paper has nothing left to wait for (the held-back test waits on the
+				// edge check): waiting will never fix the thin edge, so it is the operator's.
+				explainEntry({
+					id: 'S15',
+					status: 'blocked_merit',
+					blockers: [
+						blocker('Edge covers costs: 1.3x (need 2x)', 'merit', review, 'edge_below_costs'),
+						blocker('Held-back test: pending', 'evidence', wait, 'holdout_pending'),
+					],
 				}),
 			],
 			fleet: null,
@@ -353,7 +368,7 @@ describe('forge attention', () => {
 			health: null,
 			nameOf: (id) => id,
 		});
-		expect(items.map((item) => item.key)).toEqual(['slot:S13', 'blocked:S14']);
+		expect(items.map((item) => item.key)).toEqual(['slot:S13', 'blocked:S15']);
 		expect(items[0]).toMatchObject({ tone: 'caution', detail: 'Room on the live account: S1227 holds SOL' });
 		expect(items[1].detail).toBe('Edge covers costs: 1.3x (need 2x)');
 	});
