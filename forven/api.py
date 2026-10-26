@@ -356,7 +356,7 @@ async def lifespan(_app: FastAPI):
     try:
         from forven.gauntlet.engine import recover_stale_running_steps
 
-        recovered_gauntlet = recover_stale_running_steps(stale_after_minutes=1)
+        recovered_gauntlet = recover_stale_running_steps(stale_after_minutes=1, refund_restart_attempt=True)
         if recovered_gauntlet.get("blocked_runtime"):
             log.info("Recovered %d stale gauntlet workflow step(s).", recovered_gauntlet["blocked_runtime"])
     except Exception:

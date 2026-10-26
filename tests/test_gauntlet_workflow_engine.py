@@ -642,3 +642,65 @@ def test_resume_workflow_records_outcome_even_when_payload_write_fails(forven_db
     assert result["steps_run"] == 1
     assert step["status"] == "failed_gate"
     assert "wfa verdict failed" in step["error_json"]
+
+
+def _kill_running_step(step_id: str) -> None:
+    stale_started = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE gauntlet_steps SET status = 'running', started_at = ?, updated_at = ? WHERE id = ?",
+            (stale_started, stale_started, step_id),
+        )
+
+
+def _attempts(step_id: str) -> int:
+    with get_db() as conn:
+        return int(conn.execute("SELECT attempt_count FROM gauntlet_steps WHERE id = ?", (step_id,)).fetchone()[0])
+
+
+def test_a_restart_does_not_use_up_the_running_steps_attempt(forven_db):
+    workflow = create_or_get_workflow(
+        strategy_id=_strategy(),
+        created_by="pytest",
+        settings_snapshot=build_settings_snapshot(),
+    )
+    step = claim_next_step(workflow["id"])
+    assert _attempts(step["id"]) == 1
+    _kill_running_step(step["id"])
+
+    recovered = recover_stale_running_steps(stale_after_minutes=1, refund_restart_attempt=True)
+
+    assert recovered["blocked_runtime"] == 1 and recovered["attempts_refunded"] == 1
+    assert _attempts(step["id"]) == 0
+
+
+def test_restart_refunds_are_capped_per_step(forven_db):
+    workflow = create_or_get_workflow(
+        strategy_id=_strategy(),
+        created_by="pytest",
+        settings_snapshot=build_settings_snapshot(),
+    )
+    step = claim_next_step(workflow["id"])
+    with get_db() as conn:
+        conn.execute("UPDATE gauntlet_steps SET attempt_count = 6 WHERE id = ?", (step["id"],))
+
+    for _ in range(5):
+        _kill_running_step(step["id"])
+        recover_stale_running_steps(stale_after_minutes=1, refund_restart_attempt=True)
+
+    assert _attempts(step["id"]) == 3  # 3 refunds, then restarts count again
+
+
+def test_the_periodic_stale_sweep_still_counts_the_attempt(forven_db):
+    workflow = create_or_get_workflow(
+        strategy_id=_strategy(),
+        created_by="pytest",
+        settings_snapshot=build_settings_snapshot(),
+    )
+    step = claim_next_step(workflow["id"])
+    _kill_running_step(step["id"])
+
+    recovered = recover_stale_running_steps(stale_after_minutes=1)
+
+    assert "attempts_refunded" not in recovered
+    assert _attempts(step["id"]) == 1

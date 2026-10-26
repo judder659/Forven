@@ -527,3 +527,53 @@ def test_agent_run_that_keeps_progressing_outlives_its_timeout(forven_db, monkey
         )
     )
     assert result == {"ok": True}
+
+
+class TestRestartRequeue:
+    """A restart re-queues agent tasks that can be re-run without side effects."""
+
+    def _insert(self, conn, task_id, task_type, output_data=None):
+        conn.execute(
+            "INSERT OR IGNORE INTO agents (id, name, role, created_at) "
+            "VALUES ('quant-researcher', 'Quant Researcher', 'researcher', datetime('now'))"
+        )
+        conn.execute(
+            "INSERT INTO agent_tasks (id, agent_id, type, title, status, started_at, output_data) "
+            "VALUES (?, 'quant-researcher', ?, 'T', 'running', datetime('now'), ?)",
+            (task_id, task_type, output_data),
+        )
+
+    def _status(self, task_id):
+        with get_db() as conn:
+            return conn.execute("SELECT status, started_at FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+
+    def test_read_only_and_checkpointed_tasks_go_back_to_pending(self, forven_db):
+        from forven.task_progress import checkpoint
+
+        with get_db() as conn:
+            self._insert(conn, 99201, "research")
+            self._insert(conn, 99202, "trade_execution")
+            self._insert(conn, 99203, "trade_execution")
+        checkpoint(99203, "progress", {"round": 3})
+
+        result = recover_dangling_runtime_tasks()
+
+        assert result["agent_requeued"] == 2 and result["agent_failed"] == 1
+        assert self._status(99201)["status"] == "pending"
+        assert self._status(99201)["started_at"] is None
+        assert self._status(99202)["status"] == "failed"  # may have half-applied side effects
+        assert self._status(99203)["status"] == "pending"
+
+    def test_a_task_that_keeps_dying_with_the_process_is_failed(self, forven_db):
+        with get_db() as conn:
+            self._insert(conn, 99204, "research")
+
+        for _ in range(2):
+            assert recover_dangling_runtime_tasks()["agent_requeued"] == 1
+            with get_db() as conn:
+                conn.execute("UPDATE agent_tasks SET status = 'running' WHERE id = 99204")
+
+        result = recover_dangling_runtime_tasks()
+
+        assert result["agent_requeued"] == 0 and result["agent_failed"] == 1
+        assert self._status(99204)["status"] == "failed"

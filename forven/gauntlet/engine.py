@@ -535,8 +535,24 @@ def cancel_workflow(workflow_id: str, *, actor: str = "system", reason: str = ""
         return dict(row)
 
 
-def recover_stale_running_steps(*, stale_after_minutes: int = 30) -> dict[str, int]:
+# A backend restart kills whatever step was running, through no fault of the
+# strategy. At startup the attempt that restart cost is given back, so a day of
+# deploys can't use up a step's retry budget and archive a strategy unjudged.
+# Capped per step so a step that itself brings the process down still drains.
+_MAX_RESTART_REFUNDS = 3
+_RESTART_REFUND_EVENT = "restart_attempt_refunded"
+
+
+def recover_stale_running_steps(
+    *, stale_after_minutes: int = 30, refund_restart_attempt: bool = False
+) -> dict[str, int]:
+    """Flip orphaned ``running`` steps to retryable ``blocked_runtime``.
+
+    ``refund_restart_attempt`` is for the startup call only: every running step
+    there was killed by the restart, so the attempt it was on is not counted.
+    """
     from forven.db import get_db
+    from forven.gauntlet.store import _insert_event
 
     threshold = datetime.now(timezone.utc) - timedelta(minutes=max(int(stale_after_minutes), 1))
     recovered = {"blocked_runtime": 0}
@@ -581,6 +597,25 @@ def recover_stale_running_steps(*, stale_after_minutes: int = 30) -> dict[str, i
                 ),
             )
             if updated.rowcount:
+                if refund_restart_attempt and int(row["attempt_count"] or 0) > 0:
+                    refunds = conn.execute(
+                        "SELECT COUNT(*) FROM gauntlet_events WHERE step_id = ? AND event_type = ?",
+                        (row["id"], _RESTART_REFUND_EVENT),
+                    ).fetchone()[0]
+                    if int(refunds or 0) < _MAX_RESTART_REFUNDS:
+                        conn.execute(
+                            "UPDATE gauntlet_steps SET attempt_count = attempt_count - 1 WHERE id = ?",
+                            (row["id"],),
+                        )
+                        _insert_event(
+                            conn,
+                            workflow_id=row["workflow_id"],
+                            step_id=row["id"],
+                            event_type=_RESTART_REFUND_EVENT,
+                            message="Backend restarted mid-step; this attempt is not counted.",
+                            payload={"attempt_count": int(row["attempt_count"]) - 1},
+                        )
+                        recovered["attempts_refunded"] = recovered.get("attempts_refunded", 0) + 1
                 _refresh_workflow_status(conn, row["workflow_id"])
                 recovered["blocked_runtime"] += 1
     return recovered
