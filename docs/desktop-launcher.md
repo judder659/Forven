@@ -1,4 +1,6 @@
-# Desktop launcher (Windows)
+# Desktop launcher
+
+## Windows
 
 Double-click **ForvenLauncher.exe** in the Forven folder. It opens a native,
 dark desktop window without a terminal. No new dependencies are required.
@@ -41,3 +43,41 @@ Validation: `powershell -NoProfile -File tests/test_launcher_services.ps1` tests
 process isolation and desired-state rules without stopping live services.
 `powershell -NoProfile -STA -File launcher.ps1 -SmokeTest` constructs the window
 without starting services.
+
+## Linux
+
+`launcher.sh` in the Forven folder does the same jobs from a terminal menu. It
+needs nothing beyond what `start_all.sh` already uses (bash, curl, lsof).
+
+```bash
+./launcher.sh install   # once: adds "Forven" to your applications menu
+./launcher.sh           # the menu: open, start, restart, reload, stop, logs
+```
+
+After `install`, open Forven from your apps (right-click to pin it to the dock).
+Every menu item is also a command: `status`, `start`, `restart`,
+`restart-backend` (alias `reload`), `restart-frontend`, `stop`, `open`, `logs`,
+`uninstall`. Add `-y` to skip the confirmation before stop and restart.
+
+- **Start** runs `start_all.sh` in the background in its own session, so closing
+  the menu or its terminal leaves Forven running. Output goes to
+  `.tmp/logs/start_all.log`. The folder's `.venv` is activated if present, and
+  `.env` is read as usual.
+- **Reload backend** asks the running supervisor to restart only the backend on
+  the current code (the same request the in-app "Update & restart" makes). The
+  dashboard stays up. This works whether `start_all.sh` was started by the
+  launcher or by hand in a terminal window.
+- **Restart dashboard** restarts only the frontend dev server. A supervisor
+  started before this launcher existed does not know this request yet; restart
+  Forven once to load the new one.
+- **Restart / Stop Forven** stop the supervisor of this folder (also one running
+  in a terminal window) and everything it started, then wait for the backend's
+  graceful shutdown before forcing anything left on the Forven ports.
+
+As on Windows, stop and restart do **not** close exchange positions. Only the
+supervisor whose `start_all.sh` lives in this folder, and listeners whose working
+folder is inside it, are touched; a port held by anything else is reported and
+left alone.
+
+Validation: `pytest tests/test_launcher_sh.py` drives the launcher against a
+stand-in supervisor on free ports.

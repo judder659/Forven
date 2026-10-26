@@ -71,7 +71,10 @@ cleanup() {
 		fi
 	done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+# Exit on Ctrl+C or a stop request (launcher.sh stop); the EXIT trap stops children.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 wait_for_http() {
 	local url="${1:?wait_for_http requires a URL}"
@@ -388,6 +391,16 @@ while true; do
 			wait_for_http "$FRONTEND_ROOT_URL" "Frontend page" || warn "Frontend did not come back after the update; see ${FRONTEND_LOG}"
 		fi
 		sleep 2
+		continue
+	fi
+	# launcher.sh restart-frontend: restart just the dashboard dev server.
+	if [[ -f "$DIR/.tmp/restart-frontend.request" ]]; then
+		info "Dashboard restart requested..."
+		rm -f "$DIR/.tmp/restart-frontend.request" 2>/dev/null || true
+		kill "$FRONTEND_PID" 2>/dev/null || true
+		kill_port_listener "$FRONTEND_PORT"
+		start_frontend
+		wait_for_http "$FRONTEND_ROOT_URL" "Frontend page" || warn "Frontend did not come back after the restart; see ${FRONTEND_LOG}"
 		continue
 	fi
 	if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
