@@ -46,18 +46,25 @@ without starting services.
 
 ## Linux
 
-`launcher.sh` in the Forven folder does the same jobs from a terminal menu. It
-needs nothing beyond what `start_all.sh` already uses (bash, curl, lsof).
+`launcher.sh` in the Forven folder is the Linux launcher. Run it once with
+`install` to add **Forven** to your applications menu, then open it from there
+(right-click it to pin it to the dock):
 
 ```bash
-./launcher.sh install   # once: adds "Forven" to your applications menu
-./launcher.sh           # the menu: open, start, restart, reload, stop, logs
+./launcher.sh install
 ```
 
-After `install`, open Forven from your apps (right-click to pin it to the dock).
-Every menu item is also a command: `status`, `start`, `restart`,
+On a desktop with GTK for Python (preinstalled on Ubuntu and other GNOME
+desktops) it opens a window like the Windows launcher: Start, Restart and Stop
+Forven, Reload backend, Restart dashboard, Open Forven, live status and an
+activity box. Without GTK it opens the same actions as a numbered terminal
+menu (`./launcher.sh menu`). Nothing extra is installed either way; the
+launcher only uses bash, curl and lsof, which `start_all.sh` already needs.
+
+Every action is also a command: `status`, `start`, `restart`,
 `restart-backend` (alias `reload`), `restart-frontend`, `stop`, `open`, `logs`,
-`uninstall`. Add `-y` to skip the confirmation before stop and restart.
+`gui`, `menu`, `uninstall`. Add `-y` to skip the confirmation before stop and
+restart. Run `install` again after updating from an older launcher.
 
 - **Start** runs `start_all.sh` in the background in its own session, so closing
   the menu or its terminal leaves Forven running. Output goes to

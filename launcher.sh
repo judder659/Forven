@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Forven launcher for Linux: the counterpart of launcher.ps1 on Windows.
 #
-#   ./launcher.sh                  interactive menu (what the desktop icon opens)
+#   ./launcher.sh                  the launcher window (terminal menu without a desktop)
+#   ./launcher.sh menu             the terminal menu
 #   ./launcher.sh status           what is running
 #   ./launcher.sh start            start Forven in the background
 #   ./launcher.sh restart          stop everything, then start again
@@ -312,24 +313,59 @@ cmd_logs() {
 	trap - INT
 }
 
+# The window needs PyGObject from the system Python (preinstalled on GNOME
+# desktops such as Ubuntu). A project venv does not see it, so try the system
+# interpreter first.
+gui_python() {
+	[[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] || return 1
+	local py
+	for py in ${FORVEN_GUI_PYTHON:-} /usr/bin/python3 python3; do
+		command -v "$py" >/dev/null 2>&1 || continue
+		if "$py" -c 'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk' >/dev/null 2>&1; then
+			echo "$py"
+			return 0
+		fi
+	done
+	return 1
+}
+
+cmd_gui() {
+	local py
+	if ! py="$(gui_python)"; then
+		warn "No desktop window support (GTK 3 for Python) here; using the terminal menu."
+		menu
+		return
+	fi
+	exec "$py" "$DIR/scripts/launcher_gtk.py"
+}
+
 cmd_install() {
 	mkdir -p "$(dirname "$DESKTOP_FILE")"
-	local icon="utilities-terminal"
-	[[ -f "$DIR/frontend/static/favicon.png" ]] && icon="$DIR/frontend/static/favicon.png"
+	local icon="$DIR/packaging/linux/forven.svg" exec_line terminal
+	if gui_python >/dev/null; then
+		exec_line="\"$DIR/launcher.sh\" gui"
+		terminal=false
+	else
+		# No GTK: the entry opens the terminal menu instead.
+		exec_line="\"$DIR/launcher.sh\" menu"
+		terminal=true
+	fi
 	cat >"$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Forven
 Comment=Start, stop and restart Forven
-Exec="$DIR/launcher.sh"
+Exec=$exec_line
 Path=$DIR
 Icon=$icon
-Terminal=true
+Terminal=$terminal
+StartupWMClass=forven
 Categories=Office;Finance;
 EOF
 	chmod +x "$DESKTOP_FILE" "$DIR/launcher.sh"
 	command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(dirname "$DESKTOP_FILE")" >/dev/null 2>&1
 	info "Added Forven to your applications menu ($DESKTOP_FILE)."
+	[[ "$terminal" == "true" ]] && info "GTK for Python was not found, so it opens the terminal menu."
 	info "Search for \"Forven\" in your apps; right-click it to add it to the dock or favorites."
 }
 
@@ -366,7 +402,7 @@ menu() {
 	done
 }
 
-usage() { sed -n '2,16p' "$DIR/launcher.sh" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$DIR/launcher.sh" | sed 's/^# \{0,1\}//'; }
 
 main() {
 	if [[ "$(uname -s)" != "Linux" ]]; then
@@ -381,8 +417,11 @@ main() {
 			*) args+=("$a") ;;
 		esac
 	done
-	case "${args[0]:-menu}" in
+	local default="menu"
+	gui_python >/dev/null && default="gui"
+	case "${args[0]:-$default}" in
 		menu) menu ;;
+		gui) cmd_gui ;;
 		status) cmd_status ;;
 		start) cmd_start ;;
 		stop) confirm "Stopping Forven" && cmd_stop ;;

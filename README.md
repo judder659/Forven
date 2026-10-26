@@ -74,7 +74,7 @@ cp .env.example .env
 START_BOT=0 START_DAEMON=0 bash start_all.sh
 ```
 
-On Linux, `./launcher.sh install` adds Forven to your applications menu, opening a small menu to start, reload the backend, restart or stop; see [`docs/desktop-launcher.md`](docs/desktop-launcher.md#linux).
+On Linux, `./launcher.sh install` adds Forven to your applications menu, opening a launcher window to start, reload the backend, restart or stop; see [`docs/desktop-launcher.md`](docs/desktop-launcher.md#linux).
 
 Then open **http://127.0.0.1:5173**. The API listens on `http://127.0.0.1:8003` (health check: `/api/health`). [`docs/FIRST_RUN_CHECKLIST.md`](docs/FIRST_RUN_CHECKLIST.md) walks through the first session.
 

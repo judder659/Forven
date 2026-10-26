@@ -124,3 +124,33 @@ def test_install_adds_menu_entry(checkout, tmp_path):
     assert f'Exec="{root}/launcher.sh"' in entry and "Terminal=true" in entry
     assert run("uninstall").returncode == 0
     assert not (tmp_path / "share" / "applications" / "forven.desktop").exists()
+
+
+def _gtk_python() -> str | None:
+    for py in ("/usr/bin/python3", sys.executable):
+        probe = (
+            'import gi; gi.require_version("Gtk", "3.0"); from gi.repository import Gtk'
+        )
+        if subprocess.run([py, "-c", probe], capture_output=True).returncode == 0:
+            return py
+    return None
+
+
+@pytest.mark.skipif(not shutil.which("xvfb-run"), reason="needs xvfb-run for a display")
+def test_gtk_window_builds():
+    py = _gtk_python()
+    if py is None:
+        pytest.skip("GTK 3 for Python is not installed")
+    result = subprocess.run(
+        [
+            "xvfb-run",
+            "-a",
+            py,
+            str(ROOT / "scripts" / "launcher_gtk.py"),
+            "--smoke-test",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "constructed successfully" in result.stdout, result.stdout + result.stderr
