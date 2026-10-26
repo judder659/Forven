@@ -2,7 +2,7 @@
 
 import logging
 
-from forven.sandbox import lint_code, run_code
+from forven.sandbox import MAX_MEMORY_MB, lint_code, run_code
 from forven.sandbox.ast_guard import scan_source
 
 log = logging.getLogger("forven.selfheal")
@@ -86,7 +86,10 @@ def validate_strategy_code(code: str) -> dict:
         }
 
     test_code = _wrap_with_test_harness(current_code)
-    exec_result = run_code(test_code, timeout=30, max_memory_mb=256)
+    # The sandbox default, not a tighter cap: since numpy 2.5 / pandas 3.1 the
+    # harness's own `import pandas` needs more than 256MB of address space, which
+    # failed every strategy at registration with a MemoryError on Linux.
+    exec_result = run_code(test_code, timeout=30, max_memory_mb=MAX_MEMORY_MB)
 
     valid = (
         final_lint["passed"]

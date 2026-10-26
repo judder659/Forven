@@ -23,22 +23,6 @@ import ast
 import io
 import os
 
-import sys as _sys
-
-import pytest as _pytest
-
-# Registration runs the candidate through forven.sandbox, which cannot import
-# pandas on Linux (a known, undiagnosed PRODUCT defect -- see the same marker in
-# tests/test_selfheal.py and tests/test_manual_backtest_api_wiring.py). This test
-# exercises the lookahead PROBE, not the sandbox, but it cannot reach the probe
-# without a working registration. Skipping keeps the defect on the record rather
-# than silently green; it is not evidence the probe wiring is broken.
-_SANDBOX_BROKEN_ON_POSIX = _pytest.mark.skipif(
-    _sys.platform != "win32",
-    reason="forven.sandbox cannot import pandas on Linux - known undiagnosed product defect",
-)
-
-
 import forven.api_core as core
 import forven.api_models as api_models
 import forven.providers.discovery as discovery
@@ -256,7 +240,6 @@ TYPE_NAME = "arch_silent_probe"
 '''
 
 
-@_SANDBOX_BROKEN_ON_POSIX
 def test_registration_surfaces_lookahead_not_verifiable():
     """lookahead-probe-vacuous-pass: a silent strategy must not read as verified.
 
