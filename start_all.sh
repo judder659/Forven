@@ -322,14 +322,17 @@ if [[ "$START_DAEMON" == "1" ]]; then
 	fi
 fi
 
-info "Starting frontend on port ${FRONTEND_PORT}..."
-(
-	cd "$DIR/frontend"
-  # Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work.
-  npm run dev -- --host :: --port "$FRONTEND_PORT"
-) > "$FRONTEND_LOG" 2>&1 &
-FRONTEND_PID=$!
-PIDS+=("$FRONTEND_PID")
+start_frontend() {
+	info "Starting frontend on port ${FRONTEND_PORT}..."
+	(
+		cd "$DIR/frontend"
+		# Bind Vite on the IPv6 unspecified address so both localhost (::1) and 127.0.0.1 work.
+		npm run dev -- --host :: --port "$FRONTEND_PORT"
+	) > "$FRONTEND_LOG" 2>&1 &
+	FRONTEND_PID=$!
+	PIDS+=("$FRONTEND_PID")
+}
+start_frontend
 
 if ! wait_for_http "$FRONTEND_ROOT_URL" "Frontend page"; then
 	tail -n 80 "$FRONTEND_LOG" || true
@@ -361,6 +364,11 @@ while true; do
 		info "Self-update restart requested - bouncing backend to load new code..."
 		rm -f "$DIR/.tmp/restart.request" 2>/dev/null || true
 		kill_port_listener "$BACKEND_PORT"
+		# The update may declare new or bumped Python packages: install them
+		# before the backend imports anything.
+		if ! python3 -m forven.preflight --install; then
+			warn "Python dependencies still unsatisfied after the update; see the output above."
+		fi
 		python3 -m uvicorn --app-dir "$UVICORN_APP_DIR" "$BACKEND_MODULE" --host "$BACKEND_HOST" --port "$BACKEND_PORT" --workers "$BACKEND_WORKERS" > "$BACKEND_LOG" 2>&1 &
 		BACKEND_PID=$!
 		PIDS+=("$BACKEND_PID")
@@ -368,6 +376,16 @@ while true; do
 			info "Backend restarted (self-update) as PID ${BACKEND_PID}"
 		else
 			warn "Backend did not pass health check after self-update restart; see ${BACKEND_LOG}"
+		fi
+		# Same for the dashboard's npm packages; Vite has to be stopped while
+		# they install, then started on the new ones.
+		if ! python3 -m forven.frontend_deps check >/dev/null; then
+			info "Dashboard packages changed - reinstalling and restarting the frontend..."
+			kill "$FRONTEND_PID" 2>/dev/null || true
+			kill_port_listener "$FRONTEND_PORT"
+			python3 -m forven.frontend_deps install || warn "npm install failed after the update; see the output above."
+			start_frontend
+			wait_for_http "$FRONTEND_ROOT_URL" "Frontend page" || warn "Frontend did not come back after the update; see ${FRONTEND_LOG}"
 		fi
 		sleep 2
 		continue

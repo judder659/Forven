@@ -6,6 +6,30 @@
 __version__ = "0.1.34"
 
 
+def _archive_version(path=None) -> str | None:
+    """The release a source download was built from, if this is one.
+
+    A git checkout reads its version from the release tags (see
+    ``forven.self_update``). A download without history can't, so git fills in
+    ``_release_version.txt`` when it builds the archive (``export-subst`` in
+    .gitattributes); in a checkout the file still holds the unexpanded
+    placeholder and this returns None.
+    """
+    from pathlib import Path
+
+    try:
+        source = Path(path) if path else Path(__file__).with_name("_release_version.txt")
+        raw = source.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw.startswith("v") or "$" in raw:
+        return None
+    return raw[1:]
+
+
+__version__ = _archive_version() or __version__
+
+
 def _install_ta_import_tripwire() -> None:
     """Raise ModuleNotFoundError if anything tries to `import ta`.
 
