@@ -18,6 +18,8 @@ Every Monday at 09:00 UTC, after the nightly Windows full suite, the workflow:
    Release, and posts one message to Discord.
 
 PR titles become the release notes, so write them as plain sentences a user would follow.
+To write a release's notes by hand instead, commit `docs/release-notes/vX.Y.Z.md` (same
+`New:` / `Fixes:` / `Safety:` layout, see `v0.2.0.md`) before the release runs.
 
 ## Urgent hotfix
 
