@@ -1,0 +1,61 @@
+name: Release
+
+# Cuts the release the in-app updater offers on the Stable channel: an
+# annotated vX.Y.Z tag on a tested commit of main, a GitHub Release, and one
+# Discord post. Weekly on Monday after the nightly Windows suite (06:00 UTC,
+# about 1h40m), or by hand from the Actions tab — choose "hotfix" for an
+# urgent fix that can't wait for Monday. See scripts/release.py.
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: 'weekly (needs CI + nightly Windows green) or hotfix (CI green, patch version)'
+        type: choice
+        options: [weekly, hotfix]
+        default: weekly
+      urgent:
+        description: 'Mark the release urgent (amber pill + banner in the app)'
+        type: boolean
+        default: false
+      dry_run:
+        description: 'Only print what would be released'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cut the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_RELEASE_WEBHOOK: ${{ secrets.DISCORD_RELEASE_WEBHOOK }}
+          KIND: ${{ inputs.kind || 'weekly' }}
+          URGENT: ${{ inputs.urgent && '--urgent' || '' }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: |
+          git config user.name "forven-release"
+          git config user.email "forven-release@users.noreply.github.com"
+          python scripts/release.py --kind "$KIND" $URGENT $DRY_RUN
