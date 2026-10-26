@@ -28,6 +28,8 @@
 	import ThroughputSuggestionBanner from '$lib/components/ThroughputSuggestionBanner.svelte';
 	import ConnectionHealthBanner from '$lib/components/ConnectionHealthBanner.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import WhatsNewPanel from '$lib/components/updates/WhatsNewPanel.svelte';
+	import AfterUpdateCard from '$lib/components/updates/AfterUpdateCard.svelte';
 	import AIChatPanel from '$lib/components/AIChatPanel.svelte';
 	import { chatUnreadCount } from '$lib/stores/chatStore';
 	import { assistantUI, toggleAssistant } from '$lib/stores/assistantUI';
@@ -325,6 +327,9 @@
 </button>
 
 <AIChatPanel />
+
+<WhatsNewPanel />
+<AfterUpdateCard />
 
 {#if wizardSettings && $wizardOpen}
 	<SetupWizardModal settings={wizardSettings} />

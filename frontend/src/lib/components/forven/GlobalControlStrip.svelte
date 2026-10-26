@@ -20,6 +20,7 @@
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 	import LivePnlTicker from '$lib/components/forven/LivePnlTicker.svelte';
 	import RegimeChip from '$lib/components/regime/RegimeChip.svelte';
+	import UpdatePill from '$lib/components/updates/UpdatePill.svelte';
 
 	type ModalAction = 'mode-toggle' | 'emergency-halt' | 'trading-reset' | 'system-mode-change' | null;
 	type ExecutionMode = 'paper' | 'live';
@@ -296,6 +297,7 @@
 			<span class={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400' : 'bg-red-500'}`}></span>
 			<span class={wsConnected ? 'text-emerald-400' : 'text-red-400'}>{wsConnected ? 'WS Live' : 'WS Offline'}</span>
 		</div>
+		<UpdatePill />
 	</div>
 
 	<div class="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-2">

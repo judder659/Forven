@@ -9,6 +9,25 @@ How updating a self-hosted Forven install behaves, and the few things worth know
 
 ---
 
+## How updates arrive
+
+Forven offers updates as **releases**: one tested version a week (Mondays), each with short
+notes grouped as New, Fixes and Safety. A safety fix that can't wait ships the same day as a
+small patch release marked **Urgent**.
+
+- A pill in the top bar ("v0.2.0 available") opens **What's new** with the notes and an
+  **Update now** button. Updating shows each step (Download, Install, Restart, Back online)
+  and a Retry button if a step fails. *Remind me tomorrow* hides the pill for a day (urgent
+  releases always show, with a one-line banner).
+- **Settings > System > Updates** shows the installed version, a release history, and the
+  update channel: **Stable** (releases only, the default) or **Latest** (every change as soon
+  as it lands, for testers). `FORVEN_UPDATE_CHANNEL` in `.env` overrides the setting.
+- Forven checks for updates at most once a day. Updating is a git fast-forward, so it needs
+  only git, which every install already has. Your own untracked files don't block it; edits
+  to Forven's tracked files do, with a message saying so.
+
+---
+
 ## Engine safety + correctness release (2026-06)
 
 A full audit of the paper + live trading engine fixed both critical findings and all 19

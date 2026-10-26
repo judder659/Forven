@@ -56,9 +56,13 @@ export type {
 export {
 	getUpdateStatus,
 	applyUpdate,
+	setUpdateChannel,
 } from './updates';
 export type {
 	UpdateStatus,
+	UpdateChannel,
+	ReleaseInfo,
+	ReleaseNotesSection,
 	ApplyUpdateResult,
 	ApplyUpdateStatus,
 } from './updates';
