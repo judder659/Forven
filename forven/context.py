@@ -115,6 +115,32 @@ def _capped_daily_log(text: str) -> str:
     return f"[earlier {omitted:,} chars of this log omitted — newest entries follow]\n{tail}"
 
 
+# Agents append to their MEMORY.md after tasks and nothing trims it; on
+# 2026-10-27 strategy-developer's was 620k characters, ~76% of a 255k-token
+# first prompt resent on every call. Keep the top (durable notes) and the
+# newest entries; the agent can read the whole file with read_file.
+AGENT_MEMORY_HEAD_CHARS = 3_000
+AGENT_MEMORY_TAIL_CHARS = 9_000
+
+
+def _capped_agent_memory(text: str, agent_id: str) -> str:
+    if len(text) <= AGENT_MEMORY_HEAD_CHARS + AGENT_MEMORY_TAIL_CHARS:
+        return text
+    head = text[:AGENT_MEMORY_HEAD_CHARS]
+    cut = head.rfind("\n")
+    if cut > AGENT_MEMORY_HEAD_CHARS // 2:
+        head = head[:cut]
+    tail = text[-AGENT_MEMORY_TAIL_CHARS:]
+    nl = tail.find("\n")
+    if 0 <= nl < 200:
+        tail = tail[nl + 1:]
+    omitted = len(text) - len(head) - len(tail)
+    return (
+        f"{head}\n\n[... {omitted:,} characters of older entries not shown. "
+        f"read_file agents/{agent_id}/memory/MEMORY.md has all of it.]\n\n{tail}"
+    )
+
+
 def build_brain_context(session_type: str = "main") -> str:
     """Assemble workspace files into a system prompt for the Brain.
 
@@ -347,7 +373,7 @@ def build_agent_context(
     # Agent's own memory
     agent_mem = read_workspace(f"agents/{agent_id}/memory/MEMORY.md", optional=True)
     if agent_mem:
-        parts.append(f"# YOUR MEMORY\n{agent_mem}")
+        parts.append(f"# YOUR MEMORY\n{_capped_agent_memory(agent_mem, agent_id)}")
 
     if include_daily_memory:
         today = _utc_today().isoformat()
