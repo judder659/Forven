@@ -5,6 +5,7 @@
 	import type { LifecycleStrategy } from '$lib/api';
 	import { describeRefusal, tradeModeLabel } from '$lib/utils/tradingDesk/describe';
 	import { ago, cap1, dur, durShort, fmtDateTime, fmtDay, fmtPct, fmtPx, fmtQty, fmtTime, fmtUsd, lastBarClose, nextBarClose, toneClass } from '$lib/utils/tradingDesk/format';
+	import { legAsset } from '$lib/utils/tradingDesk/position';
 	import { STATE_LABEL, type DeskRow, type RailFilter } from '$lib/utils/tradingDesk/rows';
 	import DeskSparkline from './DeskSparkline.svelte';
 	import ProbationBadge from '$lib/components/probation/ProbationBadge.svelte';
@@ -59,9 +60,10 @@
 		if (row.legs.length) {
 			const leg = row.legs[0];
 			const math = row.legMath[0];
+			const asset = legAsset(leg, row.asset);
 			const extra = row.legs.length > 1 ? ` · +${row.legs.length - 1} leg` : '';
-			if (row.state === 'exit_blocked') return { text: `Exit refused · ${cap1(leg.side)} ${fmtQty(leg.size)} ${row.asset}`, tone: 'text-[#f3a39d]' };
-			return { text: `${cap1(leg.side)} ${fmtQty(leg.size)} ${row.asset} · ${fmtUsd(math?.pnl, { signed: true })}${leg.stop !== null ? ` · stop ${fmtPx(leg.stop)}` : ''}${extra}`, tone: 'text-sc-ink2' };
+			if (row.state === 'exit_blocked') return { text: `Exit refused · ${cap1(leg.side)} ${fmtQty(leg.size)} ${asset}`, tone: 'text-[#f3a39d]' };
+			return { text: `${cap1(leg.side)} ${fmtQty(leg.size)} ${asset} · ${fmtUsd(math?.pnl, { signed: true })}${leg.stop !== null ? ` · stop ${fmtPx(leg.stop)}` : ''}${extra}`, tone: 'text-sc-ink2' };
 		}
 		if (row.state === 'stale') return { text: `Not evaluated since ${ago(row.fleet?.last_scan?.at, now)}`, tone: 'text-[#f3a39d]' };
 		if (row.session.status === 'blocked' && row.session.blocked_reason) {
