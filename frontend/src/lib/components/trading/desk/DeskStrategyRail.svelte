@@ -103,7 +103,7 @@
 			>{text}{#if count !== null}<span class="ml-1 font-plex-mono text-[11px] text-sc-ink4">{count}</span>{/if}</button>
 		{/each}
 	</div>
-	<div class="max-h-[780px] min-h-0 flex-1 overflow-y-auto max-lg:flex max-lg:max-h-none max-lg:overflow-x-auto">
+	<div class="max-h-[780px] min-h-0 flex-1 overflow-y-auto overflow-x-hidden max-lg:flex max-lg:max-h-none max-lg:overflow-x-auto">
 		{#if filter === 'archived'}
 			{#if archivedLoading}
 				<div class="px-3 py-6 text-center text-[12px] text-sc-ink3">Loading archived strategies…</div>
@@ -113,7 +113,7 @@
 				{#each archived as strategy (strategy.id)}
 					<button
 						type="button"
-						class={`grid w-full gap-0.5 border-b border-l-2 border-sc-line px-3 py-2 text-left hover:bg-sc-hover max-lg:min-w-[250px] ${selectedArchivedId === strategy.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
+						class={`grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 border-b border-l-2 border-sc-line px-3 py-2 text-left hover:bg-sc-hover max-lg:min-w-[250px] ${selectedArchivedId === strategy.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
 						aria-pressed={selectedArchivedId === strategy.id}
 						on:click={() => dispatch('selectArchived', strategy)}
 					>
@@ -136,7 +136,7 @@
 				{@const perf = row.perf}
 				<button
 					type="button"
-					class={`grid w-full gap-0.5 border-b border-l-2 border-sc-line px-3 py-2.5 text-left hover:bg-sc-hover max-lg:min-w-[250px] max-lg:border-b-0 max-lg:border-r ${selectedId === row.session.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
+					class={`grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 border-b border-l-2 border-sc-line px-3 py-2.5 text-left hover:bg-sc-hover max-lg:min-w-[250px] max-lg:border-b-0 max-lg:border-r ${selectedId === row.session.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
 					aria-pressed={selectedId === row.session.id}
 					data-testid="desk-rail-item"
 					on:click={() => dispatch('select', row.session.id)}
@@ -161,7 +161,7 @@
 							<span class="shrink-0 whitespace-nowrap">since {fmtDay(perf.since)}</span>
 						{/if}
 					</div>
-					<span class={`text-[12px] ${why.tone}`}>{why.text}</span>
+					<span class={`min-w-0 break-words text-[12px] ${why.tone}`} title={why.text}>{#each why.text.split(' · ') as part, i}{#if i} · {/if}<span class={part.length <= 28 ? 'whitespace-nowrap' : ''}>{part}</span>{/each}</span>
 					<div class="mt-0.5 grid grid-cols-[minmax(0,1fr)_76px_auto] items-center gap-2 text-[11.5px] text-sc-ink3">
 						<span class="whitespace-nowrap" title={`The next ${row.timeframe} bar closes in ${dur(nextBarClose(row.timeframe, now) - now)}`}>Next bar <b class="font-plex-mono font-medium text-sc-ink2">{durShort(nextBarClose(row.timeframe, now) - now)}</b></span>
 						<DeskSparkline points={perf.curve.map((point) => point.value - perf.base)} label={`${row.sid} ${mode} P&L since inception`} />
