@@ -8,7 +8,7 @@ import { executionSummary, fillRows } from '$lib/utils/tradingDesk/fills';
 import { ago, dur, fmtCompactUsd, fmtPx, fmtQty, fmtRateHourly, fmtUsd, nextBarClose } from '$lib/utils/tradingDesk/format';
 import { fundingDirection, positionFundingPerHour } from '$lib/utils/tradingDesk/market';
 import { drawdown, inception, strategyPerformance } from '$lib/utils/tradingDesk/performance';
-import { ladder, legMath, legsOf, type Leg } from '$lib/utils/tradingDesk/position';
+import { ladder, legAsset, legMath, legsOf, type Leg } from '$lib/utils/tradingDesk/position';
 import { binomCdf, expectation, poissonCdf, statsFor } from '$lib/utils/tradingDesk/stats';
 import { defaultRiskPct, ticketCalc, type TicketInput } from '$lib/utils/tradingDesk/ticket';
 
@@ -382,5 +382,21 @@ describe('performance since inception', () => {
 		const dd = drawdown([10_000, 10_200, 9_900, 10_100]);
 		expect(dd?.abs).toBe(300);
 		expect(dd?.pctOfPeak).toBeCloseTo((300 / 10_200) * 100, 6);
+	});
+});
+
+describe('legAsset', () => {
+	const leg = (symbol: string | null): Leg => ({
+		id: 'E1', symbol, side: 'short', size: 1810.6, entry: 0.2167, openedMs: null, stop: null, takeProfit: null,
+		stopSource: null, takeProfitSource: null, book: null, manualPause: false, source: null, serverMark: null, serverPnl: null, primary: true,
+	});
+
+	it("names another coin of a multi-coin container by the leg's own market", () => {
+		expect(legAsset(leg('ADA/USDT'), 'BTC')).toBe('ADA');
+		expect(legAsset(leg('ADA'), 'BTC')).toBe('ADA');
+	});
+
+	it("falls back to the strategy's asset when the leg has no market", () => {
+		expect(legAsset(leg(null), 'BTC')).toBe('BTC');
 	});
 });

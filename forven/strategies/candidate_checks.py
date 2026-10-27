@@ -420,9 +420,8 @@ def _window_days(result: dict) -> float | None:
 
 def _short_history_feeds(row: Any, symbol: str, timeframe: str, result: dict) -> tuple[tuple[str, str], ...]:
     """Input feeds of the candidate that cover too little of the checked window."""
-    from pathlib import Path
-
     from forven.strategies.data_availability import _columns_in_source, short_history_columns
+    from forven.strategies.identity import resolve_source_ref
 
     min_pct = min_feed_coverage_pct()
     start, end = result.get("start_date"), result.get("end_date")
@@ -430,7 +429,10 @@ def _short_history_feeds(row: Any, symbol: str, timeframe: str, result: dict) ->
     if min_pct <= 0 or not start or not end or not source_ref:
         return ()
     try:
-        source = Path(source_ref).read_text(encoding="utf-8")
+        source_path = resolve_source_ref(source_ref)
+        if source_path is None:
+            return ()
+        source = source_path.read_text(encoding="utf-8")
         columns = _columns_in_source(source)
         if not columns:
             return ()

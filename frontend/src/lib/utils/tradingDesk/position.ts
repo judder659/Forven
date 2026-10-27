@@ -1,6 +1,7 @@
 /** Open-position legs, their live P&L and the stop · entry · mark · target ladder. */
 import type { PaperPosition, PaperTradingSession } from '$lib/api/paper';
 import { num, parseTs, timeframeMs } from './format';
+import { assetOf } from './market';
 
 export interface Leg {
 	id: string;
@@ -139,6 +140,11 @@ const LABEL_GAP = 24;
  * shaded). The bounds (stop, target) label above the track and entry and mark
  * below; a label that would collide moves rows or hides.
  */
+/** The coin a leg holds: its own market for another coin of a multi-coin container, else the strategy's. */
+export function legAsset(leg: Leg, fallback: string): string {
+	return (leg.symbol && assetOf(leg.symbol)) || fallback;
+}
+
 export function ladder(leg: Leg, mark: number): Ladder {
 	const prices = [leg.entry, mark];
 	if (leg.stop !== null) prices.push(leg.stop);

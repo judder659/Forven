@@ -815,10 +815,13 @@ def _row_needs(row: dict[str, Any], asset: str) -> tuple[FeedNeeds, dict, str | 
         needs, unverified = FeedNeeds(basis="unresolved"), f"inspection failed: {exc}"
     if needs.basis in ("sandbox", "unresolved"):
         source_ref = str(row.get("source_ref") or "").strip()
+        from forven.strategies.identity import resolve_source_ref
+
         source = None
-        if source_ref and Path(source_ref).is_file():
+        source_path = resolve_source_ref(source_ref)
+        if source_path is not None:
             try:
-                source = Path(source_ref).read_text(encoding="utf-8")
+                source = source_path.read_text(encoding="utf-8")
             except OSError:
                 source = None
         if source is not None:

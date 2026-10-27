@@ -16,6 +16,7 @@ from pathlib import Path
 
 from forven.strategies.base import BaseStrategy
 from forven.strategies.custom_catalog import custom_strategy_status, include_archived_custom_strategies
+from forven.strategies.identity import source_ref_stem
 from forven.strategies.params import canonicalize_params_with_metadata, resolve_strategy_family
 
 log = logging.getLogger("forven.strategies.registry")
@@ -633,7 +634,7 @@ def _ensure_active_db_strategy_modules() -> None:
         src = str(row["source_ref"] or "").strip()
         if not src:
             continue
-        modname = Path(src).stem
+        modname = source_ref_stem(src)
         if not modname or modname in _FAILED_CUSTOM_MODULES:
             continue
         try:

@@ -42,6 +42,7 @@
 	import { buildAttention, type SideTab } from '$lib/utils/tradingDesk/attention';
 	import { cap1, fmtPct, fmtPx, fmtQty, fmtUsd, num, parseTs } from '$lib/utils/tradingDesk/format';
 	import { blockingGates } from '$lib/utils/tradingDesk/gates';
+	import { legAsset } from '$lib/utils/tradingDesk/position';
 	import { buildRows, livePrice, sortRows, statsByStrategy, type RailFilter } from '$lib/utils/tradingDesk/rows';
 	import DeskAccountStrip from './DeskAccountStrip.svelte';
 	import DeskArchivedPanel from './DeskArchivedPanel.svelte';
@@ -386,15 +387,16 @@
 		const leg = row?.legs[0];
 		const math = row?.legMath[0];
 		if (!row || !leg || !math) return;
-		const label = `${cap1(leg.side)} ${fmtQty(leg.size)} ${row.asset}`;
+		const asset = legAsset(leg, row.asset);
+		const label = `${cap1(leg.side)} ${fmtQty(leg.size)} ${asset}`;
 		const est = (fraction: number) => `${fmtUsd(math.pnl * fraction, { signed: true })} at ${fmtPx(math.mark)}`;
 		const fill = mode === 'live' ? 'Market, reduce-only' : 'Paper fill at the mid';
 		switch (action.kind) {
 			case 'close':
 				openConfirm({
-					title: `Close ${leg.side} ${row.asset}`,
+					title: `Close ${leg.side} ${asset}`,
 					warn: liveWarn(mode === 'live' ? 'This sends a real reduce-only market order.' : 'the simulated position closes at the current mid.'),
-					rows: [['Strategy', row.sid], ['Order', `${fill}, ${fmtQty(leg.size)} ${row.asset}`], ['Estimated P&L', est(1)]],
+					rows: [['Strategy', row.sid], ['Order', `${fill}, ${fmtQty(leg.size)} ${asset}`], ['Estimated P&L', est(1)]],
 					cta: 'Close position',
 					danger: true,
 					run: () => runAction('Close', () => closePaperPosition(sessionId), `Closed ${label}.`),
@@ -403,9 +405,9 @@
 			case 'partial': {
 				const pct = action.pct ?? 50;
 				openConfirm({
-					title: `Close ${pct}% of ${leg.side} ${row.asset}`,
+					title: `Close ${pct}% of ${leg.side} ${asset}`,
 					warn: liveWarn(mode === 'live' ? 'This sends a real reduce-only market order.' : 'part of the simulated position closes at the mid.'),
-					rows: [['Order', `${fill}, ${fmtQty((leg.size * pct) / 100)} ${row.asset}`], ['Estimated P&L', est(pct / 100)], ['Left open', `${fmtQty(leg.size * (1 - pct / 100))} ${row.asset}`]],
+					rows: [['Order', `${fill}, ${fmtQty((leg.size * pct) / 100)} ${asset}`], ['Estimated P&L', est(pct / 100)], ['Left open', `${fmtQty(leg.size * (1 - pct / 100))} ${asset}`]],
 					cta: `Close ${pct}%`,
 					danger: true,
 					run: () => runAction('Partial close', () => partialClosePaperPosition(sessionId, { pct }), `Closed ${pct}% of ${label}.`),
@@ -424,9 +426,9 @@
 			case 'flip': {
 				const opposite = leg.side === 'long' ? 'short' : 'long';
 				openConfirm({
-					title: `Flip ${row.asset} to ${opposite}`,
+					title: `Flip ${asset} to ${opposite}`,
 					warn: liveWarn(mode === 'live' ? 'This closes the position and opens the opposite side with real money.' : 'the simulated position closes and the opposite side opens at the mid.'),
-					rows: [['Step 1', `Close ${label} (${est(1)})`], ['Step 2', `Open ${opposite} ${fmtQty(leg.size)} ${row.asset}`], ['Stop', 'The new side needs its own stop']],
+					rows: [['Step 1', `Close ${label} (${est(1)})`], ['Step 2', `Open ${opposite} ${fmtQty(leg.size)} ${asset}`], ['Stop', 'The new side needs its own stop']],
 					cta: `Flip to ${opposite}`,
 					danger: true,
 					run: () => runAction('Flip', () => flipPaperPosition(sessionId), `Flipped ${row.sid} to ${opposite}.`),
@@ -694,10 +696,10 @@
 											{mode}
 											{leg}
 											math={selected.legMath[index]}
-											asset={selected.asset}
+											asset={legAsset(leg, selected.asset)}
 											timeframe={selected.timeframe}
 											leverage={num(selected.session.leverage) ?? 1}
-											market={selectedMarket}
+											market={market?.assets?.[legAsset(leg, selected.asset)] ?? null}
 											{busy}
 											legIndex={index}
 											legCount={selected.legs.length}
