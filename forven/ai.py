@@ -59,6 +59,10 @@ _QUOTA_EXHAUSTED_HINTS = (
     "billing hard limit",
     "exceeded your current quota",
     "monthly spending",
+    # Subscription plans with a usage window (MiniMax Token Plan:
+    # "Token Plan usage limit reached ... (2056)", HTTP 429).
+    "usage limit reached",
+    "plan usage limit",
 )
 _TRANSIENT_PROVIDER_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 _TRANSIENT_PROVIDER_HINTS = (
@@ -695,6 +699,13 @@ def _is_quota_exhausted(error: Exception) -> bool:
             message = str(node).lower()
         except Exception:
             message = ""
+        # An HTTP error's str() is only the status line; the reason is in the body.
+        response = getattr(node, "response", None)
+        if response is not None:
+            try:
+                message += "\n" + str(getattr(response, "text", "") or "")[:2000].lower()
+            except Exception:
+                pass
         if any(hint in message for hint in _QUOTA_EXHAUSTED_HINTS):
             return True
     return False
