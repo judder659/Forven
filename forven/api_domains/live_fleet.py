@@ -12,10 +12,13 @@ writes an ``evaluation_only`` placeholder for every matched signal before
 execution, and ``no_actionable_position_or_order`` when a signal simply
 continues (or has nothing to close on) the current position. Neither is a
 refusal, so both are excluded along with pre-outcome rows that carry no reason.
+A refusal by the mainnet arming guard is also excluded while mainnet is armed:
+its cause is gone, so it no longer says anything about the strategy.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import re
@@ -45,6 +48,8 @@ STALE_AFTER_SCAN_INTERVALS = 6
 MIN_STALE_AFTER_SECONDS = 1800
 RECENT_FILLS_LIMIT = 10
 _NOT_BLOCKS = NOT_BLOCKS
+# Text of the exchange guard's refusal when FORVEN_ALLOW_MAINNET is unset.
+_MAINNET_UNARMED_REFUSAL = "%FORVEN_ALLOW_MAINNET is not set%"
 _SCANNER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # Out-of-sample backtest fields the trading desk compares live results against.
@@ -183,17 +188,31 @@ def _reason_key(reason: str) -> str:
     return _NUMBER_RE.sub("#", reason)
 
 
+def _mainnet_armed() -> bool:
+    try:
+        return bool(importlib.import_module("forven.api_core").mainnet_arming_snapshot().get("armed"))
+    except Exception as exc:  # noqa: BLE001 - the scorecard must not fail on a status read
+        log.debug("Live fleet: mainnet arming unavailable: %s", exc)
+        return False
+
+
 def _refusals(conn: Any, strategy_id: str, since: datetime, signal_type: str) -> list[Any]:
     placeholders = ",".join("?" for _ in NOT_BLOCKS)
+    params: tuple[Any, ...] = (strategy_id, since.strftime(_SCANNER_TS_FORMAT), signal_type, *NOT_BLOCKS)
+    stale_guard = ""
+    if _mainnet_armed():
+        stale_guard = "AND COALESCE(block_reason, '') NOT LIKE ?"
+        params = (*params, _MAINNET_UNARMED_REFUSAL)
     return conn.execute(
         f"""
         SELECT ts, block_reason FROM scanner_signal_results
         WHERE strategy_id = ? AND ts >= ?
           AND signal_type = ? AND matched = 1 AND executed = 0
           AND COALESCE(block_reason, '') NOT IN ({placeholders})
+          {stale_guard}
         ORDER BY ts DESC
         """,
-        (strategy_id, since.strftime(_SCANNER_TS_FORMAT), signal_type, *NOT_BLOCKS),
+        params,
     ).fetchall()
 
 
