@@ -219,3 +219,32 @@ def is_persistently_degraded(entry: dict) -> bool:
         return int(streak) >= DEGRADED_STREAK_THRESHOLD
     except (TypeError, ValueError):
         return True
+
+
+# A plan usage limit (MiniMax Token Plan, 2026-10-27: "Token Plan usage limit
+# reached (2056)") holds until the plan's window resets, often hours away. Every
+# task on that provider would hit it and burn its retries, so the provider is
+# paused instead: no new tasks are claimed for its agents until the pause ends,
+# and the first call after that finds out whether the window has reset.
+PROVIDER_PAUSE_MINUTES = 20
+_PAUSE_KEY_PREFIX = "forven:provider-paused-until:"
+
+
+def _pause_key(provider: str) -> str:
+    return _PAUSE_KEY_PREFIX + ((provider or "unknown").strip().lower() or "unknown")
+
+
+def pause_provider(provider: str, minutes: float = PROVIDER_PAUSE_MINUTES) -> float:
+    """Pause claiming work for ``provider`` for ``minutes``; returns the end (epoch seconds)."""
+    until = time.time() + max(0.0, float(minutes)) * 60
+    kv_set(_pause_key(provider), until)
+    return until
+
+
+def provider_paused_until(provider: str) -> float | None:
+    """Epoch seconds when ``provider``'s pause ends, or None when it is not paused."""
+    try:
+        until = float(kv_get(_pause_key(provider), 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    return until if until > time.time() else None

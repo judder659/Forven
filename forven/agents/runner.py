@@ -24,6 +24,9 @@ from forven.context import build_agent_context
 from forven.cost_pricing import estimate_cost_usd
 from forven.db import create_pending_task, format_prefixed_id, get_db, get_task_tool_calls, kv_get, kv_set, log_activity
 from forven.provider_runtime_health import (
+    PROVIDER_PAUSE_MINUTES,
+    pause_provider,
+    provider_paused_until,
     record_call_failure,
     record_provider_event,
     record_provider_ok,
@@ -37,6 +40,7 @@ from forven.task_timeouts import (
 )
 from forven.workspace import append_workspace, read_workspace
 
+from .history import compact_old_rounds
 from .progress import note_progress, run_with_progress_watchdog
 from .context import (
     _current_agent_id as _legacy_current_agent_id,
@@ -72,11 +76,12 @@ log = logging.getLogger("forven.agents.runner")
 
 _MAX_RATE_LIMIT_RETRIES = 3
 _RATE_LIMIT_BACKOFF_MINUTES = (1, 2, 5)
-# Persistent quota/billing exhaustion (spend cap, out of credits): retrying
-# within minutes can't help, so back off on the scale of tens of minutes and
-# raise ONE deduped actionable alert per provider rather than per task.
-_MAX_QUOTA_EXHAUSTED_RETRIES = 3
-_QUOTA_EXHAUSTED_BACKOFF_MINUTES = (30, 60, 120)
+# Quota exhaustion (plan usage limit, spend cap, out of credits): retrying
+# within minutes can't help. The provider is paused (see pause_provider) and the
+# task waits out the pause; a plan's window can take hours to reset, so allow
+# enough retries to span one. Raise ONE deduped alert per provider, not per task.
+_MAX_QUOTA_EXHAUSTED_RETRIES = 15
+_QUOTA_EXHAUSTED_BACKOFF_MINUTES = (PROVIDER_PAUSE_MINUTES,)
 _PROVIDER_QUOTA_ALERT_COOLDOWN_MINUTES = 30
 _MAX_TRANSIENT_PROVIDER_RETRIES = 3
 _TRANSIENT_PROVIDER_BACKOFF_MINUTES = (2, 5, 10)
@@ -787,6 +792,7 @@ async def _call_with_tools_single(
             _recent_tool_calls.append(call_sig)
 
         impl.append_tool_results(messages, tool_results)
+        compact_old_rounds(messages)
         if state:
             state.save(provider=provider, model_id=model_id, messages=messages, inflight=False, has_tools=True)
 
@@ -1013,6 +1019,20 @@ def _requeue_agent_task(
     return True
 
 
+def agent_provider(agent: dict) -> str:
+    """The provider an agent is set to, normalized the way its runs resolve it."""
+    provider, _ = normalize_provider_and_model(agent.get("model", "openai"), agent.get("model_id"))
+    return provider
+
+
+def agent_provider_paused(agent: dict) -> bool:
+    """True while the agent's provider is paused after hitting its usage limit."""
+    try:
+        return provider_paused_until(agent_provider(agent)) is not None
+    except Exception:
+        return False
+
+
 def _emit_provider_quota_alert(provider: str, detail: str) -> None:
     """Raise an actionable provider-exhaustion alert, deduped per provider.
 
@@ -1033,9 +1053,9 @@ def _emit_provider_quota_alert(provider: str, detail: str) -> None:
     log_activity(
         "warning",
         f"provider:{provider_key}",
-        f"{provider_key} quota/spend cap exhausted — tasks are retrying on a long "
-        f"backoff. Raise the cap / add credits, or switch the agents to another "
-        f"provider. Detail: {detail[:280]}",
+        f"{provider_key} usage limit or spend cap reached. Its agents are paused and "
+        f"retry every {PROVIDER_PAUSE_MINUTES} minutes until it clears. If it does not, raise "
+        f"the cap / add credits, or switch the agents to another provider. Detail: {detail[:280]}",
     )
 
 
@@ -1905,17 +1925,21 @@ async def _run_agent_task_inner(
         # minute-scale retry, so back off long and raise ONE deduped actionable
         # alert per provider instead of flooding the alerts panel per task.
         if _is_quota_exhausted(e):
+            # Pause the whole provider, not just this task: its other agents would
+            # hit the same limit. The task resumes from its checkpoint afterwards.
+            paused_provider = agent_provider(agent)
+            pause_provider(paused_provider)
             _requeue_agent_task(
                 task_id,
                 agent_id,
                 task.get("title", ""),
-                f"Provider quota/spend cap exhausted: {error_summary[:350]}",
+                f"Provider usage limit or spend cap reached; paused, will retry: {error_summary[:330]}",
                 backoff_minutes=_QUOTA_EXHAUSTED_BACKOFF_MINUTES,
                 max_retries=_MAX_QUOTA_EXHAUSTED_RETRIES,
                 exhausted_label="Quota-exhaustion retries exhausted",
                 quiet=True,
             )
-            _emit_provider_quota_alert(str(agent.get("model") or ""), error_summary)
+            _emit_provider_quota_alert(paused_provider, error_summary)
             return {"error": error_summary}
 
         if _is_rate_limit_exception(e):

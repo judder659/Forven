@@ -1,0 +1,137 @@
+"""Agents resend less of their history, and pause on a plan usage limit.
+
+On 2026-10-27 MiniMax's 5-hour Token Plan allowance ran out within 2-3 hours:
+strategy-developer calls resent ~13.5k input tokens each (4k a week earlier),
+and every task that hit "usage limit reached" burned its retries and failed.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+
+import httpx
+
+from forven import ai
+from forven import provider_runtime_health as prh
+from forven.agents import history
+
+MINIMAX_PLAN_LIMIT = (
+    '{"type":"error","error":{"type":"rate_limit_error","message":"Token Plan usage limit '
+    'reached: Upgrade your Token Plan or purchase Credits for more usage. (2056)"}}'
+)
+
+
+def _http_error(status: int, body: str) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.minimax.io/anthropic/v1/messages")
+    response = httpx.Response(status, text=body, request=request)
+    # str() of a raise_for_status() error is only the status line.
+    return httpx.HTTPStatusError(
+        f"Client error '{status} Too Many Requests' for url '{request.url}'",
+        request=request,
+        response=response,
+    )
+
+
+def _anthropic_round(n: int, result: str, code: str = "") -> list[dict]:
+    return [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "t" * 3000, "signature": "sig"},
+                {"type": "text", "text": f"round {n}"},
+                {"type": "tool_use", "id": f"tu{n}", "name": "write_file", "input": {"path": "s.py", "content": code}},
+            ],
+        },
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": f"tu{n}", "content": result}]},
+    ]
+
+
+def test_old_tool_results_and_arguments_are_shortened_recent_rounds_kept():
+    big = '{"metrics": {"sharpe": 1.4}}' + "x" * 6000
+    code = "y" * 8000
+    messages = [{"role": "user", "content": "task " + "p" * 5000}]
+    for n in range(6):
+        messages += _anthropic_round(n, big, code)
+
+    history.compact_old_rounds(messages)
+
+    assert messages[0]["content"] == "task " + "p" * 5000  # the task prompt is never cut
+    old_result = messages[2]["content"][0]["content"]
+    assert old_result.startswith('{"metrics": {"sharpe": 1.4}}')
+    assert "shortened to save tokens" in old_result
+    assert len(old_result) < 1500
+    old_call = messages[1]["content"][2]["input"]
+    assert old_call["path"] == "s.py" and len(old_call["content"]) < 1500
+    # Reasoning and text are never changed.
+    assert messages[1]["content"][0]["thinking"] == "t" * 3000
+    # The newest 3 rounds stay whole.
+    for message in messages[-6:]:
+        if message["role"] == "user":
+            assert message["content"][0]["content"] == big
+        else:
+            assert message["content"][2]["input"]["content"] == code
+
+
+def test_compaction_is_idempotent_and_skips_short_conversations():
+    messages = [{"role": "user", "content": "task"}]
+    for n in range(2):
+        messages += _anthropic_round(n, "z" * 9000)
+    before = json.dumps(messages)
+    history.compact_old_rounds(messages)
+    assert json.dumps(messages) == before  # fewer rounds than are kept whole
+
+    for n in range(2, 6):
+        messages += _anthropic_round(n, "z" * 9000)
+    history.compact_old_rounds(messages)
+    once = json.dumps(messages)
+    history.compact_old_rounds(messages)
+    assert json.dumps(messages) == once
+
+
+def test_openai_format_is_compacted():
+    messages = [{"role": "user", "content": "task"}]
+    for n in range(5):
+        messages.append({
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": f"c{n}", "type": "function",
+                "function": {"name": "write_file", "arguments": json.dumps({"content": "q" * 7000})},
+            }],
+        })
+        messages.append({"role": "tool", "tool_call_id": f"c{n}", "content": "r" * 7000})
+
+    history.compact_old_rounds(messages)
+
+    assert len(messages[2]["content"]) < 1500
+    assert len(json.loads(messages[1]["tool_calls"][0]["function"]["arguments"])["content"]) < 1500
+    assert messages[-1]["content"] == "r" * 7000
+
+
+def test_minimax_plan_limit_is_quota_exhaustion():
+    err = _http_error(429, MINIMAX_PLAN_LIMIT)
+    assert ai._is_quota_exhausted(err) is True
+    # A plain per-minute throttle still is not.
+    assert ai._is_quota_exhausted(_http_error(429, "Rate limit reached, try again in 1s")) is False
+
+
+def test_provider_pause_round_trip(forven_db):
+    assert prh.provider_paused_until("minimax") is None
+    until = prh.pause_provider("MiniMax", minutes=20)
+    assert abs(until - (time.time() + 1200)) < 5
+    assert prh.provider_paused_until("minimax") == until
+    assert prh.provider_paused_until("openrouter") is None
+    prh.pause_provider("minimax", minutes=0)
+    assert prh.provider_paused_until("minimax") is None
+
+
+def test_agent_on_paused_provider_is_skipped(forven_db):
+    from forven.agents.runner import agent_provider_paused
+
+    agent = {"id": "strategy-developer", "model": "minimax", "model_id": "MiniMax-M3"}
+    other = {"id": "brain", "model": "openrouter", "model_id": "deepseek/deepseek-chat"}
+    assert agent_provider_paused(agent) is False
+    prh.pause_provider("minimax")
+    assert agent_provider_paused(agent) is True
+    assert agent_provider_paused(other) is False

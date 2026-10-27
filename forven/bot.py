@@ -1658,9 +1658,13 @@ class ForvenBot(commands.Bot):
                 if task_id:
                     self._active_agent_task_ids.discard(task_id)
 
+        from forven.agents.runner import agent_provider_paused
+
         claimed_task_ids: set[int] = set()
         for agent in agents:
             agent = dict(agent)
+            if agent_provider_paused(agent):
+                continue
             tasks = claim_pending_agent_tasks(agent["id"])
             for task in tasks:
                 task_id_raw = task.get("id") if isinstance(task, dict) else None

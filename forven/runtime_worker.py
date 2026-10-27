@@ -1258,11 +1258,16 @@ async def process_agent_tasks_once(concurrency: int = 5) -> int:
 
         claimed: list[tuple[dict, dict]] = []
         if agents:
+            from forven.agents.runner import agent_provider_paused
+
             start_index = _agent_claim_cursor % len(agents)
+            # Agents whose provider hit its usage limit wait for the pause to end
+            # instead of each new task failing on the same limit.
             ordered_agents = [
                 agent
                 for agent in [*agents[start_index:], *agents[:start_index]]
                 if str(agent.get("id") or "") not in active_agent_ids
+                and not agent_provider_paused(agent)
             ]
         else:
             ordered_agents = []
