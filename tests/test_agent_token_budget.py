@@ -135,3 +135,61 @@ def test_agent_on_paused_provider_is_skipped(forven_db):
     prh.pause_provider("minimax")
     assert agent_provider_paused(agent) is True
     assert agent_provider_paused(other) is False
+
+
+def test_agent_with_unpaused_fallback_keeps_working(forven_db, monkeypatch):
+    from forven.agents import runner
+
+    agent = {"id": "strategy-developer", "model": "minimax", "model_id": "MiniMax-M3"}
+    monkeypatch.setattr(
+        runner, "_resolve_tool_call_chain",
+        lambda provider, model_id, agent_id=None: [("minimax", "MiniMax-M3"), ("lmstudio", "qwen/qwen3.8-27b")],
+    )
+    monkeypatch.setattr(runner, "_resolve_backup_provider", lambda primary: None)
+    monkeypatch.setattr(runner, "_provider_has_credentials", lambda provider: True)
+
+    prh.pause_provider("minimax")
+    assert runner.agent_provider_paused(agent) is False  # runs on LM Studio meanwhile
+    prh.pause_provider("lmstudio")
+    assert runner.agent_provider_paused(agent) is True
+
+
+def test_global_backup_provider_counts_as_fallback(forven_db, monkeypatch):
+    from forven.agents import runner
+
+    agent = {"id": "brain", "model": "minimax", "model_id": "MiniMax-M3"}
+    monkeypatch.setattr(runner, "_resolve_tool_call_chain", lambda provider, model_id, agent_id=None: [("minimax", "MiniMax-M3")])
+    monkeypatch.setattr(runner, "_resolve_backup_provider", lambda primary: ("lmstudio", "local-model"))
+
+    prh.pause_provider("minimax")
+    assert runner.agent_provider_paused(agent) is False
+
+
+def test_paused_provider_is_skipped_in_the_call_chain(forven_db, monkeypatch):
+    import asyncio
+
+    from forven.agents import runner
+
+    called: list[str] = []
+
+    async def fake_single(provider, model_id, messages, system, tools=None, progress=None, transcript=None):
+        called.append(provider)
+        return "done", {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+
+    monkeypatch.setattr(runner, "_call_with_tools_single", fake_single)
+    monkeypatch.setattr(
+        runner, "_resolve_tool_call_chain",
+        lambda provider, model_id, agent_id=None: [("minimax", "MiniMax-M3"), ("lmstudio", "local-model")],
+    )
+    monkeypatch.setattr(runner, "_resolve_backup_provider", lambda primary: None)
+    monkeypatch.setattr(runner, "_provider_has_credentials", lambda provider: True)
+
+    prh.pause_provider("minimax")
+    text, _ = asyncio.run(runner._call_with_tools("minimax", "MiniMax-M3", [{"role": "user", "content": "x"}], "sys", agent_id="strategy-developer"))
+    assert text == "done" and called == ["lmstudio"]
+
+    # With nothing else to use, the paused provider is still tried (it may have reset).
+    called.clear()
+    monkeypatch.setattr(runner, "_resolve_tool_call_chain", lambda provider, model_id, agent_id=None: [("minimax", "MiniMax-M3")])
+    asyncio.run(runner._call_with_tools("minimax", "MiniMax-M3", [{"role": "user", "content": "x"}], "sys", agent_id="strategy-developer"))
+    assert called == ["minimax"]

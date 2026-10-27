@@ -472,6 +472,13 @@ async def _call_with_tools(
         if backup is not None and backup[0] not in {entry[0] for entry in chain}:
             chain = chain + [backup]
 
+    # Skip a provider paused at its usage limit when the chain has another one
+    # to use (an agent's configured fallback, e.g. a local model) — calling it
+    # would only hit the same limit again.
+    unpaused = [entry for entry in chain if provider_paused_until(entry[0]) is None]
+    if unpaused and len(unpaused) < len(chain):
+        chain = unpaused
+
     # Try each provider in the chain
     last_error = None
     attempts: list[dict] = []
@@ -1026,9 +1033,21 @@ def agent_provider(agent: dict) -> str:
 
 
 def agent_provider_paused(agent: dict) -> bool:
-    """True while the agent's provider is paused after hitting its usage limit."""
+    """True while every provider the agent could use is paused at its usage limit.
+
+    An agent with a configured fallback (or backup) provider that is not paused
+    keeps taking new work, which runs on that fallback.
+    """
     try:
-        return provider_paused_until(agent_provider(agent)) is not None
+        provider = agent_provider(agent)
+        if provider_paused_until(provider) is None:
+            return False
+        chain = _resolve_tool_call_chain(provider, agent.get("model_id"), str(agent.get("id") or "") or None)
+        backup = _resolve_backup_provider(provider)
+        providers = {entry[0] for entry in chain if entry[0] == provider or _provider_has_credentials(entry[0])}
+        if backup:
+            providers.add(backup[0])
+        return all(provider_paused_until(name) is not None for name in providers)
     except Exception:
         return False
 
