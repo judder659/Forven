@@ -731,6 +731,15 @@ def _infer_skill_type(pattern: str) -> SkillType:
 # ── Ideation Context ─────────────────────────────────────────────────────────
 
 
+IDEATION_ITEMS_PER_SKILL = 4
+IDEATION_ITEM_MAX_CHARS = 300
+
+
+def _shorten_item(item: object) -> str:
+    text = " ".join(str(item).split())
+    return text if len(text) <= IDEATION_ITEM_MAX_CHARS else text[: IDEATION_ITEM_MAX_CHARS - 1] + "…"
+
+
 def get_ideation_context(regime: str | None = None, limit: int = 5) -> str:
     """Build a markdown context block for Brain ideation prompts.
 
@@ -761,12 +770,15 @@ def get_ideation_context(regime: str | None = None, limit: int = 5) -> str:
     works_items: list[str] = []
     avoid_items: list[str] = []
 
+    # Every new piece of evidence appends observations, and this block goes into
+    # every agent's prompt: by 2026-10-27 five skills carried 166k characters
+    # (~52k tokens per call). Show each skill's newest few, each kept short.
     for skill in top:
         tag = f"[{skill.name}, confidence={skill.confidence:.0%}, n={skill.sample_size}]"
-        for item in skill.what_works:
-            works_items.append(f"- {item} {tag}")
-        for item in skill.what_doesnt_work:
-            avoid_items.append(f"- {item} {tag}")
+        for item in skill.what_works[-IDEATION_ITEMS_PER_SKILL:]:
+            works_items.append(f"- {_shorten_item(item)} {tag}")
+        for item in skill.what_doesnt_work[-IDEATION_ITEMS_PER_SKILL:]:
+            avoid_items.append(f"- {_shorten_item(item)} {tag}")
 
     if works_items:
         lines.append("### What Works")

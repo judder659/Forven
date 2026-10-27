@@ -193,3 +193,38 @@ def test_paused_provider_is_skipped_in_the_call_chain(forven_db, monkeypatch):
     monkeypatch.setattr(runner, "_resolve_tool_call_chain", lambda provider, model_id, agent_id=None: [("minimax", "MiniMax-M3")])
     asyncio.run(runner._call_with_tools("minimax", "MiniMax-M3", [{"role": "user", "content": "x"}], "sys", agent_id="strategy-developer"))
     assert called == ["minimax"]
+
+
+def test_agent_memory_is_capped_to_top_and_newest_entries():
+    from forven.context import AGENT_MEMORY_HEAD_CHARS, AGENT_MEMORY_TAIL_CHARS, _capped_agent_memory
+
+    notes = "# Durable notes\n- keep BTC only\n"
+    journal = "".join(f"### 2026-10-{n % 28 + 1:02d} task #{n}\n" + "x" * 4000 + "\n" for n in range(150))
+    text = notes + journal + "### newest task #999\nlatest finding\n"
+
+    capped = _capped_agent_memory(text, "strategy-developer")
+
+    assert len(capped) < AGENT_MEMORY_HEAD_CHARS + AGENT_MEMORY_TAIL_CHARS + 300
+    assert capped.startswith("# Durable notes")
+    assert capped.rstrip().endswith("latest finding")
+    assert "read_file agents/strategy-developer/memory/MEMORY.md" in capped
+    assert _capped_agent_memory("short memory", "x") == "short memory"
+
+
+def test_learned_knowledge_shows_newest_few_short_items(monkeypatch):
+    from types import SimpleNamespace
+
+    from forven import quant_skills
+
+    skill = SimpleNamespace(
+        name="momentum", regime="TRENDING", confidence=0.8, sample_size=900,
+        what_works=[f"works item {n} " + "w" * 1000 for n in range(400)],
+        what_doesnt_work=[f"avoid item {n}" for n in range(400)],
+    )
+    monkeypatch.setattr(quant_skills, "list_skills", lambda: [skill])
+
+    block = quant_skills.get_ideation_context()
+
+    assert "works item 399" in block and "works item 395" not in block
+    assert "avoid item 399" in block and "avoid item 0 " not in block
+    assert len(block) < 3000
