@@ -1744,8 +1744,11 @@ def _resolve_container_source_code(strategy_type: str, source_ref: str | None) -
     ref = str(source_ref or "").strip()
     if ref:
         try:
-            candidate = Path(ref).expanduser().resolve()
-            if candidate.exists() and candidate.suffix.lower() == ".py":
+            from forven.strategies.identity import resolve_source_ref
+
+            found = resolve_source_ref(ref)
+            candidate = found.resolve() if found is not None else None
+            if candidate is not None and candidate.suffix.lower() == ".py":
                 if any(
                     candidate.is_relative_to(root)
                     for root in (custom_dir, imported_dir)

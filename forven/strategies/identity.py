@@ -5,7 +5,36 @@ import hashlib
 import importlib
 import inspect
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
+
+_SOURCE_SUBDIRS = ("custom", "imported", "builtin")
+
+
+def source_ref_stem(source_ref: str) -> str:
+    """Module stem of a source path saved on any OS (``C:\\...\\x.py`` -> ``x``)."""
+    return PureWindowsPath(str(source_ref or "").strip()).stem
+
+
+def resolve_source_ref(source_ref: str) -> Path | None:
+    """Find a strategy source file, even when its saved path came from another machine.
+
+    ``source_ref`` is an absolute path recorded where the strategy was created. After
+    the data folder moves (Windows to Linux, or a different checkout), that path no
+    longer exists, but the file usually does under this install's
+    ``forven/strategies/<custom|imported|builtin>/``. Re-base onto it by file name.
+    """
+    ref = str(source_ref or "").strip()
+    if not ref:
+        return None
+    path = Path(ref).expanduser()
+    if path.is_file():
+        return path
+    foreign = PureWindowsPath(ref) if ("\\" in ref or PureWindowsPath(ref).drive) else PurePosixPath(ref)
+    parts = foreign.parts
+    if len(parts) < 2 or parts[-2] not in _SOURCE_SUBDIRS:
+        return None
+    candidate = Path(__file__).resolve().parent / parts[-2] / parts[-1]
+    return candidate if candidate.is_file() else None
 
 
 def source_identity(runtime_type: str, cls: type | None = None) -> dict:
@@ -47,14 +76,17 @@ def execution_identity_error(row: dict, runtime_type: str) -> str | None:
         return "Strategy module changed after loading; reload and revalidate before new entries"
     source = str(row.get("source_ref") or "")
     if source.lower().endswith(".py"):
+        source_path = resolve_source_ref(source)
         try:
-            tree = ast.parse(Path(source).read_text(encoding="utf-8-sig"))
+            if source_path is None:
+                raise OSError(source)
+            tree = ast.parse(source_path.read_text(encoding="utf-8-sig"))
             declared = [node.value.value for node in tree.body if isinstance(node, ast.Assign)
                         and any(isinstance(t, ast.Name) and t.id == "TYPE_NAME" for t in node.targets)
                         and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)]
             if declared and runtime_type not in declared:
                 return f"Runtime '{runtime_type}' differs from source TYPE_NAME '{declared[0]}'; revalidation required"
-            if current and current["source_sha256"] != hashlib.sha256(Path(source).read_bytes()).hexdigest():
+            if current and current["source_sha256"] != hashlib.sha256(source_path.read_bytes()).hexdigest():
                 return "Registered implementation differs from the strategy source reference; revalidation required"
         except (OSError, SyntaxError, UnicodeError):
             return "Strategy source reference is unavailable or invalid; revalidation required"
