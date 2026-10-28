@@ -42,6 +42,7 @@ import atexit
 import json
 import os
 import queue
+import signal
 import subprocess
 import sys
 import tempfile
@@ -487,7 +488,10 @@ class _PersistentWorker:
             bufsize=1,
             env=env,
             cwd=str(REPO_ROOT),
-            preexec_fn=(None if IS_WINDOWS else _build_posix_preexec(PERSISTENT_MAX_MEMORY_MB)),
+            # No lifetime CPU cap: on Linux RLIMIT_CPU killed this long-lived worker
+            # after 30 CPU-seconds in total, mid-request for whichever strategy was
+            # running. Each request is bounded by its own wall-clock timeout instead.
+            preexec_fn=(None if IS_WINDOWS else _build_posix_preexec(PERSISTENT_MAX_MEMORY_MB, cpu_seconds=None)),
             creationflags=NO_WINDOW_CREATION_FLAGS,
         )
         if IS_WINDOWS:
@@ -538,6 +542,21 @@ class _PersistentWorker:
         if ack.get("_eof"):
             raise StrategyWorkerError("strategy worker exited mid-request")
         return ack
+
+    def exit_description(self) -> str:
+        """How the process ended (``exit code 1``, ``killed by SIGKILL``), or ``""``."""
+        if self._proc is None:
+            return ""
+        try:
+            code = self._proc.wait(timeout=1)
+        except Exception:
+            return ""
+        if code >= 0:
+            return f"exit code {code}"
+        try:
+            return f"killed by {signal.Signals(-code).name}"
+        except ValueError:
+            return f"killed by signal {-code}"
 
     def stderr_tail(self) -> str:
         try:
@@ -615,21 +634,30 @@ def _request_signals(
         if not _worker_lock.acquire(timeout=remaining_time(timeout)):
             raise StrategyWorkerError("isolated signal worker queue timed out before execution")
         try:
-            try:
-                worker = _get_worker()
-                ack = worker.request(workdir, remaining_time(timeout))
-            except (queue.Empty, TimeoutError):
-                # A late ack would corrupt the next request's exchange → respawn.
-                _reset_worker()
-                raise StrategyWorkerError(
-                    f"isolated signal generation for {strategy_type!r} timed out after {timeout}s"
-                )
-            except StrategyWorkerError:
-                tail = _worker.stderr_tail() if _worker is not None else ""
-                _reset_worker()
-                raise StrategyWorkerError(
-                    f"isolated worker for {strategy_type!r} died" + (f": {tail}" if tail else "")
-                )
+            # One retry on a fresh worker when the process dies under us: a death
+            # caused by something else (an OS kill, a previous request's leftovers)
+            # must not cost a held position its exit signal for this scan.
+            for attempt in (1, 2):
+                worker = _get_worker()  # a failed spawn raises its own, more useful error
+                try:
+                    ack = worker.request(workdir, remaining_time(timeout))
+                    break
+                except (queue.Empty, TimeoutError):
+                    # A late ack would corrupt the next request's exchange → respawn.
+                    _reset_worker()
+                    raise StrategyWorkerError(
+                        f"isolated signal generation for {strategy_type!r} timed out after {timeout}s"
+                    )
+                except StrategyWorkerError:
+                    tail = worker.stderr_tail()
+                    exit_note = worker.exit_description()
+                    _reset_worker()
+                    if attempt == 2:
+                        raise StrategyWorkerError(
+                            f"isolated worker for {strategy_type!r} died"
+                            + (f" ({exit_note})" if exit_note else "")
+                            + (f": {tail}" if tail else "")
+                        )
         finally:
             _worker_lock.release()
 

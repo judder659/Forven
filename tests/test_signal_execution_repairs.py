@@ -258,3 +258,22 @@ def test_custom_variant_missing_entry_features_preserve_price_exits(
     assert bool(signals.short_exits.iloc[-1]) == (direction == "short")
     assert scalar.exit_signal is True and scalar.direction == direction
     assert scalar.entry_signal is False
+
+
+def test_identity_fault_is_not_recorded_as_a_refused_exit(forven_db) -> None:
+    # The source-identity check only blocks new entries; exits on held positions
+    # still run. An exit signal while flat must not read as "exit refused".
+    reason = "Strategy source reference is unavailable or invalid; revalidation required"
+    exit_id = record_signal_result("audit", "BTC", "exit", matched=True, block_reason="evaluation_only")
+    entry_id = record_signal_result("audit", "BTC", "entry", matched=True, block_reason="evaluation_only")
+    strategy = {"asset": "BTC", "execution_identity_error": reason}
+    diagnostic = {"execution_decision": "manage_existing_only", "blocked_reason": reason}
+    record_execution_outcome({"strategy_id": "audit", "strategy": strategy, "signal_result_ids": {"exit": exit_id}},
+                             {}, {}, diagnostic, [])
+    record_execution_outcome({"strategy_id": "audit", "strategy": strategy, "signal_result_ids": {"entry": entry_id}},
+                             {}, {}, diagnostic, [f"BLOCKED BTC open — {reason}"])
+    with get_db() as conn:
+        rows = {r["signal_type"]: r["block_reason"] for r in conn.execute(
+            "SELECT signal_type, block_reason FROM scanner_signal_results WHERE id IN (?, ?)", (exit_id, entry_id))}
+    assert rows["exit"] == "no_actionable_position_or_order"
+    assert rows["entry"] == reason
