@@ -1,6 +1,7 @@
 """Core shared agent tool handlers (files, datasets)."""
 
 import json
+from pathlib import Path
 
 from forven.workspace import append_workspace, read_workspace
 from .context import (
@@ -31,8 +32,112 @@ def _tool_read_file(path: str) -> str:
         return f"Error: {exc}"
     content = read_workspace(path, optional=True)
     if content is None:
-        return f"File not found: {path}"
+        return f"File not found: {path}. {_read_file_miss_hint(path)}"
     return content[:10000]
+
+
+def _read_file_miss_hint(path: str) -> str:
+    """Point a missed read at what IS readable, so the agent stops guessing paths.
+
+    Research agents spent most of their 25 rounds guessing paths such as
+    forven/db.py or strategies/S20718.py, which read_file can never see
+    (2026-10-28: 14 to 20 misses in one task).
+    """
+    from forven.workspace import WORKSPACE_DIR
+
+    norm = str(path or "").replace("\\", "/").lstrip("./")
+    hint = "read_file only reads the Forven workspace, not the Forven source code."
+    if norm.endswith(".py") or norm.startswith(("forven/", "src/", "backend/", "app/", "strategies/")):
+        hint += " For a strategy's code use read_strategy_source with its strategy id."
+    try:
+        entries = sorted(
+            (entry.name + ("/" if entry.is_dir() else "")) for entry in WORKSPACE_DIR.iterdir()
+            if not entry.name.startswith(".")
+        )
+    except OSError:
+        entries = []
+    if entries:
+        shown = ", ".join(entries[:30]) + (", ..." if len(entries) > 30 else "")
+        hint += f" Workspace top level: {shown}"
+    return hint
+
+
+_STRATEGY_SOURCE_MAX_CHARS = 12000
+
+
+def _strategy_source_path(row) -> Path | None:
+    """The source file of a strategy row, only ever inside forven/strategies/."""
+    from forven.strategies.identity import resolve_source_ref
+
+    strategies_dir = Path(__file__).resolve().parent.parent / "strategies"
+    runtime_type = str(row["runtime_type"] or row["type"] or "").strip()
+    candidates = []
+    source_ref = str(row["source_ref"] or "").strip()
+    if source_ref.lower().endswith(".py"):
+        candidates.append(resolve_source_ref(source_ref))
+    if runtime_type.startswith("imported__"):
+        candidates.append(strategies_dir / "imported" / f"{runtime_type.removeprefix('imported__')}.py")
+    candidates.append(strategies_dir / "custom" / f"{row['id']}.py")
+    if runtime_type:
+        candidates.append(strategies_dir / "builtin" / f"{runtime_type}.py")
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.is_file() and resolved.suffix == ".py" and resolved.is_relative_to(strategies_dir):
+            return resolved
+    return None
+
+
+@register_tool(
+    name="read_strategy_source",
+    description=(
+        "Read the Python source of a strategy by its id (e.g. S20718): the file it runs from, "
+        "with its type, symbol and timeframe. Use this for post-mortems and code questions "
+        "instead of guessing file paths with read_file."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "strategy_id": {"type": "string", "description": "Strategy id, e.g. S20718"},
+        },
+        "required": ["strategy_id"],
+    },
+)
+def _tool_read_strategy_source(strategy_id: str) -> str:
+    """Read-only: text of the strategy's own file, never imported or run."""
+    from forven.db import get_db
+
+    sid = str(strategy_id or "").strip()
+    if not sid:
+        return "Error: strategy_id is required."
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, type, runtime_type, symbol, timeframe, source_ref FROM strategies WHERE id = ?",
+            (sid,),
+        ).fetchone()
+    if not row:
+        return f"No strategy found with id {sid}."
+    header = (
+        f"{row['id']} type={row['runtime_type'] or row['type']} "
+        f"symbol={row['symbol']} timeframe={row['timeframe']}"
+    )
+    path = _strategy_source_path(row)
+    if path is None:
+        return (
+            f"{header}\nNo source file found for {sid}: it is a parameter variant of a built-in "
+            "family or its file was removed. Its parameters are in the strategy record."
+        )
+    try:
+        source = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError) as exc:
+        return f"{header}\nError reading the source of {sid}: {exc}"
+    if len(source) > _STRATEGY_SOURCE_MAX_CHARS:
+        source = source[:_STRATEGY_SOURCE_MAX_CHARS] + "\n... (truncated)"
+    return f"{header}\nFile: forven/strategies/{path.parent.name}/{path.name}\n\n{source}"
 
 # Allow-list for write_file tool (P1 pre-beta security): LLM may only write
 # to these workspace locations. Anything else is rejected even if the path

@@ -605,6 +605,20 @@ def _creation_task_unregistered(state: "ExecutionState | None") -> bool:
 
 _MAX_REGISTRATION_NUDGES = 3
 
+# Web lookups (discover_* / inspect_*) a strategy-creation task may make before
+# it must build with what it found. Outside-idea tasks spent about 20 of their
+# 25 rounds browsing and ended with nothing registered (2026-10-28 T91911).
+_CREATION_RESEARCH_CALL_BUDGET = 8
+_RESEARCH_TOOL_PREFIXES = ("discover_", "inspect_")
+
+
+def _research_budget_notice(used: int) -> str:
+    return (
+        f"Not run: this strategy-creation task has used its {used} web lookups. Stop browsing. "
+        "Write the idea with create_hypothesis if you have not, then build and register a "
+        "strategy from what you have already found."
+    )
+
 
 def _register_nudge(rounds_left: int, *, ending: bool = False) -> str:
     """The message that steers a creation task to register before it runs out."""
@@ -659,6 +673,7 @@ async def _call_with_tools_single(
     # register" and no tool call, repeatedly. One nudge left ~55% of creation
     # tasks blocked, so allow a few, each still bounded by MAX_TOOL_ROUNDS.
     registration_nudges_left = _MAX_REGISTRATION_NUDGES
+    research_calls = 0
     total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     def _accum(usage: dict):
@@ -777,13 +792,22 @@ async def _call_with_tools_single(
                 tc.name,
                 json.dumps(tc.input)[:100],
             )
-            # Mark BEFORE execution: even if the tool itself raises midway,
-            # side effects may already have happened.
-            if progress is not None:
-                progress["tools_executed"] = True
-            if state:
-                state.save(provider=provider, model_id=model_id, inflight=True, has_tools=True)
-            result = await _execute_tool(tc.name, tc.input)
+            is_research = tc.name.startswith(_RESEARCH_TOOL_PREFIXES)
+            if (
+                is_research
+                and research_calls >= _CREATION_RESEARCH_CALL_BUDGET
+                and _creation_task_unregistered(state)
+            ):
+                result = _research_budget_notice(research_calls)
+            else:
+                research_calls += int(is_research)
+                # Mark BEFORE execution: even if the tool itself raises midway,
+                # side effects may already have happened.
+                if progress is not None:
+                    progress["tools_executed"] = True
+                if state:
+                    state.save(provider=provider, model_id=model_id, inflight=True, has_tools=True)
+                result = await _execute_tool(tc.name, tc.input)
             note_progress()
             tool_results.append((tc.id, str(result)[:5000]))
             if transcript is not None:
@@ -1418,13 +1442,23 @@ async def run_agent_task(agent: dict, task: dict) -> dict:
             from forven.phantom_recovery import mark_phantom_recovery_exhausted
 
             mark_phantom_recovery_exhausted(strategy_id, reason=owner_error or "ownership check failed")
+        from forven.db import stale_ownership_reason
+
         with get_db() as conn:
+            # A task its strategy has outgrown is cancelled, not failed: nothing
+            # went wrong and nobody needs to look at it.
+            stale_reason = stale_ownership_reason(conn, agent_id, strategy_id)
             conn.execute(
-                "UPDATE agent_tasks SET status='failed', error=?, completed_at=? WHERE id=?",
-                (owner_error or "ownership check failed", datetime.now(timezone.utc).isoformat(), task_id),
+                "UPDATE agent_tasks SET status=?, error=?, completed_at=? WHERE id=?",
+                (
+                    "cancelled" if stale_reason else "failed",
+                    stale_reason or owner_error or "ownership check failed",
+                    datetime.now(timezone.utc).isoformat(),
+                    task_id,
+                ),
             )
-        log.warning("Agent %s blocked on task %d: %s", agent_id, task_id, owner_error)
-        return {"error": owner_error or "ownership check failed"}
+        log.warning("Agent %s blocked on task %d: %s", agent_id, task_id, stale_reason or owner_error)
+        return {"error": stale_reason or owner_error or "ownership check failed"}
 
     # Mark as running
     with get_db() as conn:
