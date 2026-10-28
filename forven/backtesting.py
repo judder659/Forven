@@ -19,6 +19,7 @@ the /backtesting/run endpoint with tool_name and arguments.
 import logging
 import os
 import time
+from urllib.parse import quote
 
 import httpx
 
@@ -409,15 +410,21 @@ class BacktestingClient:
         return resp.json()
 
     def get_results(self, result_id: str, include_trades: bool = False, include_equity_curve: bool = False) -> dict:
-        """Get backtest results."""
-        params = {}
-        if include_trades:
-            params["include_trades"] = "true"
-        if include_equity_curve:
-            params["include_equity_curve"] = "true"
-        resp = self._client.get(f"/backtesting/results/{result_id}", params=params)
+        """Get one backtest result; trades and the equity curve only when asked for.
+
+        The detail route is ``/api/results/{id}``. This used to call
+        ``/backtesting/results/{id}``, which does not exist, so every lookup
+        came back 404 and agents spent rounds retrying it (2026-10-28).
+        """
+        resp = self._client.get(f"/results/{quote(str(result_id), safe='')}")
         resp.raise_for_status()
-        return resp.json()
+        result = resp.json()
+        if isinstance(result, dict):
+            if not include_trades:
+                result.pop("trades", None)
+            if not include_equity_curve:
+                result.pop("equity_curve", None)
+        return result
 
     # ── Legacy Compatibility ─────────────────────────────────────────
 

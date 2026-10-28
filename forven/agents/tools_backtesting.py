@@ -580,8 +580,10 @@ def _tool_run_backtest(params: dict) -> str:
 # engineer to use "run_code for diagnosis". That line should be dropped.
 _RUN_CODE_SCOPE_HINT = (
     "run_code is a numeric scratchpad: only pandas/numpy/scipy/sklearn/pandas_ta, "
-    "pure-computation stdlib and the strategy-facing forven API may be imported. "
-    "It cannot inspect the system — use read_file / the log and status tools for that."
+    "pure-computation stdlib and forven.strategies.base / .indicators / .composite / "
+    ".builtin may be imported (no plain 'import forven', no inspect). "
+    "It cannot inspect the system: use read_strategy_source for a strategy's code, "
+    "read_file for workspace notes, and the log and status tools for the rest."
 )
 
 
@@ -593,8 +595,9 @@ _RUN_CODE_SCOPE_HINT = (
         "not a system-inspection tool (use read_file and the log/status tools for that). "
         "Outbound network access is denied and the child runs in a throwaway working directory. "
         "The source is statically scanned first: imports are restricted to an allowlist "
-        "(pandas/numpy/scipy/sklearn/pandas_ta + pure-computation stdlib + the strategy-facing "
-        "forven API) and dynamic-execution / filesystem primitives are rejected. Code that imports "
+        "(pandas/numpy/scipy/sklearn/pandas_ta + pure-computation stdlib + forven.strategies.base, "
+        ".indicators, .composite and .builtin) and dynamic-execution / filesystem primitives are "
+        "rejected. Code that imports "
         "os, sqlite3, pathlib, requests or forven.db WILL be refused."
     ),
     input_schema={
@@ -997,12 +1000,79 @@ def _is_certified_strategy_family(strategy_type: str, strategy_name: str = "") -
         strategy_type_lower = str(strategy_type or "").lower().strip()
         return strategy_type_lower in CERTIFIED_STRATEGY_FAMILIES
 
+_DATASET_TOOLS = frozenset({"forven_run_backtest", "forven_run_optimization", "forven_run_verdict"})
+
+
+def _dataset_id_error(dataset_id: object) -> str | None:
+    """Agent-facing error for a dataset_id that names no market Forven has data for.
+
+    The backend turns any word into a symbol and asks Binance for it, so a
+    post-mortem that passed dataset_id "list" queued a backtest on LIST/USDT
+    that could only fail (2026-10-28 T91454). Checked against the same catalog
+    list_local_datasets shows; when that catalog cannot be read, nothing is
+    refused here.
+    """
+    import importlib
+
+    from forven.symbols import normalize_symbol, parse_dataset_id
+
+    raw = str(dataset_id or "").strip()
+    if not raw:
+        return "Error: dataset_id is required; pick one from list_local_datasets."
+    try:
+        rows = importlib.import_module("forven.api_domains.data").get_datasets_stub()
+    except Exception:
+        return None
+    rows = [row for row in rows or [] if isinstance(row, dict)]
+    if not rows or any(str(row.get("id") or "").strip() == raw for row in rows):
+        return None
+    symbol_part, _timeframe = parse_dataset_id(raw)
+    check = normalize_symbol(symbol_part)
+    if not check.ok:
+        return (
+            f"Error: '{raw}' is not a dataset id ({check.reason}). "
+            "Pick a dataset_id from list_local_datasets."
+        )
+    base = check.symbol.split("/")[0]
+    known_bases = set()
+    for row in rows:
+        known = normalize_symbol(str(row.get("symbol") or ""))
+        if known.ok:
+            known_bases.add(known.symbol.split("/")[0])
+    if base not in known_bases:
+        return (
+            f"Error: Forven has no data for {check.symbol} (from dataset_id '{raw}'). "
+            "Pick a dataset_id from list_local_datasets, or fetch the market first with "
+            "fetch_exchange_data if it really exists."
+        )
+    return None
+
+
+def _http_error_hint(tool_name: str, status_code: object, params: dict) -> str:
+    """What to do next after a 404, so the agent does not retry the same call."""
+    if status_code != 404:
+        return ""
+    if tool_name == "forven_run_verdict":
+        return (
+            f" No backtest of {params.get('strategy_id')} on {params.get('dataset_id')} is recorded yet: "
+            "run forven_run_backtest on that dataset first, then the verdict."
+        )
+    if tool_name == "forven_get_results":
+        return " Pass the result_id that forven_run_backtest returned, not a strategy id."
+    return ""
+
+
 def _tool_backtesting(tool_name: str, params: dict) -> str:
     """Execute a Forven Backtesting tool. Routes to the backtesting client."""
     from forven.backtesting import get_client
 
     if not _check_backtesting_available():
         return _BACKTESTING_FALLBACK_MSG
+
+    if tool_name in _DATASET_TOOLS:
+        dataset_error = _dataset_id_error(params.get("dataset_id"))
+        if dataset_error:
+            return dataset_error
 
     client = get_client()
 
@@ -1139,9 +1209,10 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                     detail = str(payload).strip()
             except Exception:
                 detail = str(e.response.text or "").strip()
+        hint = _http_error_hint(tool_name, status_code, params)
         if detail:
-            return f"Backtesting tool error ({tool_name}): HTTP {status_code} - {detail}"
-        return f"Backtesting tool error ({tool_name}): HTTP {status_code}"
+            return f"Backtesting tool error ({tool_name}): HTTP {status_code} - {detail}{hint}"
+        return f"Backtesting tool error ({tool_name}): HTTP {status_code}{hint}"
     except Exception as e:
         return f"Backtesting tool error ({tool_name}): {e}"
 

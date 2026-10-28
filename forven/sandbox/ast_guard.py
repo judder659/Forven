@@ -176,6 +176,18 @@ _DENY_SUBMODULES: tuple[str, ...] = (
 )
 
 
+# The allowed forven modules that exist today, the ones named to agents.
+# forven.market_data_view and forven.ta stay allowed for older strategy files
+# but are not shipped, so naming them sent agents into ModuleNotFoundError
+# (2026-10-28 T91557).
+ADVERTISED_FORVEN_PREFIXES: tuple[str, ...] = (
+    "forven.strategies.base",
+    "forven.strategies.indicators",
+    "forven.strategies.composite",
+    "forven.strategies.builtin",
+)
+
+
 def _module_import_allowed(dotted: str) -> bool:
     """Allowlist check for a (possibly dotted) module name."""
     name = (dotted or "").strip()
@@ -205,7 +217,7 @@ def _forbidden_import_message(dotted: str, *, from_import: bool = False) -> str:
     if (dotted or "").strip().split(".")[0] == "forven":
         message += (
             "; the only strategy-facing forven imports are "
-            + ", ".join(ALLOWED_FORVEN_PREFIXES)
+            + ", ".join(ADVERTISED_FORVEN_PREFIXES)
             + " (BaseStrategy and Signal live in forven.strategies.base)"
         )
     return message

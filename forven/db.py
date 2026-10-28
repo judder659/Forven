@@ -5686,6 +5686,32 @@ def _extract_strategy_id(task_input: object) -> str | None:
 # _normalize_stage_for_lock are imported from forven.roster (canonical).
 
 
+def _task_row_strategy_id(task) -> str | None:
+    """The strategy a task row works on: its strategy_id column, else its input payload."""
+
+    def _task_get(key: str):
+        if isinstance(task, dict):
+            return task.get(key)
+        try:
+            return task[key]
+        except Exception:
+            return None
+
+    strategy_id = _extract_strategy_id(task if isinstance(task, dict) else {
+        "strategy_id": _task_get("strategy_id"),
+        "input_data": _task_get("input_data"),
+    })
+    if strategy_id:
+        return strategy_id
+    input_data = _task_get("input_data")
+    if isinstance(input_data, str):
+        try:
+            input_data = json.loads(input_data)
+        except json.JSONDecodeError:
+            input_data = {}
+    return _extract_strategy_id(input_data if isinstance(input_data, dict) else None)
+
+
 def _claim_ownership_for_task(conn: sqlite3.Connection, agent_id: str, task: sqlite3.Row) -> tuple[str | None, str | None]:
     """Validate that task owner matches strategy container lock.
 
@@ -5703,19 +5729,7 @@ def _claim_ownership_for_task(conn: sqlite3.Connection, agent_id: str, task: sql
             return None
 
     task_type = str(_task_get("type") or "").strip().lower()
-    strategy_id = _extract_strategy_id(task if isinstance(task, dict) else {
-        "strategy_id": _task_get("strategy_id"),
-        "input_data": _task_get("input_data"),
-    })
-
-    if not strategy_id:
-        input_data = _task_get("input_data")
-        if isinstance(input_data, str):
-            try:
-                input_data = json.loads(input_data)
-            except json.JSONDecodeError:
-                input_data = {}
-        strategy_id = _extract_strategy_id(input_data if isinstance(input_data, dict) else None)
+    strategy_id = _task_row_strategy_id(task)
 
     # strategy-developer codes containers at any stage; ownership is irrelevant.
     if normalized_agent == "strategy-developer" and task_type in (
@@ -5758,6 +5772,36 @@ def _claim_ownership_for_task(conn: sqlite3.Connection, agent_id: str, task: sql
         )
 
     return strategy_id, None
+
+
+def stale_ownership_reason(conn: sqlite3.Connection, agent_id: str, strategy_id: str | None) -> str | None:
+    """Why a task is stale because its strategy has moved on to another agent's stage.
+
+    A task queued for one agent can wait while its strategy is promoted (a
+    backtest for simulation-agent, then the strategy goes to paper and to
+    risk-manager). The owner then matches the strategy's stage, so the mismatch
+    is settled, not a mid-promotion blip: the task has nothing left to do and
+    is cancelled rather than failed. Returns None when that is not the case.
+    """
+    if not strategy_id:
+        return None
+    row = conn.execute(
+        "SELECT owner, stage, status FROM strategies WHERE id = ?",
+        (strategy_id,),
+    ).fetchone()
+    if not row:
+        return None
+    current_owner = str(row["owner"] or "").strip().lower() or "brain"
+    strategy_stage = _normalize_stage_for_lock(row["stage"] or row["status"])
+    expected_owner = _STAGE_TO_OWNER_FOR_LOCK.get(strategy_stage)
+    if not expected_owner or current_owner != expected_owner:
+        return None
+    if current_owner == _normalize_agent_id_for_lock(agent_id):
+        return None
+    return (
+        f"Skipped: strategy {strategy_id} moved to {strategy_stage} (now handled by "
+        f"{current_owner}) before this task ran"
+    )
 
 
 def _coerce_bounded_int(value, default: int, lower: int, upper: int) -> int:
@@ -5833,6 +5877,13 @@ def claim_pending_agent_tasks(agent_id: str, limit: int | None = None) -> list[d
             _, error = _claim_ownership_for_task(conn, agent_id, row)
             if error:
                 task_id = str(row["id"])
+                stale_reason = stale_ownership_reason(conn, agent_id, _task_row_strategy_id(row))
+                if stale_reason:
+                    conn.execute(
+                        "UPDATE agent_tasks SET status='cancelled', error=?, completed_at=? WHERE id=?",
+                        (stale_reason, now, task_id),
+                    )
+                    continue
                 # An ownership mismatch can be TRANSIENT — a strategy briefly mid-
                 # promotion whose owner is momentarily out of sync with the task's
                 # agent. Requeue with a short backoff up to a cap so it self-heals,

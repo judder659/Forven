@@ -73,3 +73,30 @@ def test_ownership_mismatch_requeues_then_fails_at_cap(forven_db):
     with get_db() as conn:
         row = conn.execute("SELECT status FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
     assert row["status"] == "failed"
+
+
+def test_task_whose_strategy_moved_to_paper_is_cancelled_not_failed(forven_db):
+    # 2026-10-28 S20651: a backtest waited in simulation-agent's queue while the
+    # strategy was promoted to paper and handed to risk-manager.
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO strategies
+            (id, name, type, symbol, timeframe, params, status, owner, stage, created_at, updated_at)
+            VALUES ('S-moved', 'S-moved', 'rsi_momentum', 'ETH', '1h', '{}', 'paper', 'risk-manager', 'paper', ?, ?)
+            """,
+            (now, now),
+        )
+        task_id, _ = create_task_container(
+            conn, "simulation-agent", "backtest", "Backtest S-moved", "desc",
+            {"strategy_id": "S-moved"}, strategy_id="S-moved", source="user",
+        )
+
+    claimed = claim_pending_agent_tasks("simulation-agent")
+
+    assert all(str(c.get("id")) != str(task_id) for c in claimed)
+    with get_db() as conn:
+        row = conn.execute("SELECT status, error FROM agent_tasks WHERE id = ?", (task_id,)).fetchone()
+    assert row["status"] == "cancelled"
+    assert "moved to paper" in row["error"]
