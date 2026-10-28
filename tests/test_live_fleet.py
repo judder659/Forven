@@ -144,6 +144,24 @@ def test_block_window_starts_at_go_live(forven_db):
     assert _by_id(build_live_fleet(now=NOW))["S1"]["blocked_entries"]["count"] == 1
 
 
+def test_mainnet_guard_refusals_stop_blocking_once_armed(forven_db, monkeypatch):
+    _strategy("S1")
+    _scan("S1", _ago(minutes=1))
+    _blocked_entry(
+        "S1", _ago(days=2),
+        "LIVE-KERNEL-OPEN BTC FAILED \u2014 Refusing to place a MAINNET order: resolved "
+        "testnet=False but FORVEN_ALLOW_MAINNET is not set.",
+    )
+
+    monkeypatch.delenv("FORVEN_ALLOW_MAINNET", raising=False)
+    assert _by_id(build_live_fleet(now=NOW))["S1"]["state"] == "blocked"
+
+    monkeypatch.setenv("FORVEN_ALLOW_MAINNET", "1")
+    row = _by_id(build_live_fleet(now=NOW))["S1"]
+    assert row["state"] == "watching"
+    assert row["blocked_entries"]["count"] == 0
+
+
 def test_stats_realized_and_fills_use_net_live_pnl(forven_db):
     _strategy("S1")
     _scan("S1", _ago(minutes=1))
