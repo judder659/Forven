@@ -2377,7 +2377,12 @@ class _LazyProxy:
         setattr(get_data_manager(), name, value)
 
     def __delattr__(self, name):
-        delattr(get_data_manager(), name)
+        # pytest's monkeypatch (9.2+) undoes a patch of a class attribute by
+        # deleting the instance override. The cached instance may have been
+        # replaced since the patch, so a missing override is already undone.
+        instance = get_data_manager()
+        if name in vars(instance):
+            delattr(instance, name)
 
 
 data_manager = _LazyProxy()
