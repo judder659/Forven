@@ -141,9 +141,12 @@ def _prepare_sandbox_workdir(code: str) -> tuple[tempfile.TemporaryDirectory, st
     return tmpdir, runner_path, script_path
 
 
-def _build_posix_preexec(max_memory_mb: int):
+def _build_posix_preexec(max_memory_mb: int, cpu_seconds: int | None = MAX_CPU_SECONDS):
+    """``cpu_seconds=None`` skips the CPU cap. RLIMIT_CPU counts the whole process
+    lifetime, so a long-lived worker would be killed once its total CPU passed it."""
     def _apply_limits() -> None:
-        resource.setrlimit(resource.RLIMIT_CPU, (MAX_CPU_SECONDS, MAX_CPU_SECONDS))
+        if cpu_seconds is not None:
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
         resource.setrlimit(resource.RLIMIT_AS, (max_memory_mb * 1024 * 1024, max_memory_mb * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_SIZE_MB * 1024 * 1024, MAX_FILE_SIZE_MB * 1024 * 1024))
         resource.setrlimit(resource.RLIMIT_NOFILE, (MAX_OPEN_FILES, MAX_OPEN_FILES))

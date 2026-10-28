@@ -10,6 +10,16 @@ import importlib
 NOT_BLOCKS = ("", "evaluation_only", "no_actionable_position_or_order", "no_signal")
 
 
+def _blocks_only_opens(reason: str | None, strategy: dict) -> bool:
+    """A source-identity fault or a refused open stops new entries only; held
+    positions keep exiting. Recording it against an exit signal would report the
+    exit as refused when nothing was held to close."""
+    if not reason:
+        return False
+    identity_error = strategy.get("execution_identity_error")
+    return reason == identity_error or (reason.startswith("BLOCKED ") and " open" in reason)
+
+
 def trade_snapshot(strategy_id: str) -> dict[str, dict] | None:
     try:
         with importlib.import_module("forven.db").get_db_best_effort() as conn:
@@ -43,7 +53,10 @@ def record_execution_outcome(item: dict, before: dict | None, after: dict | None
         if not row_id and not trades and not (failed and kind == "entry"):
             continue
         metrics = {**summary, "trade_ids": trades}
-        block_reason = None if trades else str(reason or ("execution_failed" if failed else "no_actionable_position_or_order"))
+        kind_reason = reason
+        if kind == "exit" and _blocks_only_opens(reason, item.get("strategy") or {}):
+            kind_reason = None  # an exit while flat has nothing to close; it was not refused
+        block_reason = None if trades else str(kind_reason or ("execution_failed" if failed else "no_actionable_position_or_order"))
         try:
             if row_id:
                 with importlib.import_module("forven.db").get_db_best_effort() as conn:
