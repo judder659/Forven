@@ -4179,6 +4179,59 @@ def _trade_pending_close_reconcile(trade: dict) -> bool:
     return bool(parse_trade_signal_data(trade.get("signal_data")).get("pending_close_reconcile"))
 
 
+# Hyperliquid refuses a reduce-only order with this text when the account holds
+# nothing on that side to reduce: the position is already gone, usually because
+# its exchange stop filled first. E0814 (2026-10-29) hit it three times, raising a
+# failure alert each time, until position reconciliation closed the trade from the
+# exchange fill 15 minutes later.
+_POSITION_GONE_CLOSE_ERRORS = ("would increase position",)
+_POSITION_GONE_HOLD_MINUTES = 30
+
+
+def _close_refused_position_gone(reason: object) -> bool:
+    text = str(reason or "").lower()
+    return any(marker in text for marker in _POSITION_GONE_CLOSE_ERRORS)
+
+
+def _hold_close_for_reconcile(strat_id: str, trade_id: str, asset: str, reason: object) -> None:
+    """Stop re-sending a close the exchange refused because the position is gone.
+
+    Not an execution failure: no alert and no reroute of the strategy. Position
+    reconciliation closes the trade at its real exchange fill; until then (and for
+    at most _POSITION_GONE_HOLD_MINUTES) the scanner sends no further close.
+    """
+    log.warning(
+        "[%s] close refused for %s trade=%s: no position left on the exchange (%s); "
+        "holding the close for reconciliation",
+        strat_id, asset, trade_id, reason,
+    )
+    _update_trade_signal_data(str(trade_id), {
+        "close_refused_position_gone_at": get_now().isoformat(),
+        "close_refused_position_gone_reason": str(reason or "")[:300],
+    })
+    try:
+        log_activity(
+            "info", "scanner",
+            f"Close held {strat_id} {asset} trade={trade_id}: position already closed on the exchange; "
+            "waiting for reconciliation",
+        )
+    except Exception:
+        pass
+
+
+def _close_held_for_reconcile(trade: dict) -> bool:
+    raw = parse_trade_signal_data(trade.get("signal_data")).get("close_refused_position_gone_at")
+    if not raw:
+        return False
+    try:
+        held_at = datetime.fromisoformat(str(raw))
+    except ValueError:
+        return False
+    if held_at.tzinfo is None:
+        held_at = held_at.replace(tzinfo=timezone.utc)
+    return (get_now() - held_at).total_seconds() < _POSITION_GONE_HOLD_MINUTES * 60
+
+
 def _notify_long_only_mode(asset: str) -> None:
     """Throttled operator alert that live trading is LONG ONLY (no short
     sub-account). Surfaces the Hyperliquid $100k-volume gate that blocks creating
@@ -4660,6 +4713,9 @@ def manage_positions(
                     return "partial"
             return True
         except Exception as e:
+            if _close_refused_position_gone(e):
+                _hold_close_for_reconcile(strat_id, trade["id"], trade["asset"], e)
+                return "pending"
             log.error("Direct close failed for %s %s: %s", strat_id, trade["asset"], e)
             _report_execution_failure(
                 strategy_id=strat_id,
@@ -4727,7 +4783,7 @@ def manage_positions(
             continue
         manual_owned = str(trade_signal_data.get("source") or "").strip().lower() == "manual"
 
-        if _trade_pending_close_reconcile(trade):
+        if _trade_pending_close_reconcile(trade) or _close_held_for_reconcile(trade):
             strategy_diag["execution_decision"] = "close_pending_reconcile"
             actions.append(f"PENDING close {trade['asset']} reconcile")
             continue
@@ -7852,7 +7908,7 @@ def _kernel_close_live_trade(
     # pending_close_reconcile but stays OPEN for the periodic reconcile sweep to
     # finalize. Do NOT re-issue a fresh reduce-only close every scan (and don't let
     # a concurrent scan double-fire) — hold it. (Mirror of the legacy guard.)
-    if _trade_pending_close_reconcile(row):
+    if _trade_pending_close_reconcile(row) or _close_held_for_reconcile(row):
         return f"LIVE-KERNEL-CLOSE {asset} pending-reconcile (held)"
 
     # LIVE-2: a failed real reduce-only close must surface to the operator and keep
@@ -7862,6 +7918,9 @@ def _kernel_close_live_trade(
     try:
         result = _execute_direct("close", trade_id, strat_id, asset, direction, size, ref_price, close_reason=reason)
     except Exception as exc:
+        if _close_refused_position_gone(exc):
+            _hold_close_for_reconcile(strat_id, trade_id, asset, exc)
+            return f"LIVE-KERNEL-CLOSE {asset} position already closed on the exchange (held for reconcile)"
         log.error("[%s] live kernel close failed for %s trade=%s: %s", strat_id, asset, trade_id, exc)
         _report_execution_failure(strat_id, "close", trade_id, str(exc))
         return f"LIVE-KERNEL-CLOSE {asset} FAILED — {exc} (held for retry)"
