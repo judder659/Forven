@@ -282,3 +282,25 @@ def test_enrich_series_helper_uses_binance_when_configured(monkeypatch):
     funding, oi = bt._resolve_market_data_series("BTC", 0, 10000)
     assert funding == [(1000, 0.0001)]
     assert oi == [(1000, 5.0)]
+
+
+def test_binance_funding_skips_live_call_while_it_returns_nothing(monkeypatch):
+    """2026-10-29: Binance served no funding on Jud's PC, and each scan made ~200 live
+    calls that returned nothing before reading the parquet (~35 s a scan)."""
+    md._FUNDING_SERIES_CACHE.clear()
+    fake = _FakeFuturesExchange(funding=[])
+    monkeypatch.setattr(md, "_binance_futures_exchange", lambda: fake)
+    disk = [(1000, 0.0001)]
+    monkeypatch.setattr(md, "_read_binance_funding_parquet_series", lambda symbol, start, end: list(disk))
+    clock = {"now": 1_000_000.0}
+    monkeypatch.setattr(md.time, "time", lambda: clock["now"])
+
+    assert md.fetch_binance_funding_series("BTC", start_ms=1000, end_ms=10000) == disk
+    md._FUNDING_SERIES_CACHE.clear()  # a different window misses the window cache
+    assert md.fetch_binance_funding_series("BTC", start_ms=1000, end_ms=20000) == disk
+    assert fake.funding_calls == 1
+
+    clock["now"] += md._SERIES_CACHE_TTL
+    md._FUNDING_SERIES_CACHE.clear()
+    md.fetch_binance_funding_series("BTC", start_ms=1000, end_ms=30000)
+    assert fake.funding_calls == 2  # retried once the memo expires

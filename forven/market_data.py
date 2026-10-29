@@ -639,6 +639,12 @@ _FUNDING_SERIES_CACHE: dict[str, tuple[float, int, int, list[tuple[int, float]],
 # symbol -> (fetched_at, start_ms, end_ms, interval, series)
 _OI_SERIES_CACHE: dict[str, tuple[float, int, int, str, list[tuple[int, float]]]] = {}
 _SERIES_CACHE_TTL = 300.0  # funding events are 4-8h apart; 5-min cache is plenty
+# symbol -> when the live funding fetch last came back empty or failed. The window
+# cache above rarely matches a scan's next request (each ends at its own latest
+# bar), so without this every call paid a live round trip that returned nothing
+# before reading the on-disk parquet: ~200 calls and ~35 s per execution scan on a
+# PC where Binance serves no funding (2026-10-29).
+_FUNDING_LIVE_EMPTY_AT: dict[str, float] = {}
 
 
 def funding_interval_hours_per_print(timestamps_ms) -> list[float]:
@@ -793,14 +799,20 @@ def fetch_binance_funding_series(coin: str, start_ms: int | None = None, end_ms:
     if cached and (now - cached[0]) < _SERIES_CACHE_TTL and cached[1] <= start_ms and end_ms <= cached[2]:
         rows, per_hour = cached[3], cached[4]
     else:
-        try:
-            rows = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
-        except Exception as exc:
-            log.warning(
-                "Binance funding fetch failed for %s (%s); falling back to on-disk parquet",
-                symbol, exc,
-            )
-            rows = []
+        rows = []
+        live_empty_at = _FUNDING_LIVE_EMPTY_AT.get(symbol)
+        if live_empty_at is None or (now - live_empty_at) >= _SERIES_CACHE_TTL:
+            try:
+                rows = _fetch_binance_funding_series_raw(symbol, start_ms, end_ms)
+            except Exception as exc:
+                log.warning(
+                    "Binance funding fetch failed for %s (%s); falling back to on-disk parquet",
+                    symbol, exc,
+                )
+            if rows:
+                _FUNDING_LIVE_EMPTY_AT.pop(symbol, None)
+            else:
+                _FUNDING_LIVE_EMPTY_AT[symbol] = now
         per_hour = False
         if not rows:
             rows = _read_binance_funding_parquet_series(symbol, start_ms, end_ms)
