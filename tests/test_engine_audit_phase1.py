@@ -173,6 +173,56 @@ def test_kernel_close_live_reports_failure_and_holds(monkeypatch):
     assert reported == {"action": "close", "tid": "L2"}
 
 
+def test_kernel_close_live_position_gone_holds_without_failure(monkeypatch):
+    import forven.scanner as sc
+
+    calls = {"exec": 0}
+
+    def _refused(*a, **k):
+        calls["exec"] += 1
+        raise RuntimeError(
+            "close_position SOL sell size=0.36: no fill returned — "
+            "Reduce only order would increase position. asset=5"
+        )
+
+    stored = {}
+    reported = {}
+    monkeypatch.setattr(sc, "_execute_direct", _refused)
+    monkeypatch.setattr(sc, "_report_execution_failure",
+                        lambda *a, **k: reported.update({"called": True}))
+    monkeypatch.setattr(sc, "_update_trade_signal_data",
+                        lambda tid, updates: stored.update(updates) or True)
+    monkeypatch.setattr(sc, "log_activity", lambda *a, **k: None)
+    row = {"id": "E0814", "asset": "SOL", "direction": "long", "size": 0.36, "signal_data": "{}"}
+    action = types.SimpleNamespace(recorded={"_row": row}, trade={"exit_price": 99.8, "exit_reason": "signal"})
+
+    msg = sc._kernel_close_live_trade("S12276", {"asset": "SOL"}, action)
+    assert "already closed" in msg
+    assert reported == {}  # not an execution failure: no alert, no reroute
+    assert stored.get("close_refused_position_gone_at")
+
+    # The next scan sends no second close while reconciliation catches up.
+    row["signal_data"] = json.dumps(stored)
+    msg = sc._kernel_close_live_trade("S12276", {"asset": "SOL"}, action)
+    assert "held" in msg
+    assert calls["exec"] == 1
+
+
+def test_close_hold_expires(monkeypatch):
+    import forven.scanner as sc
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 10, 29, 2, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(sc, "get_now", lambda: now)
+    held_at = now - timedelta(minutes=sc._POSITION_GONE_HOLD_MINUTES - 1)
+    trade = {"signal_data": json.dumps({"close_refused_position_gone_at": held_at.isoformat()})}
+    assert sc._close_held_for_reconcile(trade) is True
+    expired = now - timedelta(minutes=sc._POSITION_GONE_HOLD_MINUTES + 1)
+    trade = {"signal_data": json.dumps({"close_refused_position_gone_at": expired.isoformat()})}
+    assert sc._close_held_for_reconcile(trade) is False
+    assert sc._close_held_for_reconcile({"signal_data": "{}"}) is False
+
+
 def test_kernel_open_live_skips_short_in_long_only(monkeypatch):
     import forven.scanner as sc
     from forven.exchange import books
