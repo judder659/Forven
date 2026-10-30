@@ -262,3 +262,19 @@ def test_validation_contexts_without_a_declared_asset_still_span_markets(forven_
     contexts = evolution._build_validation_contexts("SOL/USDT", "1h", params={"_timeframe": "1h"})
 
     assert {s for s, _tf in contexts} == {"SOL/USDT", "ETH/USDT"}
+
+
+def test_validation_contexts_stay_on_an_imported_strategys_data_requirements_asset(forven_db, monkeypatch):
+    # S20473 (2026-10-27): an imported NEAR design (no _asset; its stored
+    # _data_requirements name NEAR) was validated across markets and re-homed to ETH.
+    from forven import evolution
+
+    monkeypatch.setattr(evolution, "_collect_validation_symbols", lambda symbol, params=None: [symbol, "ETH/USDT", "BTC/USDT"])
+    params = {
+        "_timeframe": "4h",
+        "_data_requirements": [{"asset": "NEAR/USDT", "exchange": "any", "timeframe": "1h", "min_bars": 720}],
+    }
+
+    contexts = evolution._build_validation_contexts("NEAR/USDT", "4h", params=params)
+
+    assert contexts == [("NEAR/USDT", "4h")]

@@ -279,3 +279,56 @@ def test_auto_assign_never_moves_symbol_off_declared_asset(forven_db):
     with get_db() as conn:
         row = conn.execute("SELECT symbol FROM strategies WHERE id = ?", (sid,)).fetchone()
     assert row["symbol"] == "ETH/USDT"
+
+
+def test_auto_assign_keeps_an_imported_strategy_on_its_data_requirements_asset(forven_db):
+    """S20662 (2026-10-28): an imported TRX design (no _asset) was renamed and
+    re-homed onto SOL mid-pipeline after a SOL backtest scored best."""
+    import json
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).isoformat()
+    sid = "S-ASSETPIN2"
+    params = {"_data_requirements": [{"asset": "TRX/USDT", "exchange": "any", "timeframe": "1h", "min_bars": 720}]}
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, metrics, "
+            "status, owner, stage, stage_changed_at, created_at, updated_at) "
+            "VALUES (?, ?, 'rsi_momentum', 'TRX/USDT', '4h', ?, '{}', 'quick_screen', 'brain', "
+            "'quick_screen', ?, ?, ?)",
+            (sid, sid, json.dumps(params), now, now, now),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, symbol, "
+            "timeframe, metrics_json, config_json, created_at) "
+            "VALUES ('bt-assetpin-sol', ?, 'backtest', 'SOL/USDT', '4h', ?, '{}', ?)",
+            (
+                sid,
+                json.dumps({
+                    "sharpe": 2.5, "sharpe_ratio": 2.5, "total_trades": 60,
+                    "total_return_pct": 20.0, "max_drawdown_pct": 0.05, "win_rate": 0.6,
+                }),
+                now,
+            ),
+        )
+        conn.commit()
+
+    auto_assign_best_symbol_timeframe(sid)
+
+    with get_db() as conn:
+        row = conn.execute("SELECT symbol FROM strategies WHERE id = ?", (sid,)).fetchone()
+    assert row["symbol"] == "TRX/USDT"
+
+
+def test_declared_strategy_asset():
+    from forven.db import declared_strategy_asset
+
+    reqs = [{"asset": "TRX/USDT", "timeframe": "1h"}]
+    assert declared_strategy_asset({"_asset": "ETH", "_data_requirements": reqs}) == "ETH"
+    assert declared_strategy_asset({"_data_requirements": reqs}) == "TRX/USDT"
+    # Same coin spelled two ways is still one declaration.
+    assert declared_strategy_asset({"_data_requirements": reqs + [{"asset": "TRX"}]}) in {"TRX", "TRX/USDT"}
+    # A second market is a feed, not a declaration of what is traded.
+    assert declared_strategy_asset({"_data_requirements": reqs + [{"asset": "BTC/USDT"}]}) == ""
+    assert declared_strategy_asset({}) == ""
+    assert declared_strategy_asset(None) == ""
