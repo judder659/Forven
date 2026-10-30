@@ -13,6 +13,7 @@ Strategies:
 """
 
 import contextvars
+import copy
 import json
 import logging
 import math
@@ -8025,6 +8026,67 @@ def _resolve_kernel_strategy_instance(
     return _instantiate_kernel_strategy(strat_id, strat, contract, params, asset)
 
 
+# Paper kernel walks keyed on their inputs, reused while no new bar has closed.
+# Each paper strategy re-ran the full ~1500-bar kernel walk every 5-minute scan:
+# ~1 s each, ~200 s of CPU per scan for 180 strategies (2026-10-30 timings), though
+# an hourly strategy's closed candles change once an hour. The walk reads only
+# closed bars and its settings, so the same key gives the same result; what
+# depends on the live mark (fills, stops, refreshes) still runs every scan.
+# Live strategies always walk fresh. The TTL bounds staleness from anything the
+# key can't see (an edited strategy file, a corrected candle).
+_KERNEL_WALK_CACHE: dict[tuple, tuple[float, "pd.DataFrame", object]] = {}
+_KERNEL_WALK_CACHE_LOCK = threading.Lock()
+_KERNEL_WALK_CACHE_TTL_SECONDS = 3600.0
+
+
+def _kernel_walk_cache_key(
+    strat_id: str, strat: dict, contract: dict, params: dict, asset: str, timeframe: str,
+    closed_frame: "pd.DataFrame",
+) -> tuple | None:
+    if closed_frame is None or closed_frame.empty:
+        return None
+    try:
+        last = closed_frame.iloc[-1]
+        bars = (
+            str(closed_frame.index[0]), str(closed_frame.index[-1]), len(closed_frame),
+            tuple(float(last[col]) for col in ("open", "high", "low", "close", "volume") if col in last),
+        )
+        inputs = json.dumps(
+            {
+                "params": params, "contract": contract, "assumptions": _kernel_execution_assumptions(strat),
+                "type": strat.get("runtime_type") or strat.get("type"), "symbol": strat.get("symbol"),
+                "trade_mode": strat.get("trade_mode"), "settings_leverage": strat.get("leverage"),
+            },
+            sort_keys=True, default=str,
+        )
+    except Exception:
+        return None
+    return (strat_id, asset.upper(), timeframe, bars, inputs)
+
+
+def _kernel_walk_cache_get(key: tuple | None) -> tuple["pd.DataFrame", object] | None:
+    if key is None:
+        return None
+    with _KERNEL_WALK_CACHE_LOCK:
+        hit = _KERNEL_WALK_CACHE.get(key)
+    if hit is None or (time.monotonic() - hit[0]) > _KERNEL_WALK_CACHE_TTL_SECONDS:
+        return None
+    # Callers mutate the result (pending entries, funding on closed trades): hand out copies.
+    return hit[1].copy(), copy.deepcopy(hit[2])
+
+
+def _kernel_walk_cache_put(key: tuple | None, df: "pd.DataFrame", res: object) -> None:
+    if key is None or res is None:
+        return
+    now = time.monotonic()
+    entry = (now, df.copy(), copy.deepcopy(res))
+    with _KERNEL_WALK_CACHE_LOCK:
+        # One entry per strategy leg: a new bar replaces the previous walk.
+        for stale in [k for k in _KERNEL_WALK_CACHE if k[:3] == key[:3] and k != key]:
+            del _KERNEL_WALK_CACHE[stale]
+        _KERNEL_WALK_CACHE[key] = entry
+
+
 def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=None, execution_type: str = "paper", diagnostics=None) -> list[str] | None:
     """Kernel-driven paper execution: run the shared engine over the strategy's history
     and reconcile its open/closed positions into paper trades. Returns the action
@@ -8052,21 +8114,34 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         return _skip("no asset on strategy")
     timeframe = str(strat.get("timeframe") or p.get("timeframe") or "1h").strip().lower() or "1h"
 
+    walk_cache_key = None
+    cached_walk = None
     try:
         reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe)
-        df = _enrich_scan_frame(reference_frame.copy(), asset, timeframe)
-        df = _trim_unclosed_latest_candle(df, timeframe)
+        if str(execution_type).strip().lower() == "paper":
+            walk_cache_key = _kernel_walk_cache_key(
+                strat_id, strat, contract, p, asset, timeframe,
+                _trim_unclosed_latest_candle(reference_frame, timeframe),
+            )
+            cached_walk = _kernel_walk_cache_get(walk_cache_key)
+        if cached_walk is not None:
+            df = cached_walk[0]
+        else:
+            df = _enrich_scan_frame(reference_frame.copy(), asset, timeframe)
+            df = _trim_unclosed_latest_candle(df, timeframe)
     except Exception as exc:
         log.warning("[%s] kernel paper: candle fetch failed (%s); SKIP scan (no legacy)", strat_id, exc)
         return _skip(f"candle fetch failed: {exc}")
     if df is None or df.empty or len(df) < 20:
         return _skip("insufficient candle history")
 
-    strategy_instance, resolve_error = _resolve_kernel_strategy_instance(strat_id, strat, contract, p, asset)
-    if strategy_instance is None:
-        return _skip(
-            "could not resolve strategy instance" + (f" ({resolve_error})" if resolve_error else "")
-        )
+    strategy_instance = None
+    if cached_walk is None:
+        strategy_instance, resolve_error = _resolve_kernel_strategy_instance(strat_id, strat, contract, p, asset)
+        if strategy_instance is None:
+            return _skip(
+                "could not resolve strategy instance" + (f" ({resolve_error})" if resolve_error else "")
+            )
 
     # Resolve via the shared engine default so the kernel paper run matches the
     # confirmation backtest's leverage (operator default_leverage when undeclared).
@@ -8083,7 +8158,6 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # body.initial_capital is None). Reading execution_profile.initial_capital here
     # would diverge 'fixed'-mode sizing from the validated backtest.
     initial_capital = float(contract.get("initial_capital", _PAPER_SANDBOX_INITIAL_CAPITAL))
-    trade_mode = contract.get("trade_mode") or _resolve_kernel_trade_mode(strat, strategy_instance)
     strategy_type = str(strat.get("runtime_type") or strat.get("type") or "").strip() or None
 
     # The kernel's simulate() skips the first KERNEL_WARMUP+1 bars, so the EARLIEST
@@ -8098,59 +8172,65 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     # (single-application invariant). Gated on the SAME setting the post-hoc pass reads
     # so paper never funds one way in-walk and the other post-hoc — one funding switch.
     _include_funding = bool(assumptions["include_funding"])
-    try:
-        res = _bt.run_strategy_execution(
-            df, strategy_instance, params=p, warmup=KERNEL_WARMUP, leverage=leverage,
-            fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=bool(contract.get("regime_gate", False)),
-            trade_mode=trade_mode, execution_controls=ec, initial_capital=initial_capital,
-            strategy_type=strategy_type,
-            # PAIR form (BTC/USDT), not the bare coin: the intrabar resolver
-            # loads the lake 1m series, which lives under the pair directory.
-            symbol=str(strat.get("symbol") or "").strip() or None, timeframe=timeframe,
-            include_funding=_include_funding,
-        )
-    except Exception as exc:
-        log.warning("[%s] kernel paper: run_strategy_execution failed (%s); SKIP scan (no legacy)", strat_id, exc)
-        return _skip(f"run_strategy_execution failed: {exc}")
-    if res is None:
-        # KCOPY-3: distinguish a genuinely non-vectorizable strategy (legacy fallback is
-        # acceptable) from one the purity guard REFUSED as non-deterministic/stateful. An
-        # impure strategy is untrustworthy on ANY engine — it must NEVER be silently
-        # downgraded to the legacy per-bar engine and traded on non-reproducible signals
-        # (paper OR live). Quarantine it instead. Sandbox-only strategies run in the worker
-        # (their in-parent proxy refuses), so don't probe them here.
-        from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sbx
-        if not _is_sbx(strategy_type or "") and _bt.per_bar_strategy_is_impure(
-            strategy_instance, df, KERNEL_WARMUP
-        ):
-            if diagnostics is not None:
-                diagnostics[strat_id] = {
-                    "strategy_id": strat_id,
-                    "execution_decision": "impure_refused",
-                    "reason": "generate_signal is non-deterministic/stateful — refused on every "
-                              "engine; not traded (fix or archive it)",
-                    "runtime_type": str(strat.get("runtime_type") or strat.get("type") or ""),
-                }
-            log.warning(
-                "[%s] kernel: impure/non-deterministic strategy — NOT traded on any engine (no legacy)",
-                strat_id,
-            )
-            return KERNEL_IMPURE_REFUSED
-        return None  # genuinely non-vectorizable → caller decides (flag vs legacy)
-
-    # Net-costs parity: charge perp funding into the kernel trades' pnl_pct exactly
-    # like the backtest. With ``include_funding`` on (above), a FAITHFUL trade the kernel
-    # already funded in-walk carries ``_funding_from_kernel`` and _apply_funding_to_trades
-    # SKIPS it (single-application invariant) — this pass then only funds any trade the
-    # kernel could not (e.g. legacy/adapter producers that don't stamp the flag), so a
-    # held perp position's closed PnL matches the backtest rather than overstating it.
-    # Runs on the SAME ``df`` the walk ran on, so the post-hoc rates equal the in-walk
-    # rates bar-for-bar. Guard on ``_include_funding`` so both paths share one switch.
-    if res.closed_trades and _include_funding:
+    if cached_walk is not None:
+        res = cached_walk[1]
+    else:
+        trade_mode = contract.get("trade_mode") or _resolve_kernel_trade_mode(strat, strategy_instance)
         try:
-            _bt._apply_funding_to_trades(res.closed_trades, df, leverage, timeframe)
+            res = _bt.run_strategy_execution(
+                df, strategy_instance, params=p, warmup=KERNEL_WARMUP, leverage=leverage,
+                fee_bps=fee_bps, slippage_bps=slippage_bps, regime_gate=bool(contract.get("regime_gate", False)),
+                trade_mode=trade_mode, execution_controls=ec, initial_capital=initial_capital,
+                strategy_type=strategy_type,
+                # PAIR form (BTC/USDT), not the bare coin: the intrabar resolver
+                # loads the lake 1m series, which lives under the pair directory.
+                symbol=str(strat.get("symbol") or "").strip() or None, timeframe=timeframe,
+                include_funding=_include_funding,
+            )
         except Exception as exc:
-            log.warning("[%s] kernel paper: funding application failed (%s); net-of-fees only", strat_id, exc)
+            log.warning("[%s] kernel paper: run_strategy_execution failed (%s); SKIP scan (no legacy)", strat_id, exc)
+            return _skip(f"run_strategy_execution failed: {exc}")
+        if res is None:
+            # KCOPY-3: distinguish a genuinely non-vectorizable strategy (legacy fallback is
+            # acceptable) from one the purity guard REFUSED as non-deterministic/stateful. An
+            # impure strategy is untrustworthy on ANY engine — it must NEVER be silently
+            # downgraded to the legacy per-bar engine and traded on non-reproducible signals
+            # (paper OR live). Quarantine it instead. Sandbox-only strategies run in the worker
+            # (their in-parent proxy refuses), so don't probe them here.
+            from forven.strategies.sandbox_proxy import is_sandbox_only_type as _is_sbx
+            if not _is_sbx(strategy_type or "") and _bt.per_bar_strategy_is_impure(
+                strategy_instance, df, KERNEL_WARMUP
+            ):
+                if diagnostics is not None:
+                    diagnostics[strat_id] = {
+                        "strategy_id": strat_id,
+                        "execution_decision": "impure_refused",
+                        "reason": "generate_signal is non-deterministic/stateful — refused on every "
+                                  "engine; not traded (fix or archive it)",
+                        "runtime_type": str(strat.get("runtime_type") or strat.get("type") or ""),
+                    }
+                log.warning(
+                    "[%s] kernel: impure/non-deterministic strategy — NOT traded on any engine (no legacy)",
+                    strat_id,
+                )
+                return KERNEL_IMPURE_REFUSED
+            return None  # genuinely non-vectorizable → caller decides (flag vs legacy)
+
+        # Net-costs parity: charge perp funding into the kernel trades' pnl_pct exactly
+        # like the backtest. With ``include_funding`` on (above), a FAITHFUL trade the kernel
+        # already funded in-walk carries ``_funding_from_kernel`` and _apply_funding_to_trades
+        # SKIPS it (single-application invariant) — this pass then only funds any trade the
+        # kernel could not (e.g. legacy/adapter producers that don't stamp the flag), so a
+        # held perp position's closed PnL matches the backtest rather than overstating it.
+        # Runs on the SAME ``df`` the walk ran on, so the post-hoc rates equal the in-walk
+        # rates bar-for-bar. Guard on ``_include_funding`` so both paths share one switch.
+        if res.closed_trades and _include_funding:
+            try:
+                _bt._apply_funding_to_trades(res.closed_trades, df, leverage, timeframe)
+            except Exception as exc:
+                log.warning("[%s] kernel paper: funding application failed (%s); net-of-fees only", strat_id, exc)
+        # Cached after funding so a hit never funds the same trades twice.
+        _kernel_walk_cache_put(walk_cache_key, df, res)
 
     is_live = str(execution_type).strip().lower() == "live"
     # Honor the paper-test "no real orders" contract the legacy path enforces: a
