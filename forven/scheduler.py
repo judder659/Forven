@@ -1106,6 +1106,27 @@ def _coerce_data_manager_timeout_seconds(kind: str, value) -> float:
     return _coerce_timeout_seconds(value, _DATA_MANAGER_TIMEOUT_DEFAULTS[kind])
 
 
+def _scanner_job_timeout_seconds(job: dict, payload: object) -> float:
+    """Timeout for a scanner pass: an explicit payload value, else most of its slot.
+
+    A flat 180 s on a 5-minute scan flagged half of a busy install's scans as
+    failed though each finished and none overlapped (2026-10-29: median 176 s).
+    A slower PC or a longer interval gets a proportionally longer limit; 180 s
+    stays the floor.
+    """
+    explicit = payload.get("timeout_seconds") if isinstance(payload, dict) else None
+    if explicit is not None:
+        return _coerce_timeout_seconds(explicit, _SCANNER_JOB_TIMEOUT_SECONDS)
+    timeout_seconds = float(_SCANNER_JOB_TIMEOUT_SECONDS)
+    if str(job.get("schedule_type") or "").strip().lower() == "interval":
+        try:
+            interval_seconds = float(job.get("schedule_expr") or 0) / 1000.0
+        except (TypeError, ValueError):
+            interval_seconds = 0.0
+        timeout_seconds = max(timeout_seconds, interval_seconds * 0.9)
+    return timeout_seconds
+
+
 def _job_running_stale_seconds(job: dict) -> int:
     """Compute stale-lock takeover window per job kind instead of global max."""
     payload = _scheduler_job_payload(job)
@@ -1113,10 +1134,7 @@ def _job_running_stale_seconds(job: dict) -> int:
     timeout_seconds = 600.0
 
     if kind in {"scanner_run", "scanner_signal_run"}:
-        timeout_seconds = _coerce_timeout_seconds(
-            payload.get("timeout_seconds") if isinstance(payload, dict) else None,
-            _SCANNER_JOB_TIMEOUT_SECONDS,
-        )
+        timeout_seconds = _scanner_job_timeout_seconds(job, payload)
     elif kind == "evolution_testing":
         # Dynamic timeout: scale with pipeline candidate count so the
         # testing step can drain the full backlog in a single pass.
@@ -1395,10 +1413,7 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # Scanner run — evaluate signals and optionally apply execution actions
         if kind == "scanner_run":
             from forven.scanner import run_scan
-            timeout_seconds = _coerce_timeout_seconds(
-                payload.get("timeout_seconds"),
-                _SCANNER_JOB_TIMEOUT_SECONDS,
-            )
+            timeout_seconds = _scanner_job_timeout_seconds(job, payload)
             await _run_sync_job(
                 run_scan,
                 execute_positions=bool(payload.get("execute_positions", True)),
@@ -1409,10 +1424,7 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # Explicit signal-only scanner pass
         if kind == "scanner_signal_run":
             from forven.scanner import run_signal_scan
-            timeout_seconds = _coerce_timeout_seconds(
-                payload.get("timeout_seconds"),
-                _SCANNER_JOB_TIMEOUT_SECONDS,
-            )
+            timeout_seconds = _scanner_job_timeout_seconds(job, payload)
             await _run_sync_job(
                 run_signal_scan,
                 timeout_seconds=timeout_seconds,

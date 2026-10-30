@@ -6,6 +6,33 @@
 __version__ = "0.1.34"
 
 
+def _cap_math_library_threads() -> None:
+    """One thread per numeric pool unless the operator set their own.
+
+    OpenBLAS starts one thread per core for each Python thread that calls it.
+    The backend runs 20+ Python threads at once (scanner pools, scheduler jobs,
+    API), so on a 12-core PC every numpy call could wake 12 more and the live
+    scan crawled on an oversubscribed CPU (2026-10-30: load ~11 on 12 cores,
+    execution scans 220-390 s). Forven's parallelism comes from its own
+    threads and processes, so a single-threaded BLAS is the faster setting.
+    Must run before numpy is first imported; setdefault keeps any value the
+    operator exported. The sandbox applies the same caps to its children.
+    """
+    import os
+
+    for name in (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ.setdefault(name, "1")
+
+
+_cap_math_library_threads()
+
+
 def _archive_version(path=None) -> str | None:
     """The release a source download was built from, if this is one.
 

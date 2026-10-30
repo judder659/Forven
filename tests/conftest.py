@@ -139,6 +139,20 @@ def _reset_data_manager_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_funding_live_empty_memo():
+    """A live funding fetch one test left empty must not make the next skip its own."""
+    import sys
+
+    module = sys.modules.get("forven.market_data")
+    if module is not None:
+        module._FUNDING_LIVE_EMPTY_AT.clear()
+    yield
+    module = sys.modules.get("forven.market_data")
+    if module is not None:
+        module._FUNDING_LIVE_EMPTY_AT.clear()
+
+
+@pytest.fixture(autouse=True)
 def _preserve_native_duckdb_modules():
     """Re-seed duckdb's native ``sys.modules`` entries after each test.
 

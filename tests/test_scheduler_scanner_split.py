@@ -362,3 +362,23 @@ def test_tick_skips_intake_job_when_autonomy_backpressure_is_active(monkeypatch,
             },
         )
     ]
+
+
+def test_scanner_timeout_follows_the_scan_interval():
+    """2026-10-29: a flat 180 s limit on a 5-minute scan flagged half of a busy
+    install's scans as failed though each finished before the next began."""
+    import forven.scheduler as scheduler
+
+    def job(expr, schedule_type="interval"):
+        return {"schedule_type": schedule_type, "schedule_expr": expr}
+
+    payload = {"kind": "scanner_run"}
+    assert scheduler._scanner_job_timeout_seconds(job("300000"), payload) == 270.0
+    assert scheduler._scanner_job_timeout_seconds(job("900000"), payload) == 810.0
+    # The old limit stays the floor, and an explicit payload value still wins.
+    assert scheduler._scanner_job_timeout_seconds(job("60000"), payload) == 180.0
+    assert scheduler._scanner_job_timeout_seconds(job("*/5 * * * *", "cron"), payload) == 180.0
+    assert scheduler._scanner_job_timeout_seconds(job("300000"), {"timeout_seconds": 90}) == 90.0
+    # The stale-lock window and hard timeout sit past the inner limit.
+    scan_job = {**job("300000"), "payload": json.dumps(payload)}
+    assert scheduler._job_running_stale_seconds(scan_job) == 330
