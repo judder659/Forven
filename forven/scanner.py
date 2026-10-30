@@ -12,6 +12,7 @@ Strategies:
   S030-MACD-ETH                  — MACD 5/13/3 cross
 """
 
+import contextvars
 import json
 import logging
 import math
@@ -9000,9 +9001,17 @@ def _force_high_activity_signals(signal_rows: list[dict]) -> list[dict]:
 # they share the exchange account and the portfolio-budget check, which must observe
 # each prior open before admitting the next.
 _EXEC_POOL_WORKERS = 8
+# The running scan's execution timings (see _log_scan_timings); None outside a scan.
+_SCAN_EXEC_TIMINGS: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "forven_scan_exec_timings", default=None
+)
 
 
-def _apply_execution_actions(signal_rows: list[dict], diagnostics_out: dict[str, dict] | None = None) -> list[str]:
+def _apply_execution_actions(
+    signal_rows: list[dict],
+    diagnostics_out: dict[str, dict] | None = None,
+    timings_out: dict | None = None,
+) -> list[str]:
     """Apply execution logic for a previously evaluated signal matrix.
 
     Kernel-PAPER strategies execute on a bounded thread pool (their work is local and
@@ -9022,14 +9031,29 @@ def _apply_execution_actions(signal_rows: list[dict], diagnostics_out: dict[str,
         else:
             serial.append(item)
 
+    item_seconds: list[tuple[str, float]] = []
+    part_totals: dict[str, float] = {}
+    parts_lock = threading.Lock()
+
+    def _timed(item: dict) -> list[str]:
+        started = time.monotonic()
+        parts: dict[str, float] = {}
+        try:
+            return _apply_execution_action_item(item, account_equity, diagnostics_out, parts)
+        finally:
+            with parts_lock:
+                item_seconds.append((str(item.get("strategy_id") or ""), time.monotonic() - started))
+                for name, sec in parts.items():
+                    part_totals[name] = part_totals.get(name, 0.0) + sec
+
+    serial_started = time.monotonic()
+    serial_seconds = 0.0
     if pooled:
         with ThreadPoolExecutor(max_workers=min(_EXEC_POOL_WORKERS, len(pooled))) as pool:
-            futures = [
-                pool.submit(_apply_execution_action_item, item, account_equity, diagnostics_out)
-                for item in pooled
-            ]
+            futures = [pool.submit(_timed, item) for item in pooled]
             for item in serial:
-                all_actions.extend(_apply_execution_action_item(item, account_equity, diagnostics_out))
+                all_actions.extend(_timed(item))
+            serial_seconds = time.monotonic() - serial_started
             for future in futures:
                 try:
                     all_actions.extend(future.result() or [])
@@ -9037,23 +9061,44 @@ def _apply_execution_actions(signal_rows: list[dict], diagnostics_out: dict[str,
                     log.error("Execution pool task failed: %s", e, exc_info=True)
     else:
         for item in serial:
-            all_actions.extend(_apply_execution_action_item(item, account_equity, diagnostics_out))
+            all_actions.extend(_timed(item))
+        serial_seconds = time.monotonic() - serial_started
 
+    if timings_out is None:
+        timings_out = _SCAN_EXEC_TIMINGS.get()
+    if timings_out is not None:
+        timings_out["pooled"] = timings_out.get("pooled", 0) + len(pooled)
+        timings_out["serial"] = timings_out.get("serial", 0) + len(serial)
+        timings_out["serial_s"] = timings_out.get("serial_s", 0.0) + serial_seconds
+        timings_out["item_s"] = timings_out.get("item_s", 0.0) + sum(sec for _, sec in item_seconds)
+        timings_out.setdefault("items", []).extend(item_seconds)
+        parts_out = timings_out.setdefault("parts", {})
+        for name, sec in part_totals.items():
+            parts_out[name] = parts_out.get(name, 0.0) + sec
     return all_actions
 
 
 def _apply_execution_action_item(
-    item: dict, account_equity: float, diagnostics_out: dict[str, dict] | None
+    item: dict, account_equity: float, diagnostics_out: dict[str, dict] | None,
+    part_seconds: dict[str, float] | None = None,
 ) -> list[str]:
     from forven.execution_observations import record_execution_outcome, trade_snapshot
 
     sid = str(item.get("strategy_id") or "")
     diagnostics = diagnostics_out if diagnostics_out is not None else {}
+    marks = [time.monotonic()]
     before = trade_snapshot(sid)
+    marks.append(time.monotonic())
     actions = _dispatch_execution_action_item(item, account_equity, diagnostics)
+    marks.append(time.monotonic())
     actions = [*actions, *_manage_paused_paper_legs(sid, item.get("strategy"), account_equity, diagnostics)]
+    marks.append(time.monotonic())
     summary = record_execution_outcome(item, before, trade_snapshot(sid), diagnostics.get(sid, {}), actions)
+    marks.append(time.monotonic())
     diagnostics.setdefault(sid, {}).update(summary)
+    if part_seconds is not None:
+        for name, start, end in zip(("snapshot", "dispatch", "paused_legs", "record"), marks, marks[1:]):
+            part_seconds[name] = part_seconds.get(name, 0.0) + (end - start)
     return actions
 
 
@@ -9340,6 +9385,19 @@ def _open_position_strategy_ids() -> set[str]:
 
 def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     """Inner scan body. Call ``run_scan`` (the single-flight wrapper) instead."""
+    # Per-step wall times, logged with the scan (2026-10-30: execution scans took
+    # 220-335 s and no profiler could be attached on the operator's PC).
+    step_seconds: dict[str, float] = {}
+    exec_timings: dict = {}
+    _SCAN_EXEC_TIMINGS.set(exec_timings)
+    scan_started = step_started = time.monotonic()
+
+    def _step(name: str) -> None:
+        nonlocal step_started
+        now = time.monotonic()
+        step_seconds[name] = step_seconds.get(name, 0.0) + (now - step_started)
+        step_started = now
+
     ensure_db_initialized()
     requested_execution = bool(execute_positions)
     execution_allowed = bool(requested_execution and _scanner_execution_enabled())
@@ -9360,6 +9418,7 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
         registry_active = {}
 
     active_strategies = _load_deployed_strategies()
+    _step("load_strategies")
     relaxed_trade_filters = _scanner_bool_setting("relaxed_trade_filters_enabled", False)
     paper_test_mode = _paper_test_mode_enabled()
     paper_test_bypass_gates = _paper_test_bypass_gates_enabled()
@@ -9405,8 +9464,10 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
             "Paper test high-activity mode enabled: forcing alternating entry/exit signals for visual validation."
         )
 
+    _step("setup")
     # Sync risk state on each scan cycle.
     sync_from_trades()
+    _step("sync_trades")
 
     live_prices, live_price_age = _load_live_price_cache()
     live_prices_for_scan: dict[str, float] = {}
@@ -9438,6 +9499,7 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
             log.info("Regimes: %s", " | ".join(regime_strs))
     except Exception as e:
         log.debug("Regime detection skipped: %s", e)
+    _step("prices_regimes")
 
     # PRIORITY EXIT LANE: strategies holding OPEN positions are evaluated AND executed
     # FIRST, so a bar-close exit (pending signal close, kernel stop/TP replay) fills
@@ -9461,7 +9523,9 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
             relaxed_trade_filters=relaxed_trade_filters,
             use_live_price_for_signal_price=use_live_price_for_signal_price,
         )
+        _step("priority_signals")
         priority_actions = _apply_execution_actions(priority_rows, execution_diagnostics)
+        _step("priority_execution")
 
     rest_strategies = active_strategies
     if priority_ids:
@@ -9474,6 +9538,7 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
         relaxed_trade_filters=relaxed_trade_filters,
         use_live_price_for_signal_price=use_live_price_for_signal_price,
     )
+    _step("signals")
     all_signals = {**priority_signals, **rest_signals}
     signal_rows = priority_rows + rest_rows
 
@@ -9495,9 +9560,11 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
         execution_allowed=execution_allowed,
     )
 
+    _step("diagnostics")
     all_actions: list[str] = list(priority_actions)
     if execution_allowed:
         all_actions.extend(_apply_execution_actions(rest_rows, execution_diagnostics))
+        _step("execution")
         scan_diagnostics.update(execution_diagnostics)
     elif requested_execution:
         log.info("Execution scan degraded to signal-only by policy; scanner_execution_enabled=false.")
@@ -9590,6 +9657,9 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     }
 
     kv_set("scanner_state", state)
+    _step("summary_state")
+    _log_scan_timings(scan_mode, time.monotonic() - scan_started, step_seconds, exec_timings)
+    _SCAN_EXEC_TIMINGS.set(None)
 
     log_activity(
         "info",
@@ -9598,6 +9668,27 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     )
 
     return all_signals
+
+
+def _log_scan_timings(scan_mode: str, total: float, steps: dict[str, float], exec_timings: dict) -> None:
+    """One log line with where a scan spent its time, slowest strategies included."""
+    parts = [f"{name}={sec:.1f}s" for name, sec in steps.items() if sec >= 0.05]
+    if exec_timings:
+        parts.append(
+            "exec_items={pooled}pooled+{serial}serial serial_thread={serial_s:.1f}s item_sum={item_s:.1f}s".format(
+                pooled=exec_timings.get("pooled", 0),
+                serial=exec_timings.get("serial", 0),
+                serial_s=exec_timings.get("serial_s", 0.0),
+                item_s=exec_timings.get("item_s", 0.0),
+            )
+        )
+        item_parts = exec_timings.get("parts") or {}
+        if item_parts:
+            parts.append("item_parts=" + ",".join(f"{name}:{sec:.1f}s" for name, sec in item_parts.items()))
+        slowest = sorted(exec_timings.get("items", []), key=lambda pair: pair[1], reverse=True)[:5]
+        if slowest:
+            parts.append("slowest=" + ",".join(f"{sid}:{sec:.1f}s" for sid, sec in slowest))
+    log.info("Scan timings (%s) total=%.1fs | %s", scan_mode, total, " ".join(parts))
 
 
 def run_signal_scan() -> dict:
