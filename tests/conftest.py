@@ -153,6 +153,20 @@ def _reset_funding_live_empty_memo():
 
 
 @pytest.fixture(autouse=True)
+def _reset_kernel_walk_cache():
+    """A paper kernel walk one test cached must not be served to the next."""
+    import sys
+
+    module = sys.modules.get("forven.scanner")
+    if module is not None:
+        module._KERNEL_WALK_CACHE.clear()
+    yield
+    module = sys.modules.get("forven.scanner")
+    if module is not None:
+        module._KERNEL_WALK_CACHE.clear()
+
+
+@pytest.fixture(autouse=True)
 def _preserve_native_duckdb_modules():
     """Re-seed duckdb's native ``sys.modules`` entries after each test.
 
