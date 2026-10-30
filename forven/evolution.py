@@ -27,6 +27,7 @@ from forven.db import (
     append_strategy_event,
     block_cross_asset_symbol_rehome,
     build_strategy_container_name,
+    declared_strategy_asset,
     get_db,
     get_strategies,
     kv_get,
@@ -414,7 +415,7 @@ def _collect_validation_timeframes(primary_timeframe: str | None = None) -> list
 def _build_validation_contexts(symbol: str, timeframe: str, params: dict | None = None) -> list[tuple[str, str]]:
     # A declared asset is a contract too: the best context must not re-home the
     # strategy onto another market (S11884, an ETH design, was moved to BTC).
-    declared_asset = str((params or {}).get("_asset") or "").strip() if isinstance(params, dict) else ""
+    declared_asset = declared_strategy_asset(params)
     declared_symbol = normalize_strategy_symbol_strict(declared_asset) if declared_asset else None
     symbols = [declared_symbol] if declared_symbol else _collect_validation_symbols(symbol, params=params)
     # A declared timeframe is a contract: validate there only, so the best

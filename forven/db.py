@@ -7139,6 +7139,35 @@ def _symbol_asset_key(symbol: object) -> str:
     return token.strip()
 
 
+def declared_strategy_asset(params: object) -> str:
+    """The market a strategy's author declared, or '' when it declares none.
+
+    ``params._asset`` wins. Otherwise an imported strategy's stored
+    ``_data_requirements`` names it: intake copies them from the class, whose
+    default declaration is its own ``asset``, and multi-asset imports are refused,
+    so a single distinct asset there is the coin the file was written for.
+    Without this, imported strategies (no ``_asset``) were re-homed to whichever
+    coin scored best: S20473 NEAR -> ETH and S20662 TRX -> SOL mid-pipeline,
+    then screened, archived or promoted on the other coin's data.
+    """
+    if not isinstance(params, dict):
+        return ""
+    explicit = str(params.get("_asset") or "").strip()
+    if explicit:
+        return explicit
+    reqs = params.get("_data_requirements")
+    if not isinstance(reqs, list):
+        return ""
+    assets = {
+        str(req.get("asset") or "").strip()
+        for req in reqs
+        if isinstance(req, dict) and str(req.get("asset") or "").strip()
+    }
+    if len({_symbol_asset_key(a) for a in assets}) != 1:
+        return ""
+    return sorted(assets)[0]
+
+
 def block_cross_asset_symbol_rehome(
     conn: sqlite3.Connection,
     strategy_id: str,
@@ -7268,7 +7297,7 @@ def auto_assign_best_symbol_timeframe(strategy_id: str) -> tuple[str, str] | Non
             params_blob = json.loads(row["params"]) if row["params"] else {}
             if isinstance(params_blob, dict):
                 declared_tf = str(params_blob.get("_timeframe") or "").strip().lower()
-                declared_asset = _symbol_asset_key(params_blob.get("_asset"))
+                declared_asset = _symbol_asset_key(declared_strategy_asset(params_blob))
         except Exception:
             declared_tf = ""
             declared_asset = ""
