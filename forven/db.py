@@ -7442,7 +7442,13 @@ def _terminal_evidence_error(
     """Shared ghost-protection core for terminal transitions: returns the
     blocking error message, or "" when the strategy carries real evidence.
     One definition so the archive and reject guards can never drift on what
-    counts as evidence."""
+    counts as evidence.
+
+    A stored backtest result with performance metrics is evidence too: a failed
+    quick screen writes its run to backtest_results but not always a scored
+    headline onto the strategy row, and treating that as a ghost left failed
+    candidates impossible to archive or reject (S20436, S20609, S20772,
+    2026-10-27/28)."""
     with get_db() as conn:
         row = conn.execute(
             "SELECT metrics FROM strategies WHERE id = ?",
@@ -7452,31 +7458,85 @@ def _terminal_evidence_error(
         if not row:
             return f"Strategy {strategy_id} not found"
 
-        metrics_json = row[0]
-        if not metrics_json:
-            return no_metrics_msg
+        error = _strategy_metrics_evidence_error(
+            strategy_id,
+            row[0],
+            require_fitness=require_fitness,
+            no_metrics_msg=no_metrics_msg,
+            invalid_json_msg=invalid_json_msg,
+            no_perf_msg=no_perf_msg,
+        )
+        if error and _has_backtest_result_evidence(conn, strategy_id):
+            return ""
+        return error
 
+
+def _has_performance_metrics(metrics: dict) -> bool:
+    # Critical performance metrics (handle both key name variants)
+    has_sharpe = metrics.get("sharpe") is not None or metrics.get("sharpe_ratio") is not None
+    has_return = metrics.get("total_return_pct") is not None or metrics.get("total_return") is not None
+    return has_sharpe or has_return
+
+
+def _strategy_metrics_evidence_error(
+    strategy_id: str,
+    metrics_json: object,
+    *,
+    require_fitness: bool,
+    no_metrics_msg: str,
+    invalid_json_msg: str,
+    no_perf_msg: str,
+) -> str:
+    if not metrics_json:
+        return no_metrics_msg
+
+    try:
+        metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else metrics_json
+    except Exception:
+        return invalid_json_msg
+
+    if not isinstance(metrics, dict) or not metrics:
+        return no_metrics_msg
+
+    if require_fitness and metrics.get("fitness") is None:
+        return (
+            f"Strategy {strategy_id} has NULL fitness - archive REJECTED "
+            "(ghost container protection)"
+        )
+
+    if not _has_performance_metrics(metrics):
+        return no_perf_msg
+
+    return ""
+
+
+def _has_backtest_result_evidence(conn: sqlite3.Connection, strategy_id: str) -> bool:
+    """True when the strategy has a live (not trashed or deleted) backtest result
+    carrying performance metrics: it ran, so it is not a ghost."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT br.metrics_json
+            FROM backtest_results br
+            LEFT JOIN backtest_result_trash bt ON bt.result_id = br.result_id
+            WHERE br.strategy_id = ?
+              AND bt.result_id IS NULL
+              AND br.deleted_at IS NULL
+            ORDER BY br.created_at DESC
+            LIMIT 5
+            """,
+            (strategy_id,),
+        ).fetchall()
+    except sqlite3.Error:
+        return False
+    for result in rows:
         try:
-            metrics = json.loads(metrics_json) if isinstance(metrics_json, str) else metrics_json
-        except Exception:
-            return invalid_json_msg
-
-        if not isinstance(metrics, dict) or not metrics:
-            return no_metrics_msg
-
-        if require_fitness and metrics.get("fitness") is None:
-            return (
-                f"Strategy {strategy_id} has NULL fitness - archive REJECTED "
-                "(ghost container protection)"
-            )
-
-        # Critical performance metrics (handle both key name variants)
-        has_sharpe = metrics.get("sharpe") is not None or metrics.get("sharpe_ratio") is not None
-        has_return = metrics.get("total_return_pct") is not None or metrics.get("total_return") is not None
-        if not has_sharpe and not has_return:
-            return no_perf_msg
-
-        return ""
+            metrics = json.loads(result[0] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(metrics, dict) and _has_performance_metrics(metrics):
+            return True
+    return False
 
 
 def verify_fitness_before_archive(strategy_id: str) -> tuple[bool, str]:
