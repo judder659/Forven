@@ -2351,3 +2351,20 @@ def test_kernel_cross_asset_orphan_is_flat_closed_not_refreshed(forven_db):
     assert abs(float(t["exit_price"]) - 1582.86) < 1e-6  # flat at its OWN entry, not SOL price
     if t["pnl"] is not None:
         assert abs(float(t["pnl"])) < 1e-6  # no bogus PnL
+
+
+def test_execution_timings_name_each_step_and_the_slowest_strategy(monkeypatch, caplog):
+    """2026-10-30: execution scans took 220-335 s and no profiler could be attached,
+    so each scan logs where its time went."""
+    _kernel_dispatch_fixture(monkeypatch, kernel_return=scanner_mod.KERNEL_SKIP_SCAN)
+    timings: dict = {}
+    scanner_mod._apply_execution_actions(_one_signal_row(), diagnostics_out={}, timings_out=timings)
+    assert timings["pooled"] + timings["serial"] == 1
+    assert [sid for sid, _ in timings["items"]] == ["S-FB"]
+    assert set(timings["parts"]) == {"snapshot", "dispatch", "paused_legs", "record"}
+
+    with caplog.at_level("INFO", logger=scanner_mod.log.name):
+        scanner_mod._log_scan_timings("signal_execution", 12.0, {"signals": 3.0, "execution": 8.5}, timings)
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Scan timings"))
+    assert "total=12.0s" in line and "execution=8.5s" in line
+    assert "slowest=S-FB:" in line and "item_parts=" in line

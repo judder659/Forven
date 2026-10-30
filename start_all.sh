@@ -118,6 +118,24 @@ module_available() {
 	python3 -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)' "$1"
 }
 
+# Keep the previous backend log instead of truncating it, like start_all.ps1's
+# Move-LogAside: a reload used to overwrite unified_backend.log and lose the
+# evidence of whatever the reload was meant to fix (2026-10-29/30).
+move_log_aside() {
+	local path="$1" keep="${2:-10}" stamp rotated
+	if [[ -s "$path" ]]; then
+		stamp="$(date +%Y%m%d-%H%M%S)"
+		rotated="${path}.${stamp}"
+		[[ -e "$rotated" ]] && rotated="${rotated}-$$"
+		mv -f "$path" "$rotated" 2>/dev/null || true
+	fi
+	# Prune the oldest rotations past $keep (names sort by timestamp).
+	local old
+	while IFS= read -r old; do
+		rm -f "$old" 2>/dev/null || true
+	done < <(ls -1 "${path}".* 2>/dev/null | sort -r | awk -v keep="$keep" 'NR > keep')
+}
+
 kill_port_listener() {
 	local port="$1"
 	local pids
@@ -255,6 +273,7 @@ if ! python3 -m forven.preflight; then
 	fi
 fi
 
+move_log_aside "$BACKEND_LOG"
 python3 -m uvicorn --app-dir "$UVICORN_APP_DIR" "$BACKEND_MODULE" --host "$BACKEND_HOST" --port "$BACKEND_PORT" --workers "$BACKEND_WORKERS" > "$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 PIDS+=("$BACKEND_PID")
@@ -372,6 +391,7 @@ while true; do
 		if ! python3 -m forven.preflight --install; then
 			warn "Python dependencies still unsatisfied after the update; see the output above."
 		fi
+		move_log_aside "$BACKEND_LOG"
 		python3 -m uvicorn --app-dir "$UVICORN_APP_DIR" "$BACKEND_MODULE" --host "$BACKEND_HOST" --port "$BACKEND_PORT" --workers "$BACKEND_WORKERS" > "$BACKEND_LOG" 2>&1 &
 		BACKEND_PID=$!
 		PIDS+=("$BACKEND_PID")
