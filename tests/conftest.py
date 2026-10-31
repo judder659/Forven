@@ -139,6 +139,25 @@ def _reset_data_manager_caches():
 
 
 @pytest.fixture(autouse=True)
+def _reset_market_fetch_memos():
+    """A shared candle fetch, remembered failure or Binance cooldown left by one
+    test must not answer (or block) the next one's fetch."""
+    import sys
+
+    def _clear() -> None:
+        scanner = sys.modules.get("forven.scanner")
+        if scanner is not None:
+            scanner._FETCH_MEMO.clear()
+        market_data = sys.modules.get("forven.market_data")
+        if market_data is not None:
+            market_data._BINANCE_COOLDOWN_UNTIL = 0.0
+
+    _clear()
+    yield
+    _clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_funding_live_empty_memo():
     """A live funding fetch one test left empty must not make the next skip its own."""
     import sys

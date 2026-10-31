@@ -115,3 +115,71 @@ def test_paper_fetch_still_raises_without_fallback():
     finally:
         for p in patches:
             p.stop()
+
+
+def _cold_cache_patches():
+    return [
+        mock.patch.object(scanner, "load_candle_snapshot", return_value=([], None)),
+        mock.patch.object(scanner, "_scanner_bool_setting", return_value=True),
+        mock.patch.object(scanner, "publish_candle_snapshot"),
+    ]
+
+
+def test_strategies_on_one_coin_share_a_single_fetch():
+    import threading
+
+    gate = threading.Event()
+    calls = []
+
+    def slow_fetch(coin, **kwargs):
+        calls.append((coin, kwargs["interval"]))
+        gate.wait(2)
+        return _hl_frame(400)
+
+    patches = _cold_cache_patches()
+    for p in patches:
+        p.start()
+    try:
+        with mock.patch.object(scanner, "fetch_market_candles", side_effect=slow_fetch):
+            results = []
+            threads = [
+                threading.Thread(target=lambda: results.append(scanner.fetch_candles("DOGE", bars=300, interval="4h")))
+                for _ in range(8)
+            ]
+            for t in threads:
+                t.start()
+            time.sleep(0.2)
+            gate.set()
+            for t in threads:
+                t.join(5)
+            assert len(results) == 8
+            assert calls == [("DOGE", "4h")]  # one Binance fetch for eight strategies
+            scanner.fetch_candles("DOGE", bars=300, interval="1h")
+            assert calls[-1] == ("DOGE", "1h")  # other timeframes are their own key
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_a_failed_fetch_is_not_retried_by_every_strategy():
+    patches = _cold_cache_patches()
+    for p in patches:
+        p.start()
+    try:
+        with mock.patch.object(scanner, "fetch_market_candles", side_effect=RuntimeError("boom")) as fetch:
+            for _ in range(5):
+                with pytest.raises(RuntimeError):
+                    scanner.fetch_candles("ZEC", bars=300, interval="4h")
+        assert fetch.call_count == 1
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_a_new_closed_bar_forces_a_fresh_fetch():
+    hour = 3600.0
+    base = 1_800_000_000.0 - (1_800_000_000.0 % hour)
+    with mock.patch.object(scanner.time, "time", return_value=base + hour - 1):
+        assert scanner._fetch_memo_fresh(base + hour - 60, "1h", 180)
+    with mock.patch.object(scanner.time, "time", return_value=base + hour + 1):
+        assert not scanner._fetch_memo_fresh(base + hour - 30, "1h", 180)
