@@ -55,6 +55,7 @@ from forven.market_cache import (
     publish_candle_snapshot,
 )
 from forven.market_data import (
+    INTERVAL_TO_MS,
     fetch_hyperliquid_candles,
     fetch_hyperliquid_funding_rate,  # noqa: F401 — re-exported as a test mock.patch target
     fetch_market_candles,
@@ -89,6 +90,14 @@ _ACCOUNT_FALLBACK = 1004.13  # fallback if daemon/risk state is unavailable
 _PRICE_CACHE_STALE_SECONDS = 120
 _CANDLE_CACHE_STALE_SECONDS = 180
 _CANDLE_CACHE_BARS = 360
+# Single-flight direct fetches: every strategy on a coin shares ONE network fetch
+# per (coin, interval). A failure is remembered briefly so the other strategies on
+# that coin don't each retry it (a cold or failed key used to cost one Binance
+# fetch PER STRATEGY, which scaled requests with strategy count — 2026-10-30 ban).
+_FETCH_FAILURE_TTL_SECONDS = 30.0
+_FETCH_MEMO: dict[tuple[str, str], tuple[float, object, int]] = {}
+_FETCH_MEMO_LOCK = threading.Lock()
+_FETCH_KEY_LOCKS: dict[tuple[str, str], threading.Lock] = {}
 _ENTRY_SIGNAL_STATE_KEY = "scanner_entry_signal_state"
 _ASSET_ENTRY_STATE_KEY = "scanner_asset_entry_state"
 _CERTIFIED_PAPER_FAMILIES = set(EXECUTION_CERTIFIED_FAMILIES)
@@ -1763,7 +1772,11 @@ STRATEGIES = {
 # ─── Data Fetching ────────────────────────────────────────────────────────────
 
 def fetch_candles(
-    coin: str, bars: int = 300, interval: str = "1h", max_cache_age_seconds: float | None = None
+    coin: str,
+    bars: int = 300,
+    interval: str = "1h",
+    max_cache_age_seconds: float | None = None,
+    venue_fallback: bool = False,
 ) -> pd.DataFrame:
     """Load OHLCV candles (cache-first) for strategy evaluation.
 
@@ -1771,6 +1784,12 @@ def fetch_candles(
     threshold for callers that need a tighter freshness bound than the default
     180s (e.g. a 1m fill-now read, where the shared cache's 180s window would let
     a fill land up to 3 candles stale instead of the intended <=1 bar).
+
+    ``venue_fallback`` (live strategies only): when the Binance fetch fails, read
+    the same window from HyperLiquid — the venue the live position is actually on —
+    instead of skipping the scan. A Binance outage or IP ban must not leave a
+    real-money position without exit management. The HL frame is not published to
+    the shared (Binance) cache, so paper never trades on it.
     """
     normalized_coin = str(coin or "").strip().upper()
     required_bars = max(int(bars), 1)
@@ -1849,23 +1868,65 @@ def fetch_candles(
 
     # Source-aware (Binance by default): paper trades on the SAME exchange the
     # backtest validates on, so signals/fills match. No silent HL fallback.
-    df = fetch_market_candles(
-        normalized_coin,
-        bars=max(required_bars, _CANDLE_CACHE_BARS),
-        interval=resolved_interval,
-        clean=True,
-    )
     try:
-        publish_candle_snapshot(
-            normalized_coin,
-            dataframe_to_ohlcv_rows(df, max_rows=max(_CANDLE_CACHE_BARS, required_bars)),
-            "scanner_fallback",
-            interval=resolved_interval,
-            max_rows=max(_CANDLE_CACHE_BARS, required_bars),
-        )
+        df = _single_flight_market_candles(normalized_coin, resolved_interval, required_bars, stale_threshold)
     except Exception as exc:
-        log.debug("Failed to publish scanner fallback candle cache for %s: %s", normalized_coin, exc)
+        if not venue_fallback or resolve_market_data_source() != "binance":
+            raise
+        log.warning(
+            "[%s] Binance candles unavailable for %s (%s) — live fallback to HyperLiquid candles",
+            normalized_coin, resolved_interval, exc,
+        )
+        return fetch_hyperliquid_candles(
+            normalized_coin, bars=required_bars, interval=resolved_interval, clean=True,
+        ).tail(required_bars)
     return df.tail(required_bars)
+
+
+def _fetch_memo_fresh(fetched_at: float, interval: str, max_age: float) -> bool:
+    """A memoized fetch is reusable while it is younger than ``max_age`` AND no bar
+    of ``interval`` has closed since it was taken (so a new closed bar is never missed)."""
+    now = time.time()
+    if now - fetched_at > max_age:
+        return False
+    interval_s = INTERVAL_TO_MS.get(interval, 0) / 1000.0
+    return interval_s <= 0 or int(now // interval_s) == int(fetched_at // interval_s)
+
+
+def _single_flight_market_candles(coin: str, interval: str, required_bars: int, max_age: float) -> pd.DataFrame:
+    """Direct candle fetch shared by every concurrent/subsequent caller of the same
+    (coin, interval): one caller fetches, the rest wait on its lock and reuse the
+    result (or its failure, for ``_FETCH_FAILURE_TTL_SECONDS``)."""
+    key = (coin, interval)
+    with _FETCH_MEMO_LOCK:
+        key_lock = _FETCH_KEY_LOCKS.setdefault(key, threading.Lock())
+    with key_lock:
+        memo = _FETCH_MEMO.get(key)
+        if memo is not None:
+            fetched_at, value, bars = memo
+            if isinstance(value, Exception):
+                if time.time() - fetched_at <= _FETCH_FAILURE_TTL_SECONDS:
+                    raise value
+            elif bars >= required_bars and _fetch_memo_fresh(fetched_at, interval, max_age):
+                return value.copy()
+        fetch_bars = max(required_bars, _CANDLE_CACHE_BARS)
+        try:
+            df = fetch_market_candles(coin, bars=fetch_bars, interval=interval, clean=True)
+        except Exception as exc:
+            _FETCH_MEMO[key] = (time.time(), exc, 0)
+            raise
+        _FETCH_MEMO[key] = (time.time(), df, fetch_bars)
+        try:
+            publish_candle_snapshot(
+                coin,
+                dataframe_to_ohlcv_rows(df, max_rows=fetch_bars),
+                "scanner_fallback",
+                interval=interval,
+                max_rows=fetch_bars,
+            )
+        except Exception as exc:
+            log.debug("Failed to publish scanner fallback candle cache for %s: %s", coin, exc)
+        return df.copy()
 
 
 def _enrich_scan_frame(df: pd.DataFrame, asset: str, timeframe: str) -> pd.DataFrame:
@@ -8117,7 +8178,8 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     walk_cache_key = None
     cached_walk = None
     try:
-        reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe)
+        fetch_kwargs = {"venue_fallback": True} if str(execution_type).strip().lower() == "live" else {}
+        reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe, **fetch_kwargs)
         if str(execution_type).strip().lower() == "paper":
             walk_cache_key = _kernel_walk_cache_key(
                 strat_id, strat, contract, p, asset, timeframe,
