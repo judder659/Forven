@@ -1763,7 +1763,11 @@ STRATEGIES = {
 # ─── Data Fetching ────────────────────────────────────────────────────────────
 
 def fetch_candles(
-    coin: str, bars: int = 300, interval: str = "1h", max_cache_age_seconds: float | None = None
+    coin: str,
+    bars: int = 300,
+    interval: str = "1h",
+    max_cache_age_seconds: float | None = None,
+    venue_fallback: bool = False,
 ) -> pd.DataFrame:
     """Load OHLCV candles (cache-first) for strategy evaluation.
 
@@ -1771,6 +1775,12 @@ def fetch_candles(
     threshold for callers that need a tighter freshness bound than the default
     180s (e.g. a 1m fill-now read, where the shared cache's 180s window would let
     a fill land up to 3 candles stale instead of the intended <=1 bar).
+
+    ``venue_fallback`` (live strategies only): when the Binance fetch fails, read
+    the same window from HyperLiquid — the venue the live position is actually on —
+    instead of skipping the scan. A Binance outage or IP ban must not leave a
+    real-money position without exit management. The HL frame is not published to
+    the shared (Binance) cache, so paper never trades on it.
     """
     normalized_coin = str(coin or "").strip().upper()
     required_bars = max(int(bars), 1)
@@ -1849,12 +1859,23 @@ def fetch_candles(
 
     # Source-aware (Binance by default): paper trades on the SAME exchange the
     # backtest validates on, so signals/fills match. No silent HL fallback.
-    df = fetch_market_candles(
-        normalized_coin,
-        bars=max(required_bars, _CANDLE_CACHE_BARS),
-        interval=resolved_interval,
-        clean=True,
-    )
+    try:
+        df = fetch_market_candles(
+            normalized_coin,
+            bars=max(required_bars, _CANDLE_CACHE_BARS),
+            interval=resolved_interval,
+            clean=True,
+        )
+    except Exception as exc:
+        if not venue_fallback or resolve_market_data_source() != "binance":
+            raise
+        log.warning(
+            "[%s] Binance candles unavailable for %s (%s) — live fallback to HyperLiquid candles",
+            normalized_coin, resolved_interval, exc,
+        )
+        return fetch_hyperliquid_candles(
+            normalized_coin, bars=required_bars, interval=resolved_interval, clean=True,
+        ).tail(required_bars)
     try:
         publish_candle_snapshot(
             normalized_coin,
@@ -8117,7 +8138,8 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     walk_cache_key = None
     cached_walk = None
     try:
-        reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe)
+        fetch_kwargs = {"venue_fallback": True} if str(execution_type).strip().lower() == "live" else {}
+        reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe, **fetch_kwargs)
         if str(execution_type).strip().lower() == "paper":
             walk_cache_key = _kernel_walk_cache_key(
                 strat_id, strat, contract, p, asset, timeframe,

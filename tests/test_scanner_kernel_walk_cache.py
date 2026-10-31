@@ -31,7 +31,7 @@ def _setup(monkeypatch):
     strategy = RSIMomentumStrategy(STRAT_ID, dict(PARAMS, _asset="BTC"))
     df = _frame()
     state = {"i": 300, "walks": 0}
-    monkeypatch.setattr(scanner, "fetch_candles", lambda coin, bars=300, interval="1h": df.iloc[: state["i"]].copy())
+    monkeypatch.setattr(scanner, "fetch_candles", lambda coin, bars=300, interval="1h", **_k: df.iloc[: state["i"]].copy())
     monkeypatch.setattr(scanner, "_enrich_scan_frame", lambda d, *a, **k: d)
     monkeypatch.setattr(scanner, "_trim_unclosed_latest_candle", lambda d, *a, **k: d)
     monkeypatch.setattr(scanner, "register", lambda *a, **k: None)

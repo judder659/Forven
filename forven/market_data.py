@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
 import time
 import urllib.request
 from datetime import timezone
@@ -362,6 +364,78 @@ def _binance_exchange():
     return _BINANCE_EXCHANGE
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Binance rate-limit cooldown. A 429 means "slow down"; keep going and Binance
+# answers 418 with an IP ban that it RENEWS for every request made while banned.
+# The scanner fans one fetch per strategy, so without a shared stop a single 429
+# turned into hours of renewed bans (2026-10-30). Any 429/418 parks ALL Binance
+# calls in this process until Retry-After / the ban expiry, and callers fail fast.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_BINANCE_COOLDOWN_LOCK = threading.Lock()
+_BINANCE_COOLDOWN_UNTIL = 0.0  # epoch seconds
+_BINANCE_429_DEFAULT_SECONDS = 60.0
+_BINANCE_418_DEFAULT_SECONDS = 300.0
+_BINANCE_BANNED_UNTIL_RE = re.compile(r"banned until (\d{12,14})")
+
+
+class BinanceRateLimited(RuntimeError):
+    """Binance is rate-limiting/banning this IP; no request was (or should be) sent."""
+
+
+def binance_cooldown_remaining() -> float:
+    """Seconds left before Binance may be called again (0 when clear)."""
+    with _BINANCE_COOLDOWN_LOCK:
+        return max(_BINANCE_COOLDOWN_UNTIL - time.time(), 0.0)
+
+
+def _binance_retry_after(exchange: object) -> float | None:
+    headers = getattr(exchange, "last_response_headers", None) or {}
+    try:
+        for key, value in dict(headers).items():
+            if str(key).lower() == "retry-after":
+                return max(float(value), 1.0)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def _note_binance_rate_limit(exc: Exception, exchange: object = None) -> float | None:
+    """If ``exc`` is a Binance 429/418, arm the shared cooldown and return its length."""
+    text = str(exc)
+    banned = _BINANCE_BANNED_UNTIL_RE.search(text)
+    is_ban = banned is not None or " 418 " in f" {text} " or "teapot" in text.lower()
+    is_limit = is_ban or " 429 " in f" {text} " or "-1003" in text or type(exc).__name__ in (
+        "RateLimitExceeded", "DDoSProtection",
+    )
+    if not is_limit:
+        return None
+    now = time.time()
+    if banned is not None:
+        until = int(banned.group(1)) / 1000.0 + 1.0
+    else:
+        retry_after = _binance_retry_after(exchange) if exchange is not None else None
+        default = _BINANCE_418_DEFAULT_SECONDS if is_ban else _BINANCE_429_DEFAULT_SECONDS
+        until = now + (retry_after if retry_after is not None else default)
+    global _BINANCE_COOLDOWN_UNTIL
+    with _BINANCE_COOLDOWN_LOCK:
+        extended = until > _BINANCE_COOLDOWN_UNTIL
+        if extended:
+            _BINANCE_COOLDOWN_UNTIL = until
+    if extended:
+        log.warning(
+            "Binance %s — pausing ALL Binance market-data calls for %.0fs: %s",
+            "IP ban (418)" if is_ban else "rate limit (429)", until - now, text[:200],
+        )
+    return until - now
+
+
+def _check_binance_cooldown(what: str) -> None:
+    remaining = binance_cooldown_remaining()
+    if remaining > 0:
+        raise BinanceRateLimited(f"Binance cooling down after a rate limit/ban ({remaining:.0f}s left); {what} not sent")
+
+
 def _binance_symbol(coin: str) -> str:
     """Map a coin/asset token to the Binance ccxt spot pair (e.g. BTC -> BTC/USDT).
 
@@ -392,6 +466,8 @@ def _perp_symbols() -> frozenset:
     now = time.time()
     if now - float(_PERP_MARKETS_CACHE["loaded_at"]) < _PERP_MARKETS_TTL_SECONDS:
         return _PERP_MARKETS_CACHE["symbols"]
+    if binance_cooldown_remaining() > 0:
+        return _PERP_MARKETS_CACHE["symbols"]
     try:
         markets = _binance_futures_exchange().load_markets()
         symbols = frozenset(
@@ -401,6 +477,7 @@ def _perp_symbols() -> frozenset:
         _PERP_MARKETS_CACHE["symbols"] = symbols
         _PERP_MARKETS_CACHE["loaded_at"] = now
     except Exception as exc:
+        _note_binance_rate_limit(exc, _binance_futures_exchange())
         log.warning("Could not load Binance USD-M markets (perp resolution degraded to spot): %s", exc)
     return _PERP_MARKETS_CACHE["symbols"]
 
@@ -442,6 +519,7 @@ def fetch_binance_candles(
         raise ValueError(f"unsupported interval: {interval}")
 
     requested_bars = max(int(bars), 1)
+    _check_binance_cooldown(f"candle fetch for {normalized_coin} {normalized_interval}")
     # Perp-canonical (Phase 1): the USD-M perp series when listed — matching
     # the HL-perp execution venue and the Binance Vision futures history —
     # with automatic spot fallback for bases without a perp.
@@ -470,6 +548,10 @@ def fetch_binance_candles(
             break
         except Exception as exc:  # noqa: BLE001 — surfaced below if both attempts fail
             last_err = exc
+            if _note_binance_rate_limit(exc, exchange) is not None:
+                # Never retry into a 429/418: every request made while limited
+                # escalates/renews the IP ban.
+                raise BinanceRateLimited(f"Binance candle fetch failed for {symbol} {normalized_interval}: {exc}") from exc
     if last_err is not None:
         raise RuntimeError(f"Binance candle fetch failed for {symbol} {normalized_interval}: {last_err}")
     if not rows:
@@ -510,6 +592,8 @@ def fetch_binance_prices(coins) -> dict[str, float]:
         bucket[1][sym] = _extract_crypto_base(token) or token
     out: dict[str, float] = {}
     for exchange, sym_to_coin in by_exchange.values():
+        if binance_cooldown_remaining() > 0:
+            break
         try:
             tickers = exchange.fetch_tickers(list(sym_to_coin.keys()))
             for sym, ticker in (tickers or {}).items():
@@ -519,14 +603,18 @@ def fetch_binance_prices(coins) -> dict[str, float]:
                     last = ticker.get("close")
                 if coin and last is not None:
                     out[coin] = float(last)
-        except Exception:
+        except Exception as exc:
+            if _note_binance_rate_limit(exc, exchange) is not None:
+                break
             for sym, coin in sym_to_coin.items():
                 try:
                     ticker = exchange.fetch_ticker(sym)
                     last = ticker.get("last") or ticker.get("close")
                     if last is not None:
                         out[coin] = float(last)
-                except Exception:
+                except Exception as per_coin_exc:
+                    if _note_binance_rate_limit(per_coin_exc, exchange) is not None:
+                        break
                     continue
     return out
 
