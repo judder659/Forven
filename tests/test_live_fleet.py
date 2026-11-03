@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from forven.api_domains.live_fleet import build_live_fleet, count_live_armed
@@ -324,6 +325,22 @@ def test_backtest_oos_is_served_with_each_strategy(forven_db):
     assert rows["S1"]["backtest_oos"]["win_rate"] == 0.4186
     assert rows["S1"]["backtest_oos"]["avg_bars_held"] is None
     assert rows["S2"]["backtest_oos"] is None
+
+
+def test_infinite_backtest_profit_factor_is_served_as_missing(forven_db):
+    _strategy("S1")
+    _scan("S1", _ago(minutes=1))
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategies SET metrics = ? WHERE id = 'S1'",
+            ('{"out_of_sample": {"total_trades": 9, "profit_factor": Infinity}}',),
+        )
+
+    rows = _by_id(build_live_fleet(now=NOW))
+
+    assert rows["S1"]["backtest_oos"]["total_trades"] == 9
+    assert rows["S1"]["backtest_oos"]["profit_factor"] is None
+    json.dumps(rows["S1"], allow_nan=False)
 
 
 def test_unknown_fleet_mode_is_rejected(forven_db):

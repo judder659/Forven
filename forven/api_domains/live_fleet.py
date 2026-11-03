@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -330,7 +331,12 @@ def _backtest_oos(metrics_blob: object) -> dict[str, Any] | None:
     oos = metrics.get("out_of_sample")
     if not isinstance(oos, dict) or not oos:
         return None
-    return {key: oos.get(key) for key in _BACKTEST_KEYS}
+    # A loss-free backtest stores profit_factor as Infinity, which JSON can't
+    # carry; serve it as missing rather than fail the whole fleet response.
+    return {
+        key: None if isinstance(value, float) and not math.isfinite(value) else value
+        for key, value in ((key, oos.get(key)) for key in _BACKTEST_KEYS)
+    }
 
 
 def _scope(strategy_ids: list[str] | None) -> tuple[str, tuple[Any, ...]]:
