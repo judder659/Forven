@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { DeskFill } from '$lib/api/desk';
+import type { DeskFill, JournalEvent } from '$lib/api/desk';
 import type { LiveFleet, LiveFleetStrategy } from '$lib/api/dashboard';
 import type { PaperTradingSession } from '$lib/api/paper';
 import { buildAttention } from '$lib/utils/tradingDesk/attention';
@@ -290,6 +290,17 @@ describe('attention', () => {
 		expect(s2[0].tab).toBe('why');
 		// A strategy with no refusals yet still surfaces: the block holds its next entry.
 		expect(items.find((item) => item.strategyId === 'S3')?.title).toBe('S3: new live entries are blocked');
+	});
+
+	it('drops flat exit refusals from a data outage that later scans recovered from', () => {
+		const fleet = {
+			generated_at: '', stale_after_seconds: 1800, live_bots_armed: 0, recent_fills: [], realized: {} as LiveFleet['realized'], capacity: null,
+			strategies: [strategy({ strategy_id: 'S4', state: 'watching' }), strategy({ strategy_id: 'S5', state: 'watching' })],
+		} as LiveFleet;
+		const refusal = (strategy_id: string, recovered: boolean) =>
+			({ kind: 'exit_refused', strategy_id, at: '2026-09-28T10:00:00Z', count: 9, positioned: false, recovered, reason: 'candle fetch failed: Binance 418' }) as JournalEvent;
+		const items = buildAttention({ mode: 'paper', dashboard: null, risk: null, fleet, journal: [refusal('S4', true), refusal('S5', false)], expectations: {}, now: NOW });
+		expect(items.map((item) => item.id)).toEqual(['flat-exits-S5']);
 	});
 });
 

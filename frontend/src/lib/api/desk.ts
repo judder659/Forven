@@ -49,6 +49,8 @@ export interface JournalEvent {
 	last_price?: number | null;
 	/** Refused exits only: whether a position was open when the exit was refused. */
 	positioned?: boolean | null;
+	/** A data-outage refusal (e.g. candle fetch failed) that later healthy scans have superseded. */
+	recovered?: boolean;
 	// Regime flags
 	regime?: string | null;
 	confidence?: number | null;
