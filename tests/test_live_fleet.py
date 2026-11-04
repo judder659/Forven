@@ -350,3 +350,40 @@ def test_unknown_fleet_mode_is_rejected(forven_db):
 
     with pytest.raises(ValueError):
         build_fleet("backtest", now=NOW)
+
+
+CANDLE_FAIL = "candle fetch failed: Binance candle fetch failed for BTC/USDT:USDT 4h: binance 418 I'm a teapot"
+
+
+def test_candle_outage_refusals_clear_after_a_healthy_scan(forven_db):
+    _strategy("S1")  # held through the outage, scans healthy again since
+    _strategy("S2")  # flat; entries refused during the outage, healthy since
+    _strategy("S3")  # still in the outage: no healthy scan after the refusal
+    _trade("E1", "S1", status="OPEN", opened=_ago(days=6))
+    _blocked_exit("S1", _ago(days=5), CANDLE_FAIL)
+    _scan("S1", _ago(days=4), signal_type="exit", matched=True, reason="evaluation_only")
+    _scan("S1", _ago(minutes=1))
+    _blocked_entry("S2", _ago(days=5), CANDLE_FAIL)
+    _scan("S2", _ago(minutes=1))
+    _trade("E3", "S3", status="OPEN", opened=_ago(days=6))
+    _scan("S3", _ago(days=5))
+    _blocked_exit("S3", _ago(minutes=2), CANDLE_FAIL)
+    _blocked_entry("S3", _ago(minutes=2), CANDLE_FAIL)
+
+    rows = _by_id(build_live_fleet(now=NOW))
+
+    assert rows["S1"]["state"] == "in_position"
+    assert rows["S1"]["blocked_exits"]["count"] == 0
+    assert rows["S2"]["state"] == "watching"
+    assert rows["S2"]["blocked_entries"]["count"] == 0
+    assert rows["S3"]["state"] == "exit_blocked"
+    assert rows["S3"]["blocked_entries"]["count"] == 1
+
+
+def test_rule_refusals_do_not_clear_after_a_healthy_scan(forven_db):
+    _strategy("S1")
+    _trade("E1", "S1", status="OPEN", opened=_ago(days=1))
+    _blocked_exit("S1", _ago(hours=6), "Live execution settings are unverified")
+    _scan("S1", _ago(minutes=1))
+
+    assert _by_id(build_live_fleet(now=NOW))["S1"]["state"] == "exit_blocked"

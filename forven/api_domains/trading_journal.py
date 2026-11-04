@@ -25,6 +25,9 @@ from forven.api_domains.live_fleet import (
     _reason_key,
     fleet_strategy_rows,
     held_at,
+    is_transient_refusal,
+    last_healthy_scan,
+    recovered,
     trade_intervals,
 )
 from forven.db import get_db
@@ -190,7 +193,16 @@ def _refusal_episodes(
         }
         open_by_key[key] = current
         episodes.append(current)
+    healthy_by_sid: dict[str, datetime | None] = {}
     for episode in episodes:
+        sid = episode["strategy_id"]
+        # A data outage that later scans have recovered from stays in the history
+        # but no longer raises an alert.
+        episode["recovered"] = False
+        if is_transient_refusal(episode["reason"]):
+            if sid not in healthy_by_sid:
+                healthy_by_sid[sid] = last_healthy_scan(conn, sid)
+            episode["recovered"] = recovered(episode["reason"], episode["_last"], healthy_by_sid[sid])
         for private in ("_key", "_last", "_intervals", "_positioned_known"):
             episode.pop(private, None)
     return episodes

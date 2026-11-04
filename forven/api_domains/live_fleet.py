@@ -53,6 +53,10 @@ _NOT_BLOCKS = NOT_BLOCKS
 _MAINNET_UNARMED_REFUSAL = "%FORVEN_ALLOW_MAINNET is not set%"
 _SCANNER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# Refusals where the scanner could not get candles to evaluate the strategy at
+# all. They are outages, not decisions: once a later scan of the same strategy
+# runs on fresh data, the outage is over and its refusals stop being alerts.
+TRANSIENT_REFUSAL_PREFIXES = ("candle fetch failed", "insufficient candle history")
 # Out-of-sample backtest fields the trading desk compares live results against.
 _BACKTEST_KEYS = (
     "total_trades", "wins", "losses", "win_rate", "profit_factor", "avg_trade_pct",
@@ -197,6 +201,35 @@ def _mainnet_armed() -> bool:
         return False
 
 
+def is_transient_refusal(reason: object) -> bool:
+    """True for a refusal caused by a data outage rather than a trading rule."""
+    return str(reason or "").strip().lower().startswith(TRANSIENT_REFUSAL_PREFIXES)
+
+
+def last_healthy_scan(conn: Any, strategy_id: str) -> datetime | None:
+    """Time of the strategy's latest scanner row that ran on real candles.
+
+    Any row whose reason is not a data outage proves the scanner fetched candles
+    and evaluated the strategy at that time.
+    """
+    clauses = " AND ".join("LOWER(COALESCE(block_reason, '')) NOT LIKE ?" for _ in TRANSIENT_REFUSAL_PREFIXES)
+    row = conn.execute(
+        f"SELECT MAX(ts) AS ts FROM scanner_signal_results WHERE strategy_id = ? AND {clauses}",
+        (strategy_id, *(f"{prefix}%" for prefix in TRANSIENT_REFUSAL_PREFIXES)),
+    ).fetchone()
+    return _parse_ts(row["ts"]) if row else None
+
+
+def recovered(reason: object, at: datetime | None, healthy_at: datetime | None) -> bool:
+    """A data-outage refusal that a later healthy scan has superseded."""
+    return (
+        healthy_at is not None
+        and at is not None
+        and at < healthy_at
+        and is_transient_refusal(reason)
+    )
+
+
 def _refusals(conn: Any, strategy_id: str, since: datetime, signal_type: str) -> list[Any]:
     placeholders = ",".join("?" for _ in NOT_BLOCKS)
     params: tuple[Any, ...] = (strategy_id, since.strftime(_SCANNER_TS_FORMAT), signal_type, *NOT_BLOCKS)
@@ -204,7 +237,7 @@ def _refusals(conn: Any, strategy_id: str, since: datetime, signal_type: str) ->
     if _mainnet_armed():
         stale_guard = "AND COALESCE(block_reason, '') NOT LIKE ?"
         params = (*params, _MAINNET_UNARMED_REFUSAL)
-    return conn.execute(
+    rows = conn.execute(
         f"""
         SELECT ts, block_reason FROM scanner_signal_results
         WHERE strategy_id = ? AND ts >= ?
@@ -215,6 +248,10 @@ def _refusals(conn: Any, strategy_id: str, since: datetime, signal_type: str) ->
         """,
         params,
     ).fetchall()
+    if not any(is_transient_refusal(row["block_reason"]) for row in rows):
+        return rows
+    healthy_at = last_healthy_scan(conn, strategy_id)
+    return [row for row in rows if not recovered(row["block_reason"], _parse_ts(row["ts"]), healthy_at)]
 
 
 def _blocked_entries(conn: Any, strategy_id: str, since: datetime) -> dict[str, Any]:

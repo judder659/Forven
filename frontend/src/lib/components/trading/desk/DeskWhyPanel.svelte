@@ -53,7 +53,7 @@
 		const stance = gate?.stances?.find((entry) => entry.asset === row.asset) ?? null;
 		const blocking = blockingGates(dashboard);
 		const refusalCount = recentRefusals.reduce((sum, event) => sum + (event.count ?? 1), 0);
-		const weekRefusals = recentRefusals.filter((event) => now - Date.parse(event.at) < 7 * 86_400_000);
+		const weekRefusals = recentRefusals.filter((event) => !event.recovered && now - Date.parse(event.at) < 7 * 86_400_000);
 		const list: Item[] = [];
 		list.push({
 			tone: pending.length || entrySignal > 0 ? 'caution' : 'info',
@@ -123,7 +123,7 @@
 			body: recentRefusals.length ? '' : 'Every matched signal in the window was either taken or had nothing to act on.',
 			list: recentRefusals.slice(0, 8).map((event) => ({
 				when: fmtDay(event.first_at ?? event.at),
-				text: `${event.kind === 'entry_refused' ? 'Entry' : 'Exit'} ×${event.count ?? 1}: ${describeRefusal(event.reason).short}${event.kind === 'exit_refused' ? (event.positioned ? ' · position open' : ' · while flat') : ''}`,
+				text: `${event.kind === 'entry_refused' ? 'Entry' : 'Exit'} ×${event.count ?? 1}: ${describeRefusal(event.reason).short}${event.kind === 'exit_refused' ? (event.positioned ? ' · position open' : ' · while flat') : ''}${event.recovered ? ' · recovered' : ''}`,
 			})),
 		});
 		return list;

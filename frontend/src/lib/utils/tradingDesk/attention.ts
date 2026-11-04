@@ -52,7 +52,7 @@ export function buildAttention(input: {
 
 	const flatExitRefusals = new Map<string, JournalEvent[]>();
 	for (const event of input.journal) {
-		if (event.kind !== 'exit_refused' || event.positioned !== false) continue;
+		if (event.kind !== 'exit_refused' || event.positioned !== false || event.recovered) continue;
 		const at = parseTs(event.at);
 		if (at === null || now - at > WEEK_MS) continue;
 		const list = flatExitRefusals.get(event.strategy_id) ?? [];

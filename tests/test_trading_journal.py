@@ -187,3 +187,22 @@ def test_fills_carry_net_costs_stop_and_slice(forven_db):
     assert live[0]["status"] == "OPEN" and live[0]["net_pnl_usd"] is None
     assert live[0]["slice_usd"] == 170.0
     assert [row["id"] for row in paper] == ["P1T"]  # archived paper history stays out
+
+
+def test_candle_outage_refusals_are_marked_recovered_after_a_healthy_scan(forven_db):
+    _strategy("S1")
+    _strategy("S2")
+    outage = "candle fetch failed: Binance candle fetch failed for ETH/USDT:USDT 4h: binance 429 Too Many Requests"
+    _refusal("S1", _ago(days=3), outage, signal_type="exit")
+    _refusal("S1", _ago(days=3), "Live execution settings are unverified")
+    _refusal("S1", _ago(days=1), "evaluation_only", signal_type="exit")
+    _refusal("S2", _ago(hours=1), outage)  # nothing healthy since: still an outage
+
+    events = build_journal("live", now=NOW)["events"]
+    recovered = {(e["strategy_id"], e["kind"]): e["recovered"] for e in events if e["kind"].endswith("_refused")}
+
+    assert recovered == {
+        ("S1", "exit_refused"): True,
+        ("S1", "entry_refused"): False,
+        ("S2", "entry_refused"): False,
+    }
