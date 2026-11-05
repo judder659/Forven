@@ -75,9 +75,48 @@ def test_cache_expires_after_ttl(forven_db, monkeypatch):
     scanner, strat, state = _setup(monkeypatch)
 
     scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
-    monkeypatch.setattr(scanner, "_KERNEL_WALK_CACHE_TTL_SECONDS", -1.0)
+    monkeypatch.setattr(scanner, "_kernel_walk_cache_ttl", lambda _tf: -1.0)
     scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
     assert state["walks"] == 2
+
+
+def test_ttl_covers_at_least_one_bar():
+    """2026-11-05: a flat 1h TTL re-walked every 4h strategy an hour after each
+    close, and ~340 of them expiring together ran execution scans past their limit."""
+    import forven.scanner as scanner
+
+    assert scanner._kernel_walk_cache_ttl("4h") == 4 * 3600
+    assert scanner._kernel_walk_cache_ttl("1d") == 24 * 3600
+    assert scanner._kernel_walk_cache_ttl("1h") == scanner._KERNEL_WALK_CACHE_TTL_SECONDS
+    assert scanner._kernel_walk_cache_ttl("15m") == scanner._KERNEL_WALK_CACHE_TTL_SECONDS
+    assert scanner._kernel_walk_cache_ttl("") == scanner._KERNEL_WALK_CACHE_TTL_SECONDS
+
+
+def test_a_4h_walk_survives_past_an_hour(forven_db, monkeypatch):
+    scanner, strat, state = _setup(monkeypatch)
+    strat = dict(strat, timeframe="4h")
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(scanner.time, "monotonic", lambda: clock["t"])
+
+    scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+    clock["t"] += 2 * 3600  # two hours later, same closed bars
+    scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+    assert state["walks"] == 1
+    clock["t"] += 3 * 3600  # past one 4h bar: walk again
+    scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+    assert state["walks"] == 2
+
+
+def test_scan_timings_count_walk_cache_lookups(forven_db, monkeypatch, caplog):
+    scanner, strat, state = _setup(monkeypatch)
+    timings = {"pooled": 1, "serial": 0, "walk_cache_start": scanner._kernel_walk_cache_stats()}
+    scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+    scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+
+    with caplog.at_level("INFO", logger=scanner.log.name):
+        scanner._log_scan_timings("signal_execution", 5.0, {"execution": 4.0}, timings)
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("Scan timings"))
+    assert "walk_cache=hit:1,miss:1,expired:0" in line
 
 
 def test_live_never_uses_the_cache(forven_db, monkeypatch):
