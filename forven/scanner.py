@@ -4982,32 +4982,34 @@ def manage_positions(
                      f"CLOSED {strat_id} {trade['asset']} @ ${exit_price:,.2f} PnL={pnl_pct:+.2%} reason={exit_reason} [{mode_label}]")
         actions.append(f"CLOSED {trade['asset']} {exit_reason} PnL={pnl_pct:+.1%}")
 
-        # Compact notification; detailed trade state lives in the app.
+        # Compact notification; detailed trade state lives in the app. A live close
+        # is announced by close_trade_record (every close path reaches it).
         try:
             from forven.notifications import emit_notification
             from forven.sim.clock import is_sim_active
             sim_tag = "[SIMULATION] " if is_sim_active() else ""
-            emit_notification(
-                "trade_closed",
-                source="scanner",
-                title=f"{sim_tag}{mode_label} trade closed — {strat_id}",
-                summary=f"{trade_direction.upper()} {trade['asset']} | {exit_reason} | {pnl_pct:+.2%} ({result})",
-                body=(
-                    f"{trade_direction.upper()} {trade['asset']}\n"
-                    f"Reason: {exit_reason}\n"
-                    f"Entry: ${entry_price:,.2f} -> Exit: ${exit_price:,.2f}\n"
-                    f"PnL: {pnl_pct:+.2%} ({result})"
-                ),
-                metadata={
-                    "trade_id": trade.get("id"),
-                    "strategy_id": strat_id,
-                    "asset": trade.get("asset"),
-                    "side": trade_direction.upper(),
-                    "price": f"${exit_price:,.2f}",
-                    "execution_type": "paper" if mode_label.upper() == "PAPER" else "live",
-                    "pnl_line": f"PnL: {pnl_pct:+.2%} ({result})",
-                },
-            )
+            if mode_label.upper() == "PAPER":
+                emit_notification(
+                    "trade_closed",
+                    source="scanner",
+                    title=f"{sim_tag}{mode_label} trade closed — {strat_id}",
+                    summary=f"{trade_direction.upper()} {trade['asset']} | {exit_reason} | {pnl_pct:+.2%} ({result})",
+                    body=(
+                        f"{trade_direction.upper()} {trade['asset']}\n"
+                        f"Reason: {exit_reason}\n"
+                        f"Entry: ${entry_price:,.2f} -> Exit: ${exit_price:,.2f}\n"
+                        f"PnL: {pnl_pct:+.2%} ({result})"
+                    ),
+                    metadata={
+                        "trade_id": trade.get("id"),
+                        "strategy_id": strat_id,
+                        "asset": trade.get("asset"),
+                        "side": trade_direction.upper(),
+                        "price": f"${exit_price:,.2f}",
+                        "execution_type": "paper" if mode_label.upper() == "PAPER" else "live",
+                        "pnl_line": f"PnL: {pnl_pct:+.2%} ({result})",
+                    },
+                )
         except Exception:
             pass
 
