@@ -299,6 +299,9 @@ class BacktestingClient:
         request_source: str | None = None,
         origin_agent_id: str | None = None,
         origin_task_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        bars: int | None = None,
     ) -> dict:
         """Run a backtest for a strategy on a dataset."""
         payload = {
@@ -324,6 +327,12 @@ class BacktestingClient:
                     payload[key] = value
         if trade_mode:
             payload["trade_mode"] = trade_mode
+        if start_date:
+            payload["start"] = start_date
+        if end_date:
+            payload["end"] = end_date
+        if bars:
+            payload["bars"] = int(bars)
         if request_source:
             payload["request_source"] = request_source
         if origin_agent_id:

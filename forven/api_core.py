@@ -7556,6 +7556,35 @@ def _execution_profile_parity_warnings(controls: dict | None, leverage: float | 
     return warnings
 
 
+def _research_holdout_window_note(start: object, end: object) -> str | None:
+    """Say so when the research holdout moved a requested window.
+
+    Data from the cutoff on is held back for each strategy's final test, so a
+    window reaching past it runs earlier instead. Without a note an agent read
+    the result as the out-of-sample test it asked for (#163694).
+    """
+    if not start and not end:
+        return None
+    try:
+        from forven.research_contract import research_read_cutoff
+        from forven.research_holdout import seal_window
+
+        cutoff = research_read_cutoff()
+        if cutoff is None:
+            return None
+        requested = (str(start) if start else None, str(end) if end else None)
+        sealed = seal_window(*requested, cutoff)
+    except Exception:
+        return None
+    if sealed == requested:
+        return None
+    return (
+        f"Research holdout: data from {cutoff:%Y-%m-%d} on is held back for each strategy's "
+        f"final test, so this run used {str(sealed[0] or '')[:10] or 'the start'} to "
+        f"{str(sealed[1] or '')[:10]} instead of the requested window."
+    )
+
+
 def _validate_local_backtest_risk_controls(
     params: dict | None,
     *,
@@ -8986,9 +9015,14 @@ def post_backtesting_run(body: dict):
                 # Strategy-param risk controls are still inert and must be
                 # guarded, but body-level execution controls are now honoured
                 # below through execution_controls just like POST /api/backtests.
-                risk_control_error = _validate_local_backtest_risk_controls(merged_params)
+                # Only a control the CALLER asked for is refused: one already in the
+                # strategy's stored params was just as inert when the pipeline screened
+                # it, so refusing it made the saved strategy impossible to re-run
+                # (266 agent refusals since 09-25, 328 strategies storing risk_pct).
+                risk_control_error = _validate_local_backtest_risk_controls(override_params)
                 if risk_control_error:
                     return {"ok": False, "error": risk_control_error}
+                stored_risk_warning = _validate_local_backtest_risk_controls(merged_params)
                 manual_execution_controls = _collect_honored_backtest_execution_controls(body)
 
                 # Bracket the synchronous backtest in an agent_tasks row so the
@@ -9072,6 +9106,18 @@ def post_backtesting_run(body: dict):
                         result.setdefault("job_id", str(persisted.get("job_id") or ""))
                         result.setdefault("result_id", str(persisted.get("result_id") or ""))
                         _nw_final_status = "done"
+                        holdout_note = _research_holdout_window_note(
+                            body.get("start") or body.get("start_date"),
+                            body.get("end") or body.get("end_date"),
+                        )
+                        if holdout_note:
+                            result.setdefault("holdout_note", holdout_note)
+                        if stored_risk_warning:
+                            result.setdefault(
+                                "warning",
+                                f"{stored_risk_warning} (stored in the strategy's params; run unchanged, "
+                                "the same way the pipeline screened it)",
+                            )
                     if isinstance(result, dict):
                         if _nw_display_id:
                             result.setdefault("task_display_id", _nw_display_id)

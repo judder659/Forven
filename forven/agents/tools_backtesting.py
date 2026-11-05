@@ -1138,12 +1138,16 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
                 if trade_note:
                     result["trade_check"] = trade_note.strip()
         elif tool_name == "forven_run_backtest":
+            overrides, run_options = _split_backtest_run_options(params)
             result = client.run_backtest(
                 strategy_id=params["strategy_id"],
                 dataset_id=params["dataset_id"],
-                parameters=params.get("parameters"),
-                fee_bps=params.get("fee_bps", 4.5),
-                slippage_bps=params.get("slippage_bps", 2.0),
+                parameters=overrides,
+                fee_bps=run_options.get("fee_bps", 4.5),
+                slippage_bps=run_options.get("slippage_bps", 2.0),
+                start_date=run_options.get("start_date"),
+                end_date=run_options.get("end_date"),
+                bars=run_options.get("bars"),
                 # No "1h" default: a sent timeframe beats the dataset id's, so an
                 # omitted one must stay None for the route to resolve it.
                 timeframe=params.get("timeframe"),
@@ -1220,6 +1224,33 @@ def _tool_backtesting(tool_name: str, params: dict) -> str:
 # ── Register Forven Backtesting tools (routed through _tool_backtesting) ──
 
 _BACKTEST_TRADES_SHOWN = 3
+
+
+_BACKTEST_RUN_OPTION_KEYS = ("start_date", "end_date", "bars", "fee_bps", "slippage_bps")
+_BACKTEST_RUN_OPTION_ALIASES = {"start": "start_date", "end": "end_date"}
+
+
+def _split_backtest_run_options(params: dict) -> tuple[dict | None, dict]:
+    """Separate run options (window, costs) from strategy parameter overrides.
+
+    Agents put start_date/end_date/bars inside ``parameters``, where they became
+    strategy params nothing reads: the run silently kept the stored window and
+    looked like an out-of-sample test that never happened (#163583, #163694,
+    #163943). A top-level value wins over one found in ``parameters``.
+    """
+    raw = params.get("parameters")
+    overrides = dict(raw) if isinstance(raw, dict) else {}
+    options: dict = {}
+    for key in list(overrides):
+        name = _BACKTEST_RUN_OPTION_ALIASES.get(key, key)
+        if name in _BACKTEST_RUN_OPTION_KEYS:
+            value = overrides.pop(key)
+            if value not in (None, ""):
+                options[name] = value
+    for key in _BACKTEST_RUN_OPTION_KEYS:
+        if params.get(key) not in (None, ""):
+            options[key] = params[key]
+    return (overrides or None), options
 
 
 def _summarize_backtest_payload(result: object) -> object:
@@ -1311,9 +1342,15 @@ register_tool(
                     "dataset id's timeframe, else the strategy's stored one."
                 ),
             },
-            "parameters": {"type": "object", "description": "Optional parameter overrides"},
+            "parameters": {"type": "object", "description": "Optional strategy parameter overrides"},
             "fee_bps": {"type": "number", "description": "Fee in basis points (default 4.5, Hyperliquid taker)"},
             "slippage_bps": {"type": "number", "description": "Slippage in basis points (default 2.0)"},
+            "start_date": {
+                "type": "string",
+                "description": "Window start, YYYY-MM-DD. Omit for the standard backtest window.",
+            },
+            "end_date": {"type": "string", "description": "Window end, YYYY-MM-DD."},
+            "bars": {"type": "integer", "description": "Number of most recent bars to test instead of a date window."},
         },
         "required": ["strategy_id", "dataset_id"],
     },
