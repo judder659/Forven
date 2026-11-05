@@ -146,3 +146,46 @@ def test_cache_hands_out_independent_copies():
     again_df, again = scanner._kernel_walk_cache_get(key)
     assert again.closed_trades[0]["pnl_pct"] == 1.0
     assert again_df.iloc[0, 0] == df.iloc[0, 0]
+
+
+def test_kernel_reports_candle_and_walk_time_as_item_parts(forven_db, monkeypatch):
+    scanner, strat, state = _setup(monkeypatch)
+    parts: dict = {}
+    scanner._ITEM_PARTS_LOCAL.parts = parts
+    try:
+        scanner.manage_positions_via_kernel(STRAT_ID, strat, account_equity=10000.0)
+    finally:
+        scanner._ITEM_PARTS_LOCAL.parts = None
+    assert {"kernel_candles", "kernel_walk"} <= set(parts)
+
+
+def test_settings_memo_sees_this_process_writes_at_once(forven_db):
+    import forven.scanner as scanner
+    from forven.db import kv_get, kv_set
+
+    settings = dict(kv_get("forven:settings", {}) or {})
+    kv_set("forven:settings", dict(settings, paper_kernel_fill_now_max_bars=3))
+    assert scanner._scanner_float_setting("paper_kernel_fill_now_max_bars", 1) == 3.0
+    kv_set("forven:settings", dict(settings, paper_kernel_fill_now_max_bars=5))
+    assert scanner._scanner_float_setting("paper_kernel_fill_now_max_bars", 1) == 5.0
+
+
+def test_strategy_trade_reads_match_the_coalesce_rows(forven_db):
+    import forven.scanner as scanner
+    from forven.db import get_db
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, status, execution_type, signal_data, opened_at) "
+            "VALUES ('T-A', 'S-1', 'S-1', 'BTC', 'long', 1, 1, 'OPEN', 'paper', '{}', '2026-11-01T00:00:00+00:00')"
+        )
+        conn.execute(
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, status, execution_type, signal_data, opened_at) "
+            "VALUES ('T-B', 'S-1', NULL, 'ETH', 'long', 1, 1, 'OPEN', 'paper', '{}', '2026-11-02T00:00:00+00:00')"
+        )
+        conn.execute(
+            "INSERT INTO trades (id, strategy, strategy_id, asset, direction, entry_price, size, status, execution_type, signal_data, opened_at) "
+            "VALUES ('T-C', 'S-1', 'S-2', 'SOL', 'long', 1, 1, 'OPEN', 'paper', '{}', '2026-11-03T00:00:00+00:00')"
+        )
+    assert sorted(t["id"] for t in scanner._get_open_trades("S-1")) == ["T-A", "T-B"]
+    assert [t["id"] for t in scanner._get_open_trades("S-2")] == ["T-C"]

@@ -3847,6 +3847,20 @@ def kv_get(key: str, default=None):
     return default
 
 
+# Bumped on every KV write from this process, so a reader's short-lived memo
+# (the scanner's settings read) notices its own process's changes at once.
+_KV_WRITE_GENERATION = 0
+
+
+def kv_write_generation() -> int:
+    return _KV_WRITE_GENERATION
+
+
+def _bump_kv_write_generation() -> None:
+    global _KV_WRITE_GENERATION
+    _KV_WRITE_GENERATION += 1
+
+
 def kv_set(key: str, value):
     """Set a value in the key-value store."""
     with get_db() as conn:
@@ -3854,6 +3868,7 @@ def kv_set(key: str, value):
             "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
             (key, json.dumps(value), _now()),
         )
+    _bump_kv_write_generation()
 
 
 def kv_set_many(items: dict) -> None:
@@ -3879,6 +3894,7 @@ def kv_set_many(items: dict) -> None:
                 "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
                 (str(key), json.dumps(value), now),
             )
+    _bump_kv_write_generation()
 
 
 def live_equity_baseline_kv_key(strategy_id: str) -> str:
@@ -3901,6 +3917,7 @@ def kv_set_best_effort(key: str, value, *, timeout_seconds: float = 0.25) -> boo
                 "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
                 (key, json.dumps(value), _now()),
             )
+        _bump_kv_write_generation()
         return True
     except Exception as exc:
         if _is_sqlite_lock_error(exc):

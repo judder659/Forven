@@ -397,6 +397,14 @@ def close_trade_record(
     # (the reconcile opens its own connection); a failure must never undo or
     # block the close itself — bot startup reconcile self-heals.
     _reconcile_bot_ledger_after_close(trade)
+    _notify_live_trade_closed(
+        trade,
+        close_reason=close_reason,
+        exit_price=resolved_exit_price,
+        pnl_pct=pnl_pct,
+        pnl_usd=pnl_usd,
+        incomplete=incomplete,
+    )
 
     return {
         "updated": True,
@@ -414,6 +422,91 @@ def close_trade_record(
         "close_reason": str(close_reason) if close_reason is not None else None,
         "signal_data": signal_data,
     }
+
+
+# Close reasons that mean the exchange closed the position itself (a resting stop or
+# take-profit filled) and the reconciler only recorded it afterwards.
+_EXCHANGE_SIDE_CLOSE_REASONS = {"reconcile_missing_on_exchange", "reconcile_sweep_exchange_flat"}
+
+
+def _is_live_trade(trade: dict) -> bool:
+    exec_type = str((trade or {}).get("execution_type") or "live").strip().lower()
+    return not (exec_type.startswith("paper") or exec_type in {"replay", "sim", "simulation", "backtest"})
+
+
+def _describe_close_reason(reason: str) -> str:
+    if reason in _EXCHANGE_SIDE_CLOSE_REASONS:
+        return "closed on the exchange (stop or take-profit filled)"
+    return reason.replace("_", " ") if reason else "closed"
+
+
+def _notify_live_trade_closed(
+    trade: dict,
+    *,
+    close_reason: str | None,
+    exit_price: float | None,
+    pnl_pct: float | None,
+    pnl_usd: float | None,
+    incomplete: bool,
+) -> None:
+    """One notification for every live close, whichever path closed it.
+
+    2026-11-05: a live SOL stop filled on Hyperliquid and the reconciler closed the
+    trade from the fill ledger, but only the scanner's own close path sent a
+    notification, so a real-money stop-out reached neither the app nor Discord.
+    Kernel, reconcile, mark-watcher and manual closes all land here. Paper closes
+    keep their existing notification in the scanner. Never raises.
+    """
+    try:
+        if not _is_live_trade(trade):
+            return
+        from forven.notifications import emit_notification
+        from forven.sim.clock import is_sim_active
+
+        trade_id = str(trade.get("id") or "")
+        strategy_id = str(trade.get("strategy_id") or trade.get("strategy") or "").strip() or "manual"
+        asset = str(trade.get("asset") or "").strip().upper()
+        side = _normalize_trade_direction(trade.get("direction")).upper()
+        reason = _describe_close_reason(str(close_reason or "").strip())
+        entry = (
+            _coerce_optional_float(trade.get("fill_entry_price"))
+            or _coerce_optional_float(trade.get("entry_price"))
+            or _coerce_optional_float(trade.get("signal_entry_price"))
+        )
+        if incomplete or pnl_pct is None:
+            pnl_line = "PnL: unknown (exit price missing)"
+            result = "UNKNOWN"
+        else:
+            result = "WIN" if pnl_pct > 0 else "LOSS"
+            usd = f", ${pnl_usd:+,.2f}" if pnl_usd is not None else ""
+            pnl_line = f"PnL: {pnl_pct:+.2%}{usd} ({result})"
+        sim_tag = "[SIMULATION] " if is_sim_active() else ""
+        prices = (
+            f"Entry: ${entry:,.4g} -> Exit: ${exit_price:,.4g}"
+            if entry is not None and exit_price is not None
+            else None
+        )
+        emit_notification(
+            "trade_closed",
+            severity="warning" if result == "LOSS" else "info",
+            source="trade_state",
+            title=f"{sim_tag}LIVE trade closed — {strategy_id}",
+            summary=f"{side} {asset} | {reason} | {pnl_line.removeprefix('PnL: ')}",
+            body="\n".join(line for line in (f"{side} {asset}", f"Reason: {reason}", prices, pnl_line) if line),
+            metadata={
+                "trade_id": trade_id,
+                "strategy_id": strategy_id,
+                "asset": asset,
+                "side": side,
+                "price": f"${exit_price:,.4g}" if exit_price is not None else None,
+                "execution_type": "live",
+                "close_reason": str(close_reason or ""),
+                "pnl_line": pnl_line,
+            },
+            dedupe_key=f"trade_closed:{trade_id}" if trade_id else None,
+        )
+    except Exception as exc:  # noqa: BLE001 — a notification must never undo or block a close
+        log.warning("Live close notification failed for %s: %s", (trade or {}).get("id"), exc)
 
 
 def _reconcile_bot_ledger_after_close(trade: dict) -> None:
