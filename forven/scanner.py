@@ -8095,9 +8095,28 @@ def _resolve_kernel_strategy_instance(
 # depends on the live mark (fills, stops, refreshes) still runs every scan.
 # Live strategies always walk fresh. The TTL bounds staleness from anything the
 # key can't see (an edited strategy file, a corrected candle).
+#
+# The TTL is at least one bar of the strategy's timeframe. A flat hour made every
+# 4h strategy walk twice per bar: once at the close and again when the hour ran
+# out, so on an install with ~340 4h paper strategies the hour-old walks all
+# expired together and the execution scan ran past its limit on a chain of
+# passes ~65 minutes apart after every 4h close (2026-11-05: 15 a day). A new
+# bar changes the key anyway, so staleness stays bounded by one bar.
 _KERNEL_WALK_CACHE: dict[tuple, tuple[float, "pd.DataFrame", object]] = {}
 _KERNEL_WALK_CACHE_LOCK = threading.Lock()
 _KERNEL_WALK_CACHE_TTL_SECONDS = 3600.0
+# Lookups since start, read as a per-scan delta in the scan timings log line.
+_KERNEL_WALK_CACHE_STATS = {"hit": 0, "miss": 0, "expired": 0}
+
+
+def _kernel_walk_cache_ttl(timeframe: str) -> float:
+    bar_seconds = float(_TIMEFRAME_SECONDS.get(str(timeframe or "").strip().lower(), 0))
+    return max(float(_KERNEL_WALK_CACHE_TTL_SECONDS), bar_seconds)
+
+
+def _kernel_walk_cache_stats() -> dict[str, int]:
+    with _KERNEL_WALK_CACHE_LOCK:
+        return dict(_KERNEL_WALK_CACHE_STATS)
 
 
 def _kernel_walk_cache_key(
@@ -8130,7 +8149,14 @@ def _kernel_walk_cache_get(key: tuple | None) -> tuple["pd.DataFrame", object] |
         return None
     with _KERNEL_WALK_CACHE_LOCK:
         hit = _KERNEL_WALK_CACHE.get(key)
-    if hit is None or (time.monotonic() - hit[0]) > _KERNEL_WALK_CACHE_TTL_SECONDS:
+        if hit is None:
+            _KERNEL_WALK_CACHE_STATS["miss"] += 1
+        elif (time.monotonic() - hit[0]) > _kernel_walk_cache_ttl(key[2]):
+            _KERNEL_WALK_CACHE_STATS["expired"] += 1
+            hit = None
+        else:
+            _KERNEL_WALK_CACHE_STATS["hit"] += 1
+    if hit is None:
         return None
     # Callers mutate the result (pending entries, funding on closed trades): hand out copies.
     return hit[1].copy(), copy.deepcopy(hit[2])
@@ -9533,6 +9559,7 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     exec_timings: dict = {}
     _SCAN_EXEC_TIMINGS.set(exec_timings)
     scan_started = step_started = time.monotonic()
+    exec_timings["walk_cache_start"] = _kernel_walk_cache_stats()
 
     def _step(name: str) -> None:
         nonlocal step_started
@@ -9815,7 +9842,7 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
 def _log_scan_timings(scan_mode: str, total: float, steps: dict[str, float], exec_timings: dict) -> None:
     """One log line with where a scan spent its time, slowest strategies included."""
     parts = [f"{name}={sec:.1f}s" for name, sec in steps.items() if sec >= 0.05]
-    if exec_timings:
+    if "pooled" in exec_timings or "serial" in exec_timings:
         parts.append(
             "exec_items={pooled}pooled+{serial}serial serial_thread={serial_s:.1f}s item_sum={item_s:.1f}s".format(
                 pooled=exec_timings.get("pooled", 0),
@@ -9827,6 +9854,14 @@ def _log_scan_timings(scan_mode: str, total: float, steps: dict[str, float], exe
         item_parts = exec_timings.get("parts") or {}
         if item_parts:
             parts.append("item_parts=" + ",".join(f"{name}:{sec:.1f}s" for name, sec in item_parts.items()))
+        start = exec_timings.get("walk_cache_start")
+        if isinstance(start, dict):
+            now_stats = _kernel_walk_cache_stats()
+            parts.append(
+                "walk_cache=" + ",".join(
+                    f"{name}:{now_stats[name] - int(start.get(name, 0))}" for name in ("hit", "miss", "expired")
+                )
+            )
         slowest = sorted(exec_timings.get("items", []), key=lambda pair: pair[1], reverse=True)[:5]
         if slowest:
             parts.append("slowest=" + ",".join(f"{sid}:{sec:.1f}s" for sid, sec in slowest))
