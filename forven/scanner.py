@@ -241,7 +241,7 @@ def _trade_signal_marker(signal_data: dict) -> str | None:
 
 def _asset_same_bar_reentry_lock_enabled() -> bool:
     try:
-        settings = kv_get("forven:settings", {})
+        settings = _scanner_settings()
     except Exception:
         settings = {}
     if not isinstance(settings, dict):
@@ -815,9 +815,42 @@ def _fill_now_mark(asset: str, last_close: float) -> float:
     return float(last_close)
 
 
+# The settings blob, memoized briefly. Each paper strategy read it ~13 times per
+# execution scan through separate SQLite connections plus a JSON parse of the
+# whole blob (~70% of a cache-hit strategy's time in a local profile,
+# 2026-11-05), so ~350 strategies made thousands of reads per pass on a busy DB.
+# A write from this process refreshes it at once; another process's write is
+# picked up within the TTL.
+_SCANNER_SETTINGS_TTL_SECONDS = 5.0
+_SCANNER_SETTINGS_MEMO: dict = {}
+_SCANNER_SETTINGS_LOCK = threading.Lock()
+
+
+def _scanner_settings() -> dict:
+    """The ``forven:settings`` dict (read-only: callers must not mutate it)."""
+    from forven.db import kv_write_generation
+
+    generation = kv_write_generation()
+    now = time.monotonic()
+    with _SCANNER_SETTINGS_LOCK:
+        memo = _SCANNER_SETTINGS_MEMO.get("entry")
+        if memo is not None and memo[0] == generation and (now - memo[1]) <= _SCANNER_SETTINGS_TTL_SECONDS:
+            return memo[2]
+    settings = kv_get("forven:settings", {})
+    payload = settings if isinstance(settings, dict) else {}
+    with _SCANNER_SETTINGS_LOCK:
+        _SCANNER_SETTINGS_MEMO["entry"] = (generation, now, payload)
+    return payload
+
+
+def _clear_scanner_settings_memo() -> None:
+    with _SCANNER_SETTINGS_LOCK:
+        _SCANNER_SETTINGS_MEMO.clear()
+
+
 def _scanner_bool_setting(name: str, default: bool) -> bool:
     try:
-        settings = kv_get("forven:settings", {})
+        settings = _scanner_settings()
     except Exception:
         return default
     payload = settings if isinstance(settings, dict) else {}
@@ -837,7 +870,7 @@ def _scanner_bool_setting(name: str, default: bool) -> bool:
 
 def _scanner_float_setting(name: str, default: float) -> float:
     try:
-        settings = kv_get("forven:settings", {})
+        settings = _scanner_settings()
     except Exception:
         return float(default)
     payload = settings if isinstance(settings, dict) else {}
@@ -4228,12 +4261,21 @@ def _execute_direct(
 
 # ─── Position Manager ─────────────────────────────────────────────────────────
 
+# Same rows as ``COALESCE(strategy_id, strategy) = ?`` (bind the id twice), but
+# SQLite can answer it from the strategy_id/strategy indexes. The COALESCE form
+# can't use either, so each paper strategy's per-scan trade reads walked the
+# status index (every OPEN+CLOSED row for the recorded-trades read: the whole
+# table) once per strategy per pass; that cost grew with trade history. A
+# ``+status`` keeps the planner off the status index.
+_TRADES_FOR_STRATEGY_SQL = "(strategy_id = ? OR (strategy_id IS NULL AND strategy = ?))"
+
+
 def _get_open_trades(strat_id: str) -> list[dict]:
     """Get open trades for a specific strategy from SQLite."""
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM trades WHERE COALESCE(strategy_id, strategy) = ? AND status='OPEN'",
-            (strat_id,),
+            f"SELECT * FROM trades WHERE {_TRADES_FOR_STRATEGY_SQL} AND +status='OPEN'",
+            (strat_id, strat_id),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -6587,9 +6629,9 @@ def _kernel_recorded_trades(strat_id: str) -> list[dict]:
     out: list[dict] = []
     with get_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
-            "AND status IN ('OPEN','CLOSED') ORDER BY opened_at DESC LIMIT ?",
-            (strat_id, int(_cap)),
+            f"SELECT * FROM trades WHERE {_TRADES_FOR_STRATEGY_SQL} "
+            "AND +status IN ('OPEN','CLOSED') ORDER BY opened_at DESC LIMIT ?",
+            (strat_id, strat_id, int(_cap)),
         ).fetchall()
     for r in rows:
         row = dict(r)
@@ -6631,11 +6673,11 @@ def _kernel_trade_exists(strat_id: str, direction: str, kernel_entry_time: str, 
     is sized to make a genuine miss impossible, so this is belt-and-suspenders."""
     try:
         sql = (
-            "SELECT 1 FROM trades WHERE COALESCE(strategy_id, strategy) = ? "
+            f"SELECT 1 FROM trades WHERE {_TRADES_FOR_STRATEGY_SQL} "
             "AND lower(COALESCE(direction, 'long')) = ? "
             "AND json_extract(signal_data, '$.kernel_entry_time') = ?"
         )
-        args: list = [strat_id, str(direction or "long").strip().lower(), str(kernel_entry_time)]
+        args: list = [strat_id, strat_id, str(direction or "long").strip().lower(), str(kernel_entry_time)]
         if asset:
             # A container's legs share the candle grid: the same entry bar on two
             # coins is two trades.
@@ -8205,6 +8247,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
 
     walk_cache_key = None
     cached_walk = None
+    _part_started = time.monotonic()
     try:
         fetch_kwargs = {"venue_fallback": True} if str(execution_type).strip().lower() == "live" else {}
         reference_frame = fetch_candles(asset, bars=_paper_kernel_history_bars(), interval=timeframe, **fetch_kwargs)
@@ -8222,6 +8265,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     except Exception as exc:
         log.warning("[%s] kernel paper: candle fetch failed (%s); SKIP scan (no legacy)", strat_id, exc)
         return _skip(f"candle fetch failed: {exc}")
+    _part_started = _add_item_part("kernel_candles", _part_started)
     if df is None or df.empty or len(df) < 20:
         return _skip("insufficient candle history")
 
@@ -8321,6 +8365,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
                 log.warning("[%s] kernel paper: funding application failed (%s); net-of-fees only", strat_id, exc)
         # Cached after funding so a hit never funds the same trades twice.
         _kernel_walk_cache_put(walk_cache_key, df, res)
+    _part_started = _add_item_part("kernel_walk", _part_started)
 
     is_live = str(execution_type).strip().lower() == "live"
     # Honor the paper-test "no real orders" contract the legacy path enforces: a
@@ -8474,7 +8519,7 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     if _last_ts is not None:
         _bar_secs = _TIMEFRAME_SECONDS.get(timeframe, 3600)
         try:
-            _max_bars = float((kv_get("forven:settings", {}) or {}).get("scanner_max_candle_staleness_bars", 2) or 2)
+            _max_bars = float(_scanner_settings().get("scanner_max_candle_staleness_bars", 2) or 2)
         except Exception:
             _max_bars = 2.0
         _age_since_close = get_now().timestamp() - (_last_ts + _bar_secs)
@@ -8938,7 +8983,7 @@ def _scan_asset_group(
             if _last_ts is not None:
                 _bar_secs = _TIMEFRAME_SECONDS.get(str(strat_timeframe or "1h").strip().lower(), 3600)
                 try:
-                    _max_bars = float((kv_get("forven:settings", {}) or {}).get("scanner_max_candle_staleness_bars", 2) or 2)
+                    _max_bars = float(_scanner_settings().get("scanner_max_candle_staleness_bars", 2) or 2)
                 except Exception:
                     _max_bars = 2.0
                 _age_since_close = get_now().timestamp() - (_last_ts + _bar_secs)
@@ -9171,6 +9216,18 @@ def _force_high_activity_signals(signal_rows: list[dict]) -> list[dict]:
 # they share the exchange account and the portfolio-budget check, which must observe
 # each prior open before admitting the next.
 _EXEC_POOL_WORKERS = 8
+# The running execution item's timing parts, so code deep inside dispatch (the
+# kernel's candle read and walk) can report its share. Part of dispatch, not extra.
+_ITEM_PARTS_LOCAL = threading.local()
+
+
+def _add_item_part(name: str, started: float) -> float:
+    """Add the time since ``started`` to the current item's ``name`` part; returns now."""
+    now = time.monotonic()
+    parts = getattr(_ITEM_PARTS_LOCAL, "parts", None)
+    if isinstance(parts, dict):
+        parts[name] = parts.get(name, 0.0) + (now - started)
+    return now
 # The running scan's execution timings (see _log_scan_timings); None outside a scan.
 _SCAN_EXEC_TIMINGS: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "forven_scan_exec_timings", default=None
@@ -9208,9 +9265,11 @@ def _apply_execution_actions(
     def _timed(item: dict) -> list[str]:
         started = time.monotonic()
         parts: dict[str, float] = {}
+        _ITEM_PARTS_LOCAL.parts = parts
         try:
             return _apply_execution_action_item(item, account_equity, diagnostics_out, parts)
         finally:
+            _ITEM_PARTS_LOCAL.parts = None
             with parts_lock:
                 item_seconds.append((str(item.get("strategy_id") or ""), time.monotonic() - started))
                 for name, sec in parts.items():
