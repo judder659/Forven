@@ -3019,6 +3019,11 @@ def evaluate_promotion(
             )
             if identity_error:
                 return False, identity_error
+            from forven.strategies.source_lookahead import imported_runtime_negative_shift_reason
+
+            lookahead_error = imported_runtime_negative_shift_reason(identity_row.get("runtime_type"))
+            if lookahead_error:
+                return False, f"Strategy code {lookahead_error}"
         current_sym = str((sym_row["symbol"] if sym_row else "") or "").strip().upper()
         if not current_sym or current_sym == "GENERIC":
             if dry_run:
