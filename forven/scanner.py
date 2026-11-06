@@ -2009,6 +2009,62 @@ def _enrich_scan_frame(df: pd.DataFrame, asset: str, timeframe: str) -> pd.DataF
     return ensure_enrichment_columns(df)
 
 
+# Enriched scan frames shared across a pass. At a bar close every paper leg on the
+# same coin and timeframe enriched an identical candle frame by itself: ~800 legs on
+# ~20 coins, and enrichment (funding/OI and order-flow parquet joins) was ~3 s a leg,
+# the largest cost of the 00:00 close pass (2026-11-06). The frame depends only on
+# its candles, coin and timeframe, so the first leg enriches it and the rest get a
+# copy. Entries live for one pass (TTL), and concurrent legs wait for the one
+# computing instead of repeating it. Live legs keep enriching fresh.
+_ENRICHED_FRAME_TTL_SECONDS = 120.0
+_ENRICHED_FRAME_CACHE: dict[tuple, tuple[float, pd.DataFrame]] = {}
+_ENRICHED_FRAME_LOCKS: dict[tuple, threading.Lock] = {}
+_ENRICHED_FRAME_GUARD = threading.Lock()
+
+
+def _enriched_frame_key(df: pd.DataFrame, asset: str, timeframe: str) -> tuple | None:
+    try:
+        last = df.iloc[-1]
+        return (
+            str(asset or "").strip().upper(), str(timeframe or "").strip().lower(),
+            str(df.index[0]), str(df.index[-1]), len(df),
+            tuple(float(last[col]) for col in ("open", "high", "low", "close", "volume") if col in last),
+        )
+    except Exception:
+        return None
+
+
+def _shared_enriched_scan_frame(df: pd.DataFrame, asset: str, timeframe: str) -> pd.DataFrame:
+    """``_enrich_scan_frame(df.copy(), ...)``, computed once per identical frame."""
+    if df is None or df.empty:
+        return _enrich_scan_frame(df, asset, timeframe)
+    key = _enriched_frame_key(df, asset, timeframe)
+    if key is None:
+        return _enrich_scan_frame(df.copy(), asset, timeframe)
+    with _ENRICHED_FRAME_GUARD:
+        lock = _ENRICHED_FRAME_LOCKS.setdefault(key[:2], threading.Lock())
+    with lock:
+        now = time.monotonic()
+        with _ENRICHED_FRAME_GUARD:
+            hit = _ENRICHED_FRAME_CACHE.get(key)
+        if hit is not None and (now - hit[0]) <= _ENRICHED_FRAME_TTL_SECONDS:
+            return hit[1].copy()
+        enriched = _enrich_scan_frame(df.copy(), asset, timeframe)
+        if enriched is not None and not enriched.empty:
+            stored = enriched.copy()
+            with _ENRICHED_FRAME_GUARD:
+                # One entry per coin and timeframe: a new bar replaces the old frame.
+                for stale in [k for k in _ENRICHED_FRAME_CACHE if k[:2] == key[:2] and k != key]:
+                    del _ENRICHED_FRAME_CACHE[stale]
+                _ENRICHED_FRAME_CACHE[key] = (now, stored)
+        return enriched
+
+
+def _clear_enriched_frame_cache() -> None:
+    with _ENRICHED_FRAME_GUARD:
+        _ENRICHED_FRAME_CACHE.clear()
+
+
 # ─── Technical Indicators ─────────────────────────────────────────────────────
 
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
@@ -8260,7 +8316,10 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
         if cached_walk is not None:
             df = cached_walk[0]
         else:
-            df = _enrich_scan_frame(reference_frame.copy(), asset, timeframe)
+            if str(execution_type).strip().lower() == "paper":
+                df = _shared_enriched_scan_frame(reference_frame, asset, timeframe)
+            else:
+                df = _enrich_scan_frame(reference_frame.copy(), asset, timeframe)
             df = _trim_unclosed_latest_candle(df, timeframe)
     except Exception as exc:
         log.warning("[%s] kernel paper: candle fetch failed (%s); SKIP scan (no legacy)", strat_id, exc)

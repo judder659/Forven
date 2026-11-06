@@ -180,11 +180,13 @@ def _reset_kernel_walk_cache():
     if module is not None:
         module._KERNEL_WALK_CACHE.clear()
         module._clear_scanner_settings_memo()
+        module._clear_enriched_frame_cache()
     yield
     module = sys.modules.get("forven.scanner")
     if module is not None:
         module._KERNEL_WALK_CACHE.clear()
         module._clear_scanner_settings_memo()
+        module._clear_enriched_frame_cache()
 
 
 @pytest.fixture(autouse=True)

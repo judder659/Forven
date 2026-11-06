@@ -189,3 +189,30 @@ def test_strategy_trade_reads_match_the_coalesce_rows(forven_db):
         )
     assert sorted(t["id"] for t in scanner._get_open_trades("S-1")) == ["T-A", "T-B"]
     assert [t["id"] for t in scanner._get_open_trades("S-2")] == ["T-C"]
+
+
+def test_legs_on_the_same_frame_share_one_enrichment(forven_db, monkeypatch):
+    import forven.scanner as scanner
+    from tests.test_scanner_kernel_paper_integration import _frame
+
+    calls = {"n": 0}
+
+    def _counting_enrich(d, asset, timeframe):
+        calls["n"] += 1
+        out = d.copy()
+        out["funding_rate"] = 0.0
+        return out
+
+    monkeypatch.setattr(scanner, "_enrich_scan_frame", _counting_enrich)
+    df = _frame().iloc[:300]
+    a = scanner._shared_enriched_scan_frame(df, "BTC", "4h")
+    b = scanner._shared_enriched_scan_frame(df, "BTC", "4h")
+    assert calls["n"] == 1
+    assert a.equals(b) and a is not b  # each caller gets its own copy
+    a.loc[a.index[-1], "close"] = -1.0
+    assert scanner._shared_enriched_scan_frame(df, "BTC", "4h")["close"].iloc[-1] != -1.0
+
+    scanner._shared_enriched_scan_frame(df, "ETH", "4h")  # other coin
+    scanner._shared_enriched_scan_frame(_frame().iloc[:301], "BTC", "4h")  # new bar
+    assert calls["n"] == 3
+    assert sum(1 for k in scanner._ENRICHED_FRAME_CACHE if k[:2] == ("BTC", "4h")) == 1
