@@ -498,6 +498,26 @@ def _extract_runtime_code_payload(daemon: dict[str, Any]) -> dict[str, object]:
     }
 
 
+# What the heartbeat keeps of each paper session card: identity, state and the
+# headline numbers. Trades, positions, params and diagnostics stay on
+# /api/paper/sessions.
+_HEARTBEAT_SESSION_FIELDS = (
+    "id",
+    "strategy_id",
+    "strategy_name",
+    "symbol",
+    "timeframe",
+    "status",
+    "compat_kind",
+    "started_at",
+    "total_pnl",
+    "total_pnl_pct",
+    "total_trades",
+    "winning_trades",
+    "blocked_reason",
+)
+
+
 def get_system_heartbeat() -> dict[str, object]:
     """Aggregated control-plane data for the frontend refresh cycle."""
     from forven.api_domains import analytics as analytics_domain
@@ -518,9 +538,16 @@ def get_system_heartbeat() -> dict[str, object]:
     datasets = data_domain.get_cached_datasets_stub()
     research_metrics = analytics_domain.get_research_feed_metrics_stub()
     scans = analytics_domain.list_scanner_scans_stub()
-    paper_sessions = paper_domain.get_paper_sessions()
-    # Keep the shell heartbeat payload compact. Pages that need strategy detail
-    # already fetch it directly from dedicated strategy endpoints.
+    # Keep the shell heartbeat payload compact. Pages that need strategy or
+    # session detail already fetch it from the dedicated endpoints
+    # (/api/paper/sessions carries the full cards); the full cards made up
+    # two thirds of a 5 MB heartbeat that the shell refreshes on every badge
+    # event and never reads.
+    paper_sessions = [
+        {field: session.get(field) for field in _HEARTBEAT_SESSION_FIELDS}
+        for session in paper_domain.get_paper_sessions()
+        if isinstance(session, dict)
+    ]
     strategies: list[dict[str, object]] = []
     approvals = get_approvals_list(status="pending_approval")
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -17,7 +19,9 @@ def read_lifecycle_strategies(
     source_ref: str | None = None,
     limit: int = 500,
     offset: int = 0,
-):
+) -> list[dict[str, Any]]:
+    # Return type declared so the multi-megabyte list is serialized off the
+    # event loop's slow path (see forven/routers/paper.py).
     return lifecycle.read_lifecycle_strategies(
         state=state,
         source=source,
@@ -78,7 +82,7 @@ def read_gauntlet_status(strategy_id: str):
 
 
 @router.get("/api/lifecycle/pipeline/explain")
-def read_pipeline_explain(stage: str | None = None, limit: int = 200):
+def read_pipeline_explain(stage: str | None = None, limit: int = 200) -> dict[str, Any]:
     """Fleet-wide pipeline explanation.
 
     For every strategy in an active stage: why it is stuck (gate + readiness

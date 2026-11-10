@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
@@ -50,7 +51,9 @@ def get_system_status():
 
 
 @router.get("/api/system/heartbeat")
-def get_system_heartbeat():
+def get_system_heartbeat() -> dict[str, Any]:
+    # Return type declared so the payload is serialized off the event loop's
+    # slow path (see forven/routers/paper.py).
     return core.json_safe_payload(control_plane_status.get_system_heartbeat())
 
 

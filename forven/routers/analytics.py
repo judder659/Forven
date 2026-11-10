@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter
 
 from forven.api_domains import analytics as analytics_domain
@@ -53,12 +55,12 @@ def dashboard_funnel_stub():
 
 # Sync `def` so the DB reads run in the threadpool, not on the request loop.
 @router.get("/api/dashboard/live-fleet")
-def dashboard_live_fleet():
+def dashboard_live_fleet() -> dict[str, Any]:
     return live_fleet_domain.build_live_fleet()
 
 
 @router.get("/api/dashboard/paper-fleet")
-def dashboard_paper_fleet():
+def dashboard_paper_fleet() -> dict[str, Any]:
     return live_fleet_domain.build_paper_fleet()
 
 

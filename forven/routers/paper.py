@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi import APIRouter, Depends, Header
 
 from forven import api_core as core
@@ -8,13 +10,17 @@ from forven.api_security import require_operator_access
 router = APIRouter(tags=["paper"], dependencies=[Depends(require_operator_access)])
 
 
+# The large polled payloads declare a return type on purpose. With one, FastAPI
+# validates in the worker thread and writes the JSON through Pydantic; without
+# one it walks the whole payload with jsonable_encoder on the event loop, which
+# for a multi-megabyte body stalls every other request and the live WebSocket.
 @router.get("/api/paper/sessions")
 def get_paper_sessions(
     include_deployed: bool = False,
     only_deployed: bool = False,
     session_limit: int | None = None,
     trades_limit: int = 500,
-):
+) -> list[dict[str, Any]]:
     return paper_domain.get_paper_sessions(
         include_deployed=include_deployed,
         only_deployed=only_deployed,
@@ -24,7 +30,7 @@ def get_paper_sessions(
 
 
 @router.get("/api/paper/summary")
-def get_paper_summary(include_deployed: bool = False):
+def get_paper_summary(include_deployed: bool = False) -> dict[str, Any]:
     """Per-session PnL rollup + close_reason breakdown for paper sessions."""
     return paper_domain.get_paper_summary(include_deployed=include_deployed)
 
