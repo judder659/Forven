@@ -281,6 +281,19 @@ def pick_commit(kind: str, after: str | None) -> str | None:
     return None
 
 
+def unreleased_count(after: str | None) -> int:
+    """First-parent commits on main the last release lacks, old enough to have been checked.
+
+    A commit under 36 hours old may simply not have had its nightly run yet,
+    so it does not count as held back.
+    """
+    span = f"{after}..origin/main" if after else "origin/main"
+    try:
+        return int(git("rev-list", "--first-parent", "--count", "--before=36 hours ago", span))
+    except (subprocess.CalledProcessError, ValueError):
+        return 0
+
+
 def merged_prs(since: str | None, until: str) -> list[tuple[str, str]]:
     """(title, description) of each change merged into main since the last release."""
     if since:
@@ -372,7 +385,18 @@ def main(argv: list[str] | None = None) -> int:
 
     sha = pick_commit(args.kind, previous_tag)
     if sha is None:
-        print("No new commit has passed the required checks since the last release; nothing to release.")
+        waiting = unreleased_count(previous_tag)
+        if waiting:
+            # Fail the run so the owner hears about it: a red required check
+            # (say, the nightly Windows suite) otherwise holds back every
+            # release in silence while the schedule keeps reporting success.
+            checks = "CI" if args.kind == "hotfix" else "CI and the nightly Windows suite"
+            print(
+                f"::error::{waiting} change(s) merged since {previous_tag or 'the start'} are waiting, "
+                f"but no commit has passed {checks}. Nothing was released; fix the failing check."
+            )
+            return 0 if args.dry_run else 1
+        print("Nothing merged since the last release; nothing to release.")
         return 0
 
     prs = merged_prs(previous_tag, sha)

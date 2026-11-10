@@ -5,10 +5,14 @@ killed after 30 CPU-seconds in total, failing whichever strategy's request was
 running ("isolated worker for '...' died") and stalling the queue behind each
 respawn ("isolated signal worker queue timed out before execution")."""
 
-import resource
 import sys
 
 import pytest
+
+try:  # POSIX only; the tests that need it are skipped on Windows
+    import resource
+except ImportError:  # pragma: no cover - Windows
+    resource = None
 
 from forven.sandbox import MAX_CPU_SECONDS, _build_posix_preexec
 from forven.sandbox import strategy_worker as sw
