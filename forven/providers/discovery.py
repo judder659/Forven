@@ -691,6 +691,35 @@ def _detect_zai_endpoint(token: str, preferred_model: str = "glm-5.1") -> dict:
     }
 
 
+_MODEL_LIST_REFRESH_KEY = "agent_model_lists_refreshed_at"
+
+
+def _mark_model_lists_refreshed(now: int) -> None:
+    """Record a forced refresh where every API worker process can see it.
+
+    The model list cache lives in each process. With two API workers a
+    "Refresh models" click only reached the worker that served it, so the
+    other kept answering from its old list for up to the 30-minute TTL and a
+    newly loaded model appeared and vanished between page loads.
+    """
+    try:
+        from forven.db import kv_set_best_effort
+
+        kv_set_best_effort(_MODEL_LIST_REFRESH_KEY, int(now))
+    except Exception as exc:
+        log.debug("could not record the model list refresh: %s", exc)
+
+
+def _model_lists_refreshed_at() -> int:
+    """When any worker last forced a refresh (0 if never or unreadable)."""
+    try:
+        from forven.db import kv_get
+
+        return int(kv_get(_MODEL_LIST_REFRESH_KEY, 0) or 0)
+    except Exception:
+        return 0
+
+
 def _discover_provider_models(
     provider: str,
     force_refresh: bool = False,
@@ -706,10 +735,13 @@ def _discover_provider_models(
     patched — binding through. Leave it None everywhere else.
     """
     now = int(time.time())
+    if force_refresh:
+        _mark_model_lists_refreshed(now)
     cache_entry = _AGENT_MODEL_LIST_CACHE.get(provider)
     if cache_entry:
         cache_timestamp = int(cache_entry.get("fetched_at", 0))
-        if not force_refresh and now - cache_timestamp < _AGENT_MODEL_LIST_CACHE_TTL_SECONDS:
+        fresh = now - cache_timestamp < _AGENT_MODEL_LIST_CACHE_TTL_SECONDS
+        if fresh and not force_refresh and cache_timestamp >= _model_lists_refreshed_at():
             cached = cache_entry.get("models", [])
             return list(cached) if isinstance(cached, list) else [], str(cache_entry.get("error") or None)
 
