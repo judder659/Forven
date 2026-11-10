@@ -39,11 +39,46 @@ _COMMON_FAMILIES = (
 # Read / grounding tools
 # ---------------------------------------------------------------------------
 
+_PORTFOLIO_SCOPE_NOTE = (
+    "account_equity, high_water_mark, drawdown_pct, daily_pnl_pct, daily_halt and "
+    "kill_switch_active describe the LIVE exchange account only, and risk_limits are "
+    "percentages of that account's equity. Paper strategies and paper bots are "
+    "simulations, each on its own notional book: their profit and loss is never part of "
+    "the daily-loss or drawdown guard, and their position sizes are not live exposure. "
+    "Judge live risk from the positions whose book is 'live'."
+)
+
+
+def _open_position_book(trade: dict) -> str:
+    """live, paper or bot_paper: which book an open position belongs to."""
+    if str(trade.get("execution_type") or "paper").strip().lower() == "live":
+        return "live"
+    return "bot_paper" if str(trade.get("source") or "").startswith("bot:") else "paper"
+
+
+def _effective_risk_limits_pct() -> dict | None:
+    """The limits the live guards enforce right now, as percentages of live equity."""
+    try:
+        from forven.exchange import risk
+
+        limits = risk._get_risk_limits()
+        return {
+            "max_risk_per_trade_pct": round(float(limits["max_risk_per_trade"]) * 100.0, 4),
+            "max_daily_loss_pct": round(float(limits["daily_loss_limit"]) * 100.0, 4),
+            "max_drawdown_pct": round(float(limits["max_drawdown"]) * 100.0, 4),
+        }
+    except Exception:
+        return None
+
+
 @register_tool(
     name="get_portfolio_status",
     description=(
         "Read the live portfolio snapshot: account equity, high-water mark, "
-        "drawdown, daily PnL, market regime, kill-switch state, and open positions. "
+        "drawdown, daily PnL, the risk limits in force, market regime, kill-switch "
+        "state, and open positions by book (live, paper, bot_paper). The account "
+        "figures and limits cover the live exchange account only; paper books are "
+        "simulations outside the daily-loss and drawdown guards. "
         "Use this to answer 'how are we doing?' / risk questions."
     ),
     input_schema={"type": "object", "properties": {}, "required": []},
@@ -60,7 +95,20 @@ def _tool_get_portfolio_status() -> str:
     # tool reported equity=0/HWM=0 forever and risk audits ran blind.
     snapshot = portfolio_status_snapshot()
     open_trades = get_open_trades() or []
+    # Live first: with a few hundred paper legs open, a plain newest-first cut
+    # of 25 showed the risk audit paper positions only, with nothing to tell
+    # them from live exposure. It then reported paper losses as a daily-loss
+    # breach the guard had missed.
+    by_book: dict[str, int] = {"live": 0, "paper": 0, "bot_paper": 0}
+    rows = []
+    for trade in open_trades:
+        book = _open_position_book(trade)
+        by_book[book] += 1
+        rows.append((book, trade))
+    rows.sort(key=lambda item: 0 if item[0] == "live" else 1)
+    listed = [item for item in rows if item[0] == "live"] + [item for item in rows if item[0] != "live"][:25]
     out = {
+        "scope": _PORTFOLIO_SCOPE_NOTE,
         "kill_switch_active": snapshot["kill_switch_active"],
         "daily_halt": snapshot["daily_halt"],
         "account_equity": snapshot["account_equity"],
@@ -69,20 +117,27 @@ def _tool_get_portfolio_status() -> str:
         "high_water_mark": snapshot["high_water_mark"],
         "drawdown_pct": snapshot["drawdown_pct"],
         "daily_pnl_pct": snapshot["daily_pnl_pct"],
+        "risk_limits": _effective_risk_limits_pct(),
         "regime": snapshot["regime"],
         "fear_greed": snapshot["fear_greed"],
         "synced_at": snapshot["synced_at"],
         "daemon_running": snapshot["daemon_running"],
         "open_position_count": len(open_trades),
+        "open_positions_by_book": by_book,
         "open_positions": [
             {
+                "book": book,
                 "asset": t.get("asset"),
                 "direction": t.get("direction"),
                 "entry_price": t.get("entry_price"),
+                "size": t.get("size"),
+                "leverage": t.get("leverage"),
                 "strategy": t.get("strategy"),
+                "strategy_id": t.get("strategy_id"),
+                "opened_at": t.get("opened_at"),
                 "pnl_pct": t.get("pnl_pct"),
             }
-            for t in open_trades[:25]
+            for book, t in listed
         ],
     }
     return _json.dumps(out, indent=2, default=str)
