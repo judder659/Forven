@@ -528,16 +528,22 @@ def check_scanner_execution() -> ComponentStatus:
         # Expected cadence: the scanner EXECUTION job's interval (not the signal-only
         # job), else a conservative 1h default.
         expected = 3600.0
+        failed_run: str | None = None
         try:
             from forven.scheduler import get_enabled_jobs
-            cadences = [
-                _job_interval_seconds(j)
+            execution_jobs = [
+                j
                 for j in (get_enabled_jobs() or [])
                 if "scanner" in str(j.get("id") or "").lower() and "signal" not in str(j.get("id") or "").lower()
             ]
+            cadences = [_job_interval_seconds(j) for j in execution_jobs]
             cadences = [c for c in cadences if c and c > 0]
             if cadences:
                 expected = min(cadences)
+            for job in execution_jobs:
+                if str(job.get("last_status") or "").strip().lower() == "error":
+                    failed_run = str(job.get("last_error") or "failed").strip()[:160]
+                    break
         except Exception:
             pass
         st = compute_state(last_exec, expected)
@@ -553,6 +559,14 @@ def check_scanner_execution() -> ComponentStatus:
             return ComponentStatus(
                 name="scanner_execution", state=State.AMBER, last_seen=last_exec,
                 message=f"Execution scan overdue ({open_n} open)",
+            )
+        if failed_run:
+            # A pass that overran its limit still finishes eventually and
+            # stamps last_execution_scan, so freshness alone showed green
+            # through 12 timed-out passes in 48 h (2026-11).
+            return ComponentStatus(
+                name="scanner_execution", state=State.AMBER, last_seen=last_exec,
+                message=f"Last execution scan did not finish cleanly: {failed_run} ({open_n} open)",
             )
         return ComponentStatus(
             name="scanner_execution", state=State.GREEN, last_seen=last_exec,

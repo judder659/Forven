@@ -41,6 +41,22 @@ def test_scanner_execution_fresh_is_green(forven_db):
     assert check_scanner_execution().state == State.GREEN
 
 
+def test_scanner_execution_fresh_but_last_pass_timed_out_is_amber(forven_db, monkeypatch):
+    from forven import scheduler
+    from forven.db import kv_set
+    kv_set("scanner_state", {"execution_allowed": True, "open_positions": 1,
+                             "last_execution_scan": _iso_ago(30)})
+    job = {"id": "forven-scanner-hourly", "schedule_type": "interval", "schedule_expr": "300000",
+           "last_status": "error", "last_error": "Job execution timed out"}
+    monkeypatch.setattr(scheduler, "get_enabled_jobs", lambda: [job])
+    status = check_scanner_execution()
+    assert status.state == State.AMBER
+    assert "Job execution timed out" in status.message
+
+    job["last_status"] = "ok"
+    assert check_scanner_execution().state == State.GREEN
+
+
 # ─── FREEZE-3: alive-but-frozen daemon ──────────────────────────────────────────
 
 def test_daemon_not_running_is_green(forven_db, monkeypatch):
