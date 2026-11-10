@@ -761,3 +761,29 @@ def test_notification_test_reaches_discord_whatever_the_switches(monkeypatch):
     assert item["category"] == "test"
     assert item["status"] == "delivered"
     assert sent == ["alerts"]
+
+
+def test_a_bot_fill_announced_by_two_api_workers_is_shown_once():
+    """Each API worker runs its own bot monitor, so every fill is announced
+    twice, up to 30 seconds apart. The key names the trade and its event:
+    the second copy is dropped and other fills are not."""
+    init_db()
+
+    def announce(trade_id: str, event: str):
+        return emit_notification(
+            "bot_trade",
+            source="bot_factory",
+            title=f"Bot Momentum Scalper {event} LONG BTC/USDT",
+            metadata={"bot_id": "B1", "trade_id": trade_id, "trade_event": event, "execution_type": "paper"},
+            dedupe_key=f"bot_trade:{trade_id}:{event}",
+        )
+
+    first = announce("BT-1", "opened")
+    second_worker = announce("BT-1", "opened")
+    close = announce("BT-1", "closed")
+    next_trade = announce("BT-2", "opened")
+
+    assert first["status"] == "stored"
+    assert second_worker["status"] == "suppressed"
+    assert close["status"] == "stored"
+    assert next_trade["status"] == "stored"

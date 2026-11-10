@@ -156,7 +156,11 @@ def resolve_notification_policy(
             delivery_mode="discord_immediate" if send_to_discord else "app_only",
             channel_name=channel_name or trade_channel,
             send_to_discord=send_to_discord,
-            cooldown_seconds=0,
+            # Every API worker runs a bot monitor, and each one announces a
+            # fill. The dedupe key is the trade and its event, so this window
+            # only drops the second worker's copy (it arrived up to 30 s
+            # later); no other fill shares the key.
+            cooldown_seconds=3600,
         )
     elif event_type == "bot_alert":
         send_to_discord = bool(prefs.get("bot_alerts_to_discord", True))
