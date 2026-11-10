@@ -9182,7 +9182,13 @@ def _evaluate_signal_matrix(
 
                     entry_mark = "ENTRY" if signal.get("entry_signal") else "-"
                     exit_mark = "EXIT" if signal.get("exit_signal") else "-"
-                    log.info(
+                    # A scan with nothing to act on is recorded in
+                    # scanner_signal_results below; logging it too wrote one
+                    # line per strategy per scan (about 200k a day on a
+                    # 440-strategy fleet, the largest single source in the log).
+                    quiet = entry_mark == "-" and exit_mark == "-"
+                    log.log(
+                        logging.DEBUG if quiet else logging.INFO,
                         "[%s] %s @ $%.2f | ADX=%.1f | entry=%s | exit=%s",
                         strat_id, strat["asset"], signal["price"], signal.get("adx", 0),
                         entry_mark, exit_mark,
