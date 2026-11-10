@@ -314,7 +314,7 @@ def _last_paper_trade_at(strategy_id: str, since: str | None) -> str | None:
     """
     from forven.policy import _PARITY_PNL_FILTER
 
-    params: list[object] = [strategy_id]
+    params: list[object] = [strategy_id, strategy_id]
     where_since = ""
     if since:
         where_since = " AND datetime(closed_at) >= datetime(?)"
@@ -322,8 +322,11 @@ def _last_paper_trade_at(strategy_id: str, since: str | None) -> str | None:
     with get_db() as conn:
         row = conn.execute(
             "SELECT MAX(datetime(closed_at)) AS last_at FROM trades "
-            "WHERE COALESCE(strategy_id, strategy) = ? "
-            "AND status = 'CLOSED' "
+            # COALESCE(strategy_id, strategy) = ?, spelled so each half can use
+            # its index instead of scanning every trade for every strategy. The
+            # unary plus keeps the planner off the far less selective status index.
+            "WHERE (strategy_id = ? OR (strategy_id IS NULL AND strategy = ?)) "
+            "AND +status = 'CLOSED' "
             "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%' "
             "AND pnl_pct IS NOT NULL" + _PARITY_PNL_FILTER + where_since,
             tuple(params),
@@ -458,10 +461,21 @@ def _probation_entry(strategy_id: str, cache: dict | None) -> dict | None:
         return None
 
 
-def _probation_entry_evidence(report: dict) -> dict:
+def _probation_knobs() -> dict | None:
+    """Probation settings, read once for a fleet view instead of once per strategy."""
+    try:
+        from forven import probation
+
+        return probation.knobs()
+    except Exception as exc:  # noqa: BLE001 — each row falls back to its own read
+        log.debug("probation settings unavailable: %s", exc)
+        return None
+
+
+def _probation_entry_evidence(report: dict, knobs: dict | None = None) -> dict:
     from forven import probation
 
-    k = probation.knobs()
+    k = knobs if knobs is not None else probation.knobs()
     slow = bool(report.get("slow"))
     confirmation = report.get("confirmation") or {}
     return {
@@ -551,9 +565,15 @@ def _current_workflow_blocker(strategy_id: str) -> dict | None:
                     "gauntlet_workflow", actions[status], workflow_status=status, step=row["current_step_key"])
 
 
-def _explain_row(row: dict, now: datetime, probation_ready: dict | None = None) -> dict:
+def _explain_row(
+    row: dict,
+    now: datetime,
+    probation_ready: dict | None = None,
+    probation_knobs: dict | None = None,
+) -> dict:
     """``probation_ready``: the watchdog's cached probation checks by strategy id
-    (fleet view); None computes them now (single-strategy view)."""
+    (fleet view); None computes them now (single-strategy view).
+    ``probation_knobs``: the probation settings when the caller already read them."""
     from forven.policy import (
         check_promotion_readiness,
         evaluate_promotion,
@@ -658,7 +678,7 @@ def _explain_row(row: dict, now: datetime, probation_ready: dict | None = None) 
                 reason = f"{check['label']}: {check['detail']}"
                 seen_reasons.add(reason)
                 blockers.append(_blocker(reason, code, kind, "probation_gate", action, check=check.get("key")))
-            evidence["probation"] = _probation_entry_evidence(report)
+            evidence["probation"] = _probation_entry_evidence(report, probation_knobs)
         last_trade_at = _last_paper_trade_at(strategy_id, stage_changed_at)
         if last_trade_at:
             evidence["paper"] = {
@@ -809,6 +829,7 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
 
     now = datetime.now(timezone.utc)
     probation_ready = _probation_ready_cache()
+    probation_knobs = _probation_knobs()
     strategies: list[dict] = []
     errors: list[dict] = []
     truncated = False
@@ -821,7 +842,7 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
             truncated = True
             break
         try:
-            strategies.append(_explain_row(row, now, probation_ready))
+            strategies.append(_explain_row(row, now, probation_ready, probation_knobs))
         except Exception as exc:  # one bad strategy must not blank the fleet view
             log.warning("pipeline explain failed for %s: %s", row.get("id"), exc)
             errors.append({"id": row.get("id"), "error": str(exc)})

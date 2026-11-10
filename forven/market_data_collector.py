@@ -10,6 +10,7 @@ Supports:
 import json
 import logging
 import time
+import urllib.error
 from datetime import datetime, timedelta, timezone
 
 from forven.db import get_db, kv_get, kv_set, log_activity
@@ -40,6 +41,30 @@ _FUNDING_EXPECTED_INTERVAL_HOURS = 8.0  # conservative venue funding interval (B
 
 # How far back the scheduled reconciliation keeps funding history filled.
 DEFAULT_FUNDING_TARGET_DAYS = 730
+
+# The scheduled reconciliation shares Hyperliquid's per-IP request budget
+# (1200 weight a minute) with the live account reads. A 500-record
+# fundingHistory page weighs about 45, and the job used to send dozens of pages
+# a second: the venue answered 429, the account circuit breaker opened, and the
+# daemon priced the live book from cached equity (2026-11). One page every
+# 5 seconds keeps the job under half the budget; it stops at its time budget
+# (the scheduler allows a sync job 600 s) and carries on at the next run.
+_FUNDING_RECONCILE_PAGE_INTERVAL_SECONDS = 5.0
+_FUNDING_RECONCILE_BUDGET_SECONDS = 480.0
+# An asset whose backfill keeps failing or returning nothing waits twice as
+# long after each failure, up to a week, instead of being retried every run.
+_FUNDING_FAILURE_COOLDOWN_MAX_HOURS = 168.0
+
+_last_funding_page_at = 0.0
+
+
+def _pace_funding_page(interval_seconds: float) -> None:
+    """Wait until ``interval_seconds`` have passed since the last paced page."""
+    global _last_funding_page_at
+    wait = _last_funding_page_at + float(interval_seconds) - time.monotonic()
+    if _last_funding_page_at and wait > 0:
+        time.sleep(wait)
+    _last_funding_page_at = time.monotonic()
 
 # Metric types
 METRIC_FUNDING_RATE = "funding_rate"
@@ -209,21 +234,41 @@ def backfill_funding_history(
     asset: str,
     days_back: int = 365,
     batch_size: int = 500,
+    *,
+    start_ms: int | None = None,
+    venue_coin: str | None = None,
+    page_interval_seconds: float | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Backfill historical funding rates from HyperLiquid's fundingHistory endpoint.
 
-    Paginates backwards from now, 500 records at a time (API limit).
-    Funding settles every 8 hours, so 500 records ≈ 166 days.
+    Walks forward from the cutoff, 500 records a page (API limit). Hyperliquid
+    funding is hourly, so 500 records is about 21 days.
+
+    ``start_ms`` fetches from that time instead of ``days_back`` ago (a top-up
+    of history that is already stored). ``venue_coin`` is the exact Hyperliquid
+    name when it differs from the stored asset (1000PEPE trades as kPEPE).
+    ``page_interval_seconds`` spaces the requests out for the scheduled job, and
+    ``deadline`` (``time.monotonic()``) stops between pages when the job's time
+    is up. The result carries ``rate_limited`` after an HTTP 429, ``error``
+    after any other failure and ``deferred`` when the deadline cut it short, so
+    a caller can tell a finished backfill from an interrupted one.
     """
     normalized_asset = asset.strip().upper()
+    request_coin = str(venue_coin or normalized_asset)
     now = datetime.now(timezone.utc)
     cutoff_ms = int((now - timedelta(days=days_back)).timestamp() * 1000)
+    if start_ms is not None:
+        cutoff_ms = int(start_ms)
     end_time_ms = _now_ms()
 
     total_stored = 0
     total_fetched = 0
     pages = 0
     oldest_ts = None
+    rate_limited = False
+    deferred = False
+    error: str | None = None
 
     log.info("Backfilling %s funding history: %d days back (cutoff=%s)",
              normalized_asset, days_back,
@@ -237,10 +282,15 @@ def backfill_funding_history(
     # completeness gate for every strategy on that asset.)
     start_cursor = cutoff_ms
     while start_cursor < end_time_ms:
+        if deadline is not None and time.monotonic() >= deadline:
+            deferred = True
+            break
+        if page_interval_seconds:
+            _pace_funding_page(page_interval_seconds)
         try:
             resp = post_hyperliquid_info({
                 "type": "fundingHistory",
-                "coin": normalized_asset,
+                "coin": request_coin,
                 "startTime": start_cursor,
                 "endTime": end_time_ms,
             }, timeout=30)
@@ -288,8 +338,8 @@ def backfill_funding_history(
                 break
             start_cursor = page_newest + 1
 
-            # Rate limit courtesy
-            if pages % 5 == 0:
+            # Rate limit courtesy for the unpaced (on-demand) path
+            if not page_interval_seconds and pages % 5 == 0:
                 time.sleep(0.5)
 
             log.info(
@@ -302,7 +352,21 @@ def backfill_funding_history(
             if len(resp) < batch_size:
                 break
 
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429:
+                # The venue wants us to slow down. Stop here: more requests only
+                # deepen the limit that the live account reads share.
+                rate_limited = True
+                log.warning(
+                    "Backfill %s stopped at page %d: Hyperliquid rate limit (HTTP 429)",
+                    normalized_asset, pages,
+                )
+            else:
+                error = str(exc)
+                log.error("Backfill %s page %d failed: %s", normalized_asset, pages, exc)
+            break
         except Exception as exc:
+            error = str(exc)
             log.error("Backfill %s page %d failed: %s", normalized_asset, pages, exc)
             break
 
@@ -312,6 +376,9 @@ def backfill_funding_history(
         "pages": pages,
         "total_fetched": total_fetched,
         "total_stored": total_stored,
+        "rate_limited": rate_limited,
+        "deferred": deferred,
+        "error": error,
         "oldest_record": (
             datetime.fromtimestamp(oldest_ts / 1000, tz=timezone.utc).isoformat()
             if oldest_ts else None
@@ -382,6 +449,9 @@ def ensure_funding_history(
     start_ms: int,
     *,
     cooldown_hours: float = _FUNDING_BACKFILL_COOLDOWN_HOURS,
+    venue_coin: str | None = None,
+    page_interval_seconds: float | None = None,
+    deadline: float | None = None,
 ) -> dict:
     """Ensure stored funding history reaches back to ``start_ms``; backfill gaps.
 
@@ -396,6 +466,13 @@ def ensure_funding_history(
     - ``"exhausted"``  — the exchange has no data older than what is stored
     - ``"cooldown"``   — a recent attempt already failed to extend coverage
     - ``"error"``      — the backfill attempt itself failed
+    - ``"rate_limited"`` — the venue answered HTTP 429; nothing is recorded
+      against the asset, and the caller should stop asking for now
+
+    History that already reaches back far enough but has gone stale is topped
+    up from its newest stored record, not downloaded again from the start.
+    ``venue_coin``, ``page_interval_seconds`` and ``deadline`` are passed to
+    ``backfill_funding_history`` (the scheduled reconciliation sets them).
     - ``"skipped_unknown_asset"`` — the asset exists nowhere in the lake or the
       symbol registry (a fabricated symbol like MULTI/BASKET leaked in from a
       strategy row); the venue is not asked at all
@@ -447,11 +524,32 @@ def ensure_funding_history(
     state = _load_backfill_state()
     entry = state.get(normalized_asset) if isinstance(state.get(normalized_asset), dict) else {}
 
+    oldest_reachable = entry.get("oldest_reachable_ms")
+    recency_floor_ms = now_ms - int(_FUNDING_RECENCY_HOURS * 3600 * 1000)
+    stale = latest_ms is not None and latest_ms < recency_floor_ms
+
+    # Stored history that starts where it should (the requested start, or the
+    # oldest record the exchange has) and is dense up to its newest record only
+    # needs its tail. The old code downloaded the whole window again, about 36
+    # pages for two years of hourly funding, to add a day or two.
+    resume_from_ms: int | None = None
+    head_reached = earliest_ms is not None and (
+        earliest_ms <= start_ms
+        or (oldest_reachable is not None and earliest_ms <= int(oldest_reachable))
+    )
+    if head_reached and stale and latest_ms is not None:
+        stored_from_ms = max(start_ms, int(earliest_ms))
+        stored_span_ms = max(1, int(latest_ms) - stored_from_ms)
+        stored_expected = stored_span_ms / (_FUNDING_EXPECTED_INTERVAL_HOURS * 3600 * 1000)
+        stored_have = get_funding_record_count(normalized_asset, stored_from_ms, int(latest_ms))
+        if stored_have >= _FUNDING_DENSITY_FLOOR * stored_expected:
+            resume_from_ms = int(latest_ms) + 1
+
     # If a previous backfill established the exchange's oldest reachable record
     # and our store already starts there, asking again cannot help.
-    oldest_reachable = entry.get("oldest_reachable_ms")
     if (
-        oldest_reachable is not None
+        resume_from_ms is None
+        and oldest_reachable is not None
         and earliest_ms is not None
         and int(oldest_reachable) >= start_ms
         and earliest_ms <= int(oldest_reachable)
@@ -463,6 +561,11 @@ def ensure_funding_history(
             "oldest_reachable_ms": int(oldest_reachable),
         }
 
+    failures = 0
+    try:
+        failures = max(0, int(entry.get("failures") or 0))
+    except (TypeError, ValueError):
+        failures = 0
     attempted_at = entry.get("attempted_at")
     if attempted_at:
         try:
@@ -470,6 +573,20 @@ def ensure_funding_history(
             if attempted_dt.tzinfo is None:
                 attempted_dt = attempted_dt.replace(tzinfo=timezone.utc)
             age_hours = (now - attempted_dt).total_seconds() / 3600
+            # An asset that keeps failing (or keeps returning nothing) waits
+            # twice as long after each failure, up to a week.
+            if failures:
+                failure_cooldown = min(
+                    float(cooldown_hours) * (2 ** min(failures, 10)),
+                    _FUNDING_FAILURE_COOLDOWN_MAX_HOURS,
+                )
+                if age_hours < failure_cooldown:
+                    return {
+                        "action": "cooldown",
+                        "asset": normalized_asset,
+                        "age_hours": round(age_hours, 2),
+                        "failures": failures,
+                    }
             # Cooldown only applies when the previous attempt did not extend
             # coverage far enough — i.e. we'd be retrying the same gap.
             last_target = entry.get("target_start_ms")
@@ -479,27 +596,66 @@ def ensure_funding_history(
             pass
 
     days_back = max(1, int((now.timestamp() * 1000 - start_ms) / 86400000) + 1)
+    # Only non-default options are passed, so the plain on-demand call stays
+    # ``backfill_funding_history(asset, days_back=...)``.
+    options: dict = {}
+    if resume_from_ms is not None:
+        options["start_ms"] = resume_from_ms
+    if venue_coin and str(venue_coin) != normalized_asset:
+        options["venue_coin"] = str(venue_coin)
+    if page_interval_seconds:
+        options["page_interval_seconds"] = float(page_interval_seconds)
+    if deadline is not None:
+        options["deadline"] = float(deadline)
     try:
-        result = backfill_funding_history(normalized_asset, days_back=days_back)
+        result = backfill_funding_history(normalized_asset, days_back=days_back, **options)
     except Exception as exc:
         log.warning("Self-healing funding backfill failed for %s: %s", normalized_asset, exc)
         return {"action": "error", "asset": normalized_asset, "error": str(exc)}
+    if not isinstance(result, dict):
+        result = {}
+
+    if result.get("rate_limited"):
+        # Not this asset's fault: record nothing, so it is first in line once
+        # the venue lets us back in.
+        return {
+            "action": "rate_limited",
+            "asset": normalized_asset,
+            "stored": result.get("total_stored"),
+        }
 
     new_earliest_ms, _ = get_funding_coverage_bounds(normalized_asset)
-    entry = {
+    failed = bool(result.get("error"))
+    interrupted = bool(result.get("deferred"))
+    came_back_empty = result.get("total_fetched") == 0
+    new_entry: dict = {
         "attempted_at": now.isoformat(),
         "target_start_ms": start_ms,
     }
-    # If the backfill ran to completion but still doesn't reach the requested
-    # start, the exchange has nothing older — record that bound.
-    if new_earliest_ms is not None and new_earliest_ms > start_ms:
-        entry["oldest_reachable_ms"] = new_earliest_ms
-    state[normalized_asset] = entry
+    if failed or (came_back_empty and not interrupted):
+        new_entry["failures"] = failures + 1
+    if resume_from_ms is not None or failed or interrupted:
+        # A top-up, a failure or a cut-short run says nothing new about how far
+        # back the exchange goes: keep what an earlier full backfill learned.
+        if oldest_reachable is not None:
+            new_entry["oldest_reachable_ms"] = int(oldest_reachable)
+    elif new_earliest_ms is not None and new_earliest_ms > start_ms:
+        # The backfill ran to completion but still doesn't reach the requested
+        # start, so the exchange has nothing older — record that bound.
+        new_entry["oldest_reachable_ms"] = new_earliest_ms
+    state[normalized_asset] = new_entry
     try:
         kv_set(_FUNDING_BACKFILL_STATE_KEY, state)
     except Exception:
         pass
 
+    if failed:
+        return {
+            "action": "error",
+            "asset": normalized_asset,
+            "error": str(result.get("error")),
+            "failures": failures + 1,
+        }
     return {
         "action": "backfilled",
         "asset": normalized_asset,
@@ -507,6 +663,8 @@ def ensure_funding_history(
         "stored": result.get("total_stored"),
         "oldest_record": result.get("oldest_record"),
         "earliest_ms": new_earliest_ms,
+        "topped_up": resume_from_ms is not None,
+        "partial": interrupted,
     }
 
 
@@ -565,32 +723,113 @@ def _funding_reconcile_assets() -> list[str]:
     return assets
 
 
+def _hyperliquid_funding_coins(assets: list[str]) -> dict[str, str | None]:
+    """Each asset's exact Hyperliquid perp name, or None when it is not listed.
+
+    Hyperliquid answers fundingHistory for a coin it does not list with an HTTP
+    500, so stock tickers, renamed coins and Binance-only symbols that reached
+    the strategy table (TSLA, CL, MATIC, ALLO) were asked for again on every
+    run. Uses the same hourly-cached listing as the candle collector, and fails
+    open (every asset asked under its own name) when the listing can't be read.
+    """
+    try:
+        from forven.dataeng.venue import resolve_hl_coin
+    except Exception:
+        return {asset: asset for asset in assets}
+    coins: dict[str, str | None] = {}
+    for asset in assets:
+        try:
+            coins[asset] = resolve_hl_coin(asset)
+        except ValueError:
+            coins[asset] = None
+        except Exception:
+            coins[asset] = asset
+    return coins
+
+
 def reconcile_funding_history(
     target_days: int = DEFAULT_FUNDING_TARGET_DAYS,
     assets: list[str] | None = None,
+    *,
+    budget_seconds: float = _FUNDING_RECONCILE_BUDGET_SECONDS,
+    page_interval_seconds: float = _FUNDING_RECONCILE_PAGE_INTERVAL_SECONDS,
 ) -> dict:
     """Keep historical funding coverage filled for all traded assets.
 
     Runs on a schedule so fresh installs (and factory resets) converge to
     ``target_days`` of funding history without any operator action. Covers the
     scan set AND every asset strategies are configured to trade.
+
+    It is a background job on a request budget the live account reads share,
+    so it is deliberately slow: requests are spaced ``page_interval_seconds``
+    apart, coins Hyperliquid does not list are skipped, and the run stops at
+    the first rate-limit answer or after ``budget_seconds``. Whatever is left
+    is ``deferred`` and goes first next time (least recently attempted first).
     """
     resolved_assets = assets if assets is not None else _funding_reconcile_assets()
     start_ms = int((datetime.now(timezone.utc) - timedelta(days=int(target_days))).timestamp() * 1000)
+    venue_coins = _hyperliquid_funding_coins(resolved_assets)
+
+    try:
+        state = _load_backfill_state()
+    except Exception:
+        state = {}
+
+    def _last_attempt(asset: str) -> str:
+        entry = state.get(str(asset).strip().upper())
+        return str(entry.get("attempted_at") or "") if isinstance(entry, dict) else ""
+
+    deadline = time.monotonic() + max(0.0, float(budget_seconds))
     results: dict[str, dict] = {}
     backfilled = 0
-    for asset in resolved_assets:
-        outcome = ensure_funding_history(asset, start_ms)
+    stopped: str | None = None
+    for asset in sorted(resolved_assets, key=_last_attempt):
+        coin = venue_coins.get(asset, asset)
+        if coin is None:
+            results[asset] = {"action": "skipped_unlisted", "asset": asset}
+            continue
+        if stopped is None and time.monotonic() >= deadline:
+            stopped = "time_budget"
+        if stopped is not None:
+            results[asset] = {"action": "deferred", "asset": asset, "reason": stopped}
+            continue
+        outcome = ensure_funding_history(
+            asset,
+            start_ms,
+            venue_coin=coin,
+            page_interval_seconds=page_interval_seconds,
+            deadline=deadline,
+        )
         results[asset] = outcome
-        if outcome.get("action") == "backfilled":
+        action = outcome.get("action")
+        if action == "backfilled":
             backfilled += 1
+        elif action == "rate_limited":
+            stopped = "rate_limited"
+
+    counts: dict[str, int] = {}
+    for outcome in results.values():
+        action = str(outcome.get("action") or "unknown")
+        counts[action] = counts.get(action, 0) + 1
     summary = {
         "target_days": int(target_days),
         "assets": resolved_assets,
         "backfilled": backfilled,
+        "stopped": stopped,
+        "counts": counts,
         "results": results,
         "completed_at": _now_iso(),
     }
+    if stopped == "rate_limited":
+        log.warning(
+            "Funding history reconciliation stopped early: Hyperliquid rate limit. "
+            "%d asset(s) wait for the next run.", counts.get("deferred", 0),
+        )
+    elif stopped:
+        log.info(
+            "Funding history reconciliation used its time budget; %d asset(s) wait for the next run.",
+            counts.get("deferred", 0),
+        )
     if backfilled:
         log_activity(
             "info",

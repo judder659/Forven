@@ -127,6 +127,7 @@ _AGENT_TASK_TIMEOUT_MINUTES = 25  # 25 min — must exceed evolution timeout
 _JOB_RUNNING_STALE_SECONDS = _AGENT_TASK_TIMEOUT_MINUTES * 60  # derived, not independent
 _STALE_RECOVERY_MINUTES = 7
 _SCANNER_JOB_TIMEOUT_SECONDS = 180
+_SCANNER_TIME_BUDGET_FRACTION = 0.8
 _USER_PRIORITY_MAX_DEFER_SECONDS = 120
 
 # Clamp the operational defaults to the true agent runtime window so stale
@@ -1417,6 +1418,10 @@ async def run_job(job: dict) -> tuple[str, str | None]:
             await _run_sync_job(
                 run_scan,
                 execute_positions=bool(payload.get("execute_positions", True)),
+                # The pass stops starting paper work at 80% of its limit and
+                # leaves the rest for the next pass, so it ends inside the
+                # limit instead of timing out with its thread still running.
+                time_budget_seconds=timeout_seconds * _SCANNER_TIME_BUDGET_FRACTION,
                 timeout_seconds=timeout_seconds,
             )
             return "ok", None

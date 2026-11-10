@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from forven import api_core as core
 from forven.api_domains import trading as trading_domain
 from forven import multi_coin
-from forven.db import _now, get_db, kv_get, kv_set, live_equity_baseline_kv_key
+from forven.db import _now, get_db, kv_get, kv_read_scope, kv_set, live_equity_baseline_kv_key
 from forven.execution_observations import NOT_BLOCKS
 from forven.market_data import fetch_market_candles
 from forven.scheduler import enable_job
@@ -51,6 +51,33 @@ def _matches_strategy_trade(trade_row: dict, strategy_keys: set[str]) -> bool:
         if normalized and normalized in strategy_keys:
             return True
     return False
+
+
+def _index_trades_by_strategy_key(trades: list[dict]) -> dict[str, list[int]]:
+    """Positions of each trade under the strategy keys it carries.
+
+    One pass over the trades, so a fleet of sessions no longer compares every
+    strategy against every trade.
+    """
+    index: dict[str, list[int]] = {}
+    for position, trade_row in enumerate(trades):
+        seen: set[str] = set()
+        for field in ("strategy_id", "strategy"):
+            normalized = str(trade_row.get(field) or "").strip().lower()
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                index.setdefault(normalized, []).append(position)
+    return index
+
+
+def _indexed_strategy_trades(
+    trades: list[dict], index: dict[str, list[int]], strategy_keys: set[str]
+) -> list[dict]:
+    """The trades ``_matches_strategy_trade`` accepts, in their original order."""
+    positions: set[int] = set()
+    for key in strategy_keys:
+        positions.update(index.get(key, ()))
+    return [trades[position] for position in sorted(positions)]
 
 
 def _normalize_trade_percent_value(value: object) -> float | None:
@@ -413,18 +440,27 @@ def _session_signal_snapshot(strategy_row: dict, scanner_signals: dict) -> dict:
     return _scanner_strategy_payload(strategy_row, scanner_signals)
 
 
-def _scanner_strategy_payload(strategy_row: dict, payload_map: dict) -> dict:
-    if not isinstance(payload_map, dict):
-        return {}
-
+def _scanner_payload_lookup(payload_map: object) -> dict[str, dict]:
+    """Scanner payloads keyed by lower-cased strategy key."""
     lookup: dict[str, dict] = {}
+    if not isinstance(payload_map, dict):
+        return lookup
     for raw_key, raw_value in payload_map.items():
         if not isinstance(raw_value, dict):
             continue
         key = str(raw_key or "").strip().lower()
         if key:
             lookup[key] = raw_value
+    return lookup
 
+
+def _scanner_strategy_payload(strategy_row: dict, payload_map: dict) -> dict:
+    if not isinstance(payload_map, dict):
+        return {}
+    return _scanner_lookup_payload(strategy_row, _scanner_payload_lookup(payload_map))
+
+
+def _scanner_lookup_payload(strategy_row: dict, lookup: dict[str, dict]) -> dict:
     for field in ("id", "display_id", "name"):
         candidate = str(strategy_row.get(field) or "").strip().lower()
         if not candidate:
@@ -629,7 +665,12 @@ def _collect_compat_paper_sessions(
     include_deployed: bool = False,
     session_limit: int | None = None,
     trades_limit: int = 500,
+    only_strategy_id: str | None = None,
 ) -> list[dict]:
+    """Paper (and optionally live) session cards built from strategies and trades.
+
+    ``only_strategy_id`` builds the one strategy's card instead of the fleet's.
+    """
     try:
         trades_cap = max(int(trades_limit), 1)
     except Exception:
@@ -668,8 +709,10 @@ def _collect_compat_paper_sessions(
         rows = conn.execute(
             "SELECT id, display_id, name, type, symbol, timeframe, params, stage, status, created_at, updated_at, metrics, "
             f"{compat_column_sql} "
-            f"FROM strategies WHERE {status_filter_sql} "
-            "ORDER BY updated_at DESC, created_at DESC"
+            f"FROM strategies WHERE ({status_filter_sql}) "
+            + ("AND id = ? " if only_strategy_id is not None else "")
+            + "ORDER BY updated_at DESC, created_at DESC",
+            (str(only_strategy_id),) if only_strategy_id is not None else (),
         ).fetchall()
 
     if not rows:
@@ -685,6 +728,9 @@ def _collect_compat_paper_sessions(
     scanner_diagnostics = scanner_state.get("diagnostics", {}) if isinstance(scanner_state, dict) else {}
     scanner_ts = str(scanner_state.get("last_scan") or _now()) if isinstance(scanner_state, dict) else _now()
     recent_trades = trading_domain.read_recent_trades(limit=5000)
+    trades_by_key = _index_trades_by_strategy_key(recent_trades)
+    signal_lookup = _scanner_payload_lookup(scanner_signals)
+    diagnostic_lookup = _scanner_payload_lookup(scanner_diagnostics)
 
     # Real Hyperliquid balance for DEPLOYED/live sessions, read once from the cached
     # daemon snapshot (no per-session exchange round-trip — WS-starvation safe).
@@ -706,328 +752,27 @@ def _collect_compat_paper_sessions(
             live_ceilings = {}
 
     sessions: list[dict] = []
-    for row in rows:
-        strategy_row = dict(row)
-        strategy_id = str(strategy_row.get("id") or "").strip()
-        if not strategy_id:
-            continue
-
-        strategy_name = (
-            str(strategy_row.get("display_id") or "").strip()
-            or str(strategy_row.get("name") or "").strip()
-            or strategy_id
-        )
-        symbol = str(strategy_row.get("symbol") or "").strip().upper() or "BTC/USDT"
-        timeframe = str(strategy_row.get("timeframe") or "").strip() or "1h"
-
-        stage_status = core._to_core_status(str(strategy_row.get("stage") or strategy_row.get("status") or "")) or ""
-        is_deployed = stage_status == "live_graduated"
-
-        keys = _strategy_trade_keys(strategy_row)
-        matched_trades = [
-            trade
-            for trade in recent_trades
-            if _matches_strategy_trade(trade, keys)
-            and _trade_belongs_to_strategy_incarnation(trade, strategy_row)
-        ]
-        # LANE-1: the card reflects ONLY its current lane's trades (see
-        # _filter_session_lane_trades) — position, history, and PnL summary alike.
-        matched_trades = _filter_session_lane_trades(matched_trades, is_deployed=is_deployed)
-
-        open_trades = [
-            trade
-            for trade in matched_trades
-            if str(trade.get("status") or "").strip().upper() == "OPEN"
-        ]
-        open_trades.sort(key=lambda trade: core._to_datetime_sort_key(trade.get("opened_at")), reverse=True)
-        active_trade = open_trades[0] if open_trades else None
-
-        closed_trades = [
-            trade
-            for trade in matched_trades
-            if str(trade.get("status") or "").strip().upper() == "CLOSED"
-        ]
-        closed_trades.sort(
-            key=lambda trade: core._to_datetime_sort_key(trade.get("closed_at") or trade.get("opened_at")),
-            reverse=True,
-        )
-
-        # Multi-coin containers (forven.multi_coin) record every coin's trades
-        # under this strategy: each trade and position names its own coin.
-        try:
-            container_record = kv_get(multi_coin.kv_key(strategy_id), None)
-        except Exception:
-            container_record = None
-        container = multi_coin.container_view(container_record, symbol, pipeline_config)
-        home_coin = multi_coin.coin_key(symbol)
-
-        def _trade_symbol(trade: dict) -> str:
-            if not container:
-                return symbol
-            coin = multi_coin.trade_coin(trade, symbol)
-            return symbol if coin == home_coin else multi_coin.leg_symbol(coin, symbol)
-
-        all_closed_trade_views = [
-            _build_compat_paper_trade(trade, strategy_name=strategy_name, symbol=_trade_symbol(trade))
-            for trade in closed_trades
-        ]
-        session_trades = all_closed_trade_views[:trades_cap]
-        performance = _build_session_performance_metrics(all_closed_trade_views)
-
-        total_closed_pnl = sum(
-            trading_domain._coerce_optional_float(trade.get("pnl")) or 0.0
-            for trade in all_closed_trade_views
-            if trading_domain._coerce_optional_float(trade.get("pnl")) is not None
-        )
-        winning_trades = sum(
-            1
-            for trade in all_closed_trade_views
-            if (trading_domain._coerce_optional_float(trade.get("pnl")) or 0.0) > 0
-        )
-
-        current_price = _resolve_session_current_price(price_map, symbol)
-        if current_price is None and active_trade is not None:
-            current_price = trading_domain._coerce_optional_float(active_trade.get("entry_price"))
-        if current_price is None:
-            current_price = 0.0
-
-        positions: list[dict] = []
-        unrealized_pnl = 0.0
-        fallback_time = str((active_trade or {}).get("opened_at") or strategy_row.get("updated_at") or _now())
-        for open_trade in open_trades:
-            trade_symbol = _trade_symbol(open_trade)
-            trade_price = float(current_price)
-            if trade_symbol != symbol:
-                # Another coin of a container: value it at its own price, never the home coin's.
-                trade_price = (
-                    _resolve_session_current_price(price_map, trade_symbol)
-                    or trading_domain._coerce_optional_float(open_trade.get("entry_price"))
-                    or 0.0
-                )
-            position_view, trade_unrealized = _build_session_position_view(
-                open_trade,
-                current_price=float(trade_price),
-                fallback_time=fallback_time,
+    # One connection for the whole fleet: each card reads its multi-coin record
+    # and its starting capital, which used to open two connections per strategy.
+    with kv_read_scope() as shared_conn:
+        for row in rows:
+            session = _build_compat_paper_session(
+                dict(row),
+                recent_trades=recent_trades,
+                trades_by_key=trades_by_key,
+                trades_cap=trades_cap,
+                price_map=price_map,
                 exchange_positions=exchange_positions,
+                signal_lookup=signal_lookup,
+                diagnostic_lookup=diagnostic_lookup,
+                scanner_ts=scanner_ts,
+                pipeline_config=pipeline_config,
+                real_account=real_account,
+                live_ceilings=live_ceilings,
+                capital_conn=shared_conn,
             )
-            if position_view is None:
-                continue
-            position_view["symbol"] = trade_symbol
-            position_view["coin"] = multi_coin.coin_key(trade_symbol)
-            positions.append(position_view)
-            unrealized_pnl += float(trade_unrealized or 0.0)
-
-        position = positions[0] if len(positions) == 1 else None
-        # Sizes of different coins don't net against each other.
-        net_position = _build_net_position_view(
-            [pos for pos in positions if pos.get("symbol") == symbol], current_price=float(current_price)
-        )
-        coin_breakdown = (
-            multi_coin.coin_breakdown(
-                (
-                    {
-                        "coin": multi_coin.coin_key(trade.get("symbol")),
-                        "pnl": trade.get("pnl"),
-                        "closed_at": trade.get("exit_time"),
-                    }
-                    for trade in all_closed_trade_views
-                ),
-                positions,
-                container["coins"] if container else None,
-                home_coin,
-            )
-            if container
-            else None
-        )
-        position_sides = {str(pos.get("side") or "").lower() for pos in positions}
-
-        signal_snapshot = _session_signal_snapshot(strategy_row, scanner_signals)
-        diagnostic_snapshot = _session_diagnostic_snapshot(strategy_row, scanner_diagnostics)
-        diagnostic_blocked_reason = str(diagnostic_snapshot.get("blocked_reason") or "").strip()
-        indicators, pending_signals, last_signal = _build_session_runtime_fields(
-            signal_snapshot, scanner_ts, position_sides=position_sides
-        )
-        if "price" not in indicators and current_price > 0:
-            indicators["price"] = {
-                "name": "price",
-                "value": current_price,
-                "timestamp": scanner_ts,
-            }
-
-        params_dict = _parse_strategy_params(strategy_row.get("params"))
-        diagnostic_params = diagnostic_snapshot.get("canonical_params") if isinstance(diagnostic_snapshot, dict) else None
-        decision_params = dict(diagnostic_params) if isinstance(diagnostic_params, dict) and diagnostic_params else dict(params_dict)
-        session_leverage = (
-            trading_domain._coerce_optional_float((active_trade or {}).get("leverage"))
-            or trading_domain._coerce_optional_float(decision_params.get("leverage"))
-            or trading_domain._coerce_optional_float(params_dict.get("leverage"))
-            or 1.0
-        )
-
-        total_pnl = total_closed_pnl + unrealized_pnl
-
-        # Capital semantics differ by stage:
-        #  - PAPER: an isolated $10k sandbox; capital = base + reconstructed PnL.
-        #  - LIVE/deployed: the REAL Hyperliquid wallet equity. accountValue already
-        #    embeds realized+unrealized PnL on-exchange, so we set capital to it
-        #    DIRECTLY (adding total_pnl would double-count). The % return is anchored
-        #    to the stamped go-live baseline (its true deploy basis), falling back to
-        #    a derived cost basis (equity - this strategy's PnL) for legacy live rows
-        #    with no stamp. When no real snapshot is available (daemon not yet synced
-        #    / creds missing) we DO NOT present the $10k sandbox as if it were the
-        #    live wallet — balance_source='unavailable' tells the UI to say so.
-        account_value: float | None = None
-        account_withdrawable: float | None = None
-        account_margin_used: float | None = None
-        account_network: str | None = None
-        account_synced_at: str | None = None
-        live_notional_ceiling_usd: float | None = None
-        if is_deployed:
-            ceiling_entry = live_ceilings.get(strategy_id)
-            if isinstance(ceiling_entry, dict):
-                ceiling_value = trading_domain._coerce_optional_float(ceiling_entry.get("ceiling_usd"))
-                if ceiling_value and ceiling_value > 0:
-                    live_notional_ceiling_usd = ceiling_value
-            if real_account["available"]:
-                account_value = float(real_account["account_value"])
-                account_withdrawable = real_account["withdrawable"]
-                account_margin_used = real_account["margin_used"]
-                account_network = real_account["network"]
-                account_synced_at = real_account["synced_at"]
-                balance_source = real_account["source"]
-                capital = account_value
-                baseline = _resolve_live_equity_baseline(strategy_id)
-                if baseline is None or baseline <= 0:
-                    derived = account_value - total_pnl
-                    baseline = derived if derived > 0 else account_value
-                initial_capital = baseline
-                total_pnl_pct = (total_pnl / baseline) * 100.0 if baseline > 0 else 0.0
-            else:
-                # Deployed but the real balance has not synced (daemon not yet ticked
-                # / creds missing). Anchor NOTHING to the fabricated $10k sandbox base:
-                # capital/initial_capital are unavailable and the % is undefined, so the
-                # UI shows "balance unavailable" / "--" rather than a $10k-derived value.
-                # total_pnl (this strategy's own realized/unrealized $) is still real.
-                balance_source = "unavailable"
-                initial_capital = None
-                capital = None
-                total_pnl_pct = None
-        else:
-            balance_source = "simulated"
-            from forven.strategies.execution_contract import paper_initial_capital
-
-            with get_db() as capital_conn:
-                initial_capital = paper_initial_capital(capital_conn, strategy_id)
-            capital = initial_capital + total_pnl
-            total_pnl_pct = (total_pnl / initial_capital) * 100.0 if initial_capital > 0 else 0.0
-        session_trade_mode = _resolve_session_trade_mode(decision_params or params_dict, position_sides)
-        session_position_model = "hedged" if session_trade_mode == "both" else "single_side"
-        session_status = "position_open" if positions else _to_paper_session_status(
-            strategy_row.get("stage"),
-            strategy_row.get("status"),
-        )
-
-        started_at = (
-            str((active_trade or {}).get("opened_at") or "").strip()
-            or str(strategy_row.get("updated_at") or "").strip()
-            or str(strategy_row.get("created_at") or "").strip()
-            or None
-        )
-
-        gated_by_regime = False
-        gated_reason = ""
-        if diagnostic_blocked_reason:
-            lowered_blocked_reason = diagnostic_blocked_reason.lower()
-            if "regime" in lowered_blocked_reason:
-                gated_by_regime = True
-                gated_reason = diagnostic_blocked_reason
-            if not positions:
-                session_status = "gated" if gated_by_regime else "blocked"
-
-        sessions.append(
-            {
-                "id": _compat_session_id(
-                    strategy_id,
-                    strategy_row.get("created_at") or strategy_row.get("updated_at"),
-                ),
-                "strategy_id": strategy_id,
-                "strategy_name": strategy_name,
-                "strategy_type": str(strategy_row.get("type") or "").strip() or None,
-                "runtime_type": str(diagnostic_snapshot.get("runtime_type") or strategy_row.get("type") or "").strip() or None,
-                "runtime_source": str(diagnostic_snapshot.get("runtime_source") or "").strip() or None,
-                "strategy_version": "1.0.0",
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "params": params_dict,
-                "default_params": params_dict,
-                "decision_params": decision_params,
-                "runtime_diagnostics": diagnostic_snapshot or None,
-                "mode": "live",
-                "live_feed": "default",
-                "ibkr_sec_type": "STK",
-                "ibkr_exchange": "SMART",
-                "ibkr_currency": "USD",
-                "ibkr_what_to_show": "TRADES",
-                "replay_start": None,
-                "replay_end": None,
-                "replay_speed": 1,
-                "initial_capital": initial_capital,
-                "position_size_pct": 100.0,
-                "stop_loss_pct": None,
-                "take_profit_pct": None,
-                "trailing_stop_pct": None,
-                "fee_mode": "taker",
-                "taker_fee_bps": 4.5,
-                "maker_fee_bps": 1.5,
-                "funding_mode": "off",
-                "funding_rate_bps_per_interval": 0.0,
-                "funding_interval_hours": 8,
-                "leverage": session_leverage,
-                "accrued_funding": 0.0,
-                "status": session_status,
-                "current_price": current_price,
-                "position": position,
-                "positions": positions,
-                "net_position": net_position,
-                "trade_mode": session_trade_mode,
-                "position_model": session_position_model,
-                "trades": session_trades,
-                "indicators": indicators,
-                "pending_signals": pending_signals,
-                "last_signal": last_signal,
-                "capital": capital,
-                # Real Hyperliquid balance fields (deployed/live only). For paper
-                # sessions account_value is None and balance_source='simulated';
-                # the UI uses these to show the true wallet for live cards and a
-                # 'balance unavailable' state instead of a fabricated number.
-                "account_value": account_value,
-                "account_withdrawable": account_withdrawable,
-                "account_margin_used": account_margin_used,
-                "balance_source": balance_source,
-                "account_network": account_network,
-                "account_synced_at": account_synced_at,
-                # GO-LIVE-1: per-asset notional ceiling enforced on every live
-                # open (None = no per-strategy cap; deployed sessions only).
-                "live_notional_ceiling_usd": live_notional_ceiling_usd,
-                "total_pnl": total_pnl,
-                "total_pnl_pct": total_pnl_pct,
-                "total_trades": len(all_closed_trade_views),
-                "winning_trades": winning_trades,
-                "performance": performance,
-                "win_rate_pct": performance.get("win_rate_pct"),
-                "avg_pnl": performance.get("avg_pnl"),
-                "avg_pnl_pct": performance.get("avg_pnl_pct"),
-                "profit_factor": performance.get("profit_factor"),
-                "expectancy": performance.get("expectancy"),
-                "started_at": started_at,
-                "compat_kind": "deployed" if is_deployed else "paper",
-                "gated_by_regime": gated_by_regime,
-                "gated_reason": gated_reason,
-                "blocked_reason": diagnostic_blocked_reason or None,
-                "multi_coin": container,
-                "coin_breakdown": coin_breakdown,
-            }
-        )
+            if session is not None:
+                sessions.append(session)
 
     sessions.sort(
         key=lambda session: core._to_datetime_sort_key(session.get("started_at") or _now()),
@@ -1038,6 +783,343 @@ def _collect_compat_paper_sessions(
     return sessions
 
 
+def _build_compat_paper_session(
+    strategy_row: dict,
+    *,
+    recent_trades: list[dict],
+    trades_by_key: dict[str, list[int]],
+    trades_cap: int,
+    price_map: dict,
+    exchange_positions: dict,
+    signal_lookup: dict[str, dict],
+    diagnostic_lookup: dict[str, dict],
+    scanner_ts: str,
+    pipeline_config: dict,
+    real_account: dict,
+    live_ceilings: dict,
+    capital_conn,
+) -> dict | None:
+    """One strategy's session card."""
+    strategy_id = str(strategy_row.get("id") or "").strip()
+    if not strategy_id:
+        return None
+
+    strategy_name = (
+        str(strategy_row.get("display_id") or "").strip()
+        or str(strategy_row.get("name") or "").strip()
+        or strategy_id
+    )
+    symbol = str(strategy_row.get("symbol") or "").strip().upper() or "BTC/USDT"
+    timeframe = str(strategy_row.get("timeframe") or "").strip() or "1h"
+
+    stage_status = core._to_core_status(str(strategy_row.get("stage") or strategy_row.get("status") or "")) or ""
+    is_deployed = stage_status == "live_graduated"
+
+    keys = _strategy_trade_keys(strategy_row)
+    matched_trades = [
+        trade
+        for trade in _indexed_strategy_trades(recent_trades, trades_by_key, keys)
+        if _trade_belongs_to_strategy_incarnation(trade, strategy_row)
+    ]
+    # LANE-1: the card reflects ONLY its current lane's trades (see
+    # _filter_session_lane_trades) — position, history, and PnL summary alike.
+    matched_trades = _filter_session_lane_trades(matched_trades, is_deployed=is_deployed)
+
+    open_trades = [
+        trade
+        for trade in matched_trades
+        if str(trade.get("status") or "").strip().upper() == "OPEN"
+    ]
+    open_trades.sort(key=lambda trade: core._to_datetime_sort_key(trade.get("opened_at")), reverse=True)
+    active_trade = open_trades[0] if open_trades else None
+
+    closed_trades = [
+        trade
+        for trade in matched_trades
+        if str(trade.get("status") or "").strip().upper() == "CLOSED"
+    ]
+    closed_trades.sort(
+        key=lambda trade: core._to_datetime_sort_key(trade.get("closed_at") or trade.get("opened_at")),
+        reverse=True,
+    )
+
+    # Multi-coin containers (forven.multi_coin) record every coin's trades
+    # under this strategy: each trade and position names its own coin.
+    try:
+        container_record = kv_get(multi_coin.kv_key(strategy_id), None)
+    except Exception:
+        container_record = None
+    container = multi_coin.container_view(container_record, symbol, pipeline_config)
+    home_coin = multi_coin.coin_key(symbol)
+
+    def _trade_symbol(trade: dict) -> str:
+        if not container:
+            return symbol
+        coin = multi_coin.trade_coin(trade, symbol)
+        return symbol if coin == home_coin else multi_coin.leg_symbol(coin, symbol)
+
+    all_closed_trade_views = [
+        _build_compat_paper_trade(trade, strategy_name=strategy_name, symbol=_trade_symbol(trade))
+        for trade in closed_trades
+    ]
+    session_trades = all_closed_trade_views[:trades_cap]
+    performance = _build_session_performance_metrics(all_closed_trade_views)
+
+    total_closed_pnl = sum(
+        trading_domain._coerce_optional_float(trade.get("pnl")) or 0.0
+        for trade in all_closed_trade_views
+        if trading_domain._coerce_optional_float(trade.get("pnl")) is not None
+    )
+    winning_trades = sum(
+        1
+        for trade in all_closed_trade_views
+        if (trading_domain._coerce_optional_float(trade.get("pnl")) or 0.0) > 0
+    )
+
+    current_price = _resolve_session_current_price(price_map, symbol)
+    if current_price is None and active_trade is not None:
+        current_price = trading_domain._coerce_optional_float(active_trade.get("entry_price"))
+    if current_price is None:
+        current_price = 0.0
+
+    positions: list[dict] = []
+    unrealized_pnl = 0.0
+    fallback_time = str((active_trade or {}).get("opened_at") or strategy_row.get("updated_at") or _now())
+    for open_trade in open_trades:
+        trade_symbol = _trade_symbol(open_trade)
+        trade_price = float(current_price)
+        if trade_symbol != symbol:
+            # Another coin of a container: value it at its own price, never the home coin's.
+            trade_price = (
+                _resolve_session_current_price(price_map, trade_symbol)
+                or trading_domain._coerce_optional_float(open_trade.get("entry_price"))
+                or 0.0
+            )
+        position_view, trade_unrealized = _build_session_position_view(
+            open_trade,
+            current_price=float(trade_price),
+            fallback_time=fallback_time,
+            exchange_positions=exchange_positions,
+        )
+        if position_view is None:
+            continue
+        position_view["symbol"] = trade_symbol
+        position_view["coin"] = multi_coin.coin_key(trade_symbol)
+        positions.append(position_view)
+        unrealized_pnl += float(trade_unrealized or 0.0)
+
+    position = positions[0] if len(positions) == 1 else None
+    # Sizes of different coins don't net against each other.
+    net_position = _build_net_position_view(
+        [pos for pos in positions if pos.get("symbol") == symbol], current_price=float(current_price)
+    )
+    coin_breakdown = (
+        multi_coin.coin_breakdown(
+            (
+                {
+                    "coin": multi_coin.coin_key(trade.get("symbol")),
+                    "pnl": trade.get("pnl"),
+                    "closed_at": trade.get("exit_time"),
+                }
+                for trade in all_closed_trade_views
+            ),
+            positions,
+            container["coins"] if container else None,
+            home_coin,
+        )
+        if container
+        else None
+    )
+    position_sides = {str(pos.get("side") or "").lower() for pos in positions}
+
+    signal_snapshot = _scanner_lookup_payload(strategy_row, signal_lookup)
+    diagnostic_snapshot = _scanner_lookup_payload(strategy_row, diagnostic_lookup)
+    diagnostic_blocked_reason = str(diagnostic_snapshot.get("blocked_reason") or "").strip()
+    indicators, pending_signals, last_signal = _build_session_runtime_fields(
+        signal_snapshot, scanner_ts, position_sides=position_sides
+    )
+    if "price" not in indicators and current_price > 0:
+        indicators["price"] = {
+            "name": "price",
+            "value": current_price,
+            "timestamp": scanner_ts,
+        }
+
+    params_dict = _parse_strategy_params(strategy_row.get("params"))
+    diagnostic_params = diagnostic_snapshot.get("canonical_params") if isinstance(diagnostic_snapshot, dict) else None
+    decision_params = dict(diagnostic_params) if isinstance(diagnostic_params, dict) and diagnostic_params else dict(params_dict)
+    session_leverage = (
+        trading_domain._coerce_optional_float((active_trade or {}).get("leverage"))
+        or trading_domain._coerce_optional_float(decision_params.get("leverage"))
+        or trading_domain._coerce_optional_float(params_dict.get("leverage"))
+        or 1.0
+    )
+
+    total_pnl = total_closed_pnl + unrealized_pnl
+
+    # Capital semantics differ by stage:
+    #  - PAPER: an isolated $10k sandbox; capital = base + reconstructed PnL.
+    #  - LIVE/deployed: the REAL Hyperliquid wallet equity. accountValue already
+    #    embeds realized+unrealized PnL on-exchange, so we set capital to it
+    #    DIRECTLY (adding total_pnl would double-count). The % return is anchored
+    #    to the stamped go-live baseline (its true deploy basis), falling back to
+    #    a derived cost basis (equity - this strategy's PnL) for legacy live rows
+    #    with no stamp. When no real snapshot is available (daemon not yet synced
+    #    / creds missing) we DO NOT present the $10k sandbox as if it were the
+    #    live wallet — balance_source='unavailable' tells the UI to say so.
+    account_value: float | None = None
+    account_withdrawable: float | None = None
+    account_margin_used: float | None = None
+    account_network: str | None = None
+    account_synced_at: str | None = None
+    live_notional_ceiling_usd: float | None = None
+    if is_deployed:
+        ceiling_entry = live_ceilings.get(strategy_id)
+        if isinstance(ceiling_entry, dict):
+            ceiling_value = trading_domain._coerce_optional_float(ceiling_entry.get("ceiling_usd"))
+            if ceiling_value and ceiling_value > 0:
+                live_notional_ceiling_usd = ceiling_value
+        if real_account["available"]:
+            account_value = float(real_account["account_value"])
+            account_withdrawable = real_account["withdrawable"]
+            account_margin_used = real_account["margin_used"]
+            account_network = real_account["network"]
+            account_synced_at = real_account["synced_at"]
+            balance_source = real_account["source"]
+            capital = account_value
+            baseline = _resolve_live_equity_baseline(strategy_id)
+            if baseline is None or baseline <= 0:
+                derived = account_value - total_pnl
+                baseline = derived if derived > 0 else account_value
+            initial_capital = baseline
+            total_pnl_pct = (total_pnl / baseline) * 100.0 if baseline > 0 else 0.0
+        else:
+            # Deployed but the real balance has not synced (daemon not yet ticked
+            # / creds missing). Anchor NOTHING to the fabricated $10k sandbox base:
+            # capital/initial_capital are unavailable and the % is undefined, so the
+            # UI shows "balance unavailable" / "--" rather than a $10k-derived value.
+            # total_pnl (this strategy's own realized/unrealized $) is still real.
+            balance_source = "unavailable"
+            initial_capital = None
+            capital = None
+            total_pnl_pct = None
+    else:
+        balance_source = "simulated"
+        from forven.strategies.execution_contract import paper_initial_capital
+
+        initial_capital = paper_initial_capital(capital_conn, strategy_id)
+        capital = initial_capital + total_pnl
+        total_pnl_pct = (total_pnl / initial_capital) * 100.0 if initial_capital > 0 else 0.0
+    session_trade_mode = _resolve_session_trade_mode(decision_params or params_dict, position_sides)
+    session_position_model = "hedged" if session_trade_mode == "both" else "single_side"
+    session_status = "position_open" if positions else _to_paper_session_status(
+        strategy_row.get("stage"),
+        strategy_row.get("status"),
+    )
+
+    started_at = (
+        str((active_trade or {}).get("opened_at") or "").strip()
+        or str(strategy_row.get("updated_at") or "").strip()
+        or str(strategy_row.get("created_at") or "").strip()
+        or None
+    )
+
+    gated_by_regime = False
+    gated_reason = ""
+    if diagnostic_blocked_reason:
+        lowered_blocked_reason = diagnostic_blocked_reason.lower()
+        if "regime" in lowered_blocked_reason:
+            gated_by_regime = True
+            gated_reason = diagnostic_blocked_reason
+        if not positions:
+            session_status = "gated" if gated_by_regime else "blocked"
+
+    return (
+        {
+            "id": _compat_session_id(
+                strategy_id,
+                strategy_row.get("created_at") or strategy_row.get("updated_at"),
+            ),
+            "strategy_id": strategy_id,
+            "strategy_name": strategy_name,
+            "strategy_type": str(strategy_row.get("type") or "").strip() or None,
+            "runtime_type": str(diagnostic_snapshot.get("runtime_type") or strategy_row.get("type") or "").strip() or None,
+            "runtime_source": str(diagnostic_snapshot.get("runtime_source") or "").strip() or None,
+            "strategy_version": "1.0.0",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "params": params_dict,
+            "default_params": params_dict,
+            "decision_params": decision_params,
+            "runtime_diagnostics": diagnostic_snapshot or None,
+            "mode": "live",
+            "live_feed": "default",
+            "ibkr_sec_type": "STK",
+            "ibkr_exchange": "SMART",
+            "ibkr_currency": "USD",
+            "ibkr_what_to_show": "TRADES",
+            "replay_start": None,
+            "replay_end": None,
+            "replay_speed": 1,
+            "initial_capital": initial_capital,
+            "position_size_pct": 100.0,
+            "stop_loss_pct": None,
+            "take_profit_pct": None,
+            "trailing_stop_pct": None,
+            "fee_mode": "taker",
+            "taker_fee_bps": 4.5,
+            "maker_fee_bps": 1.5,
+            "funding_mode": "off",
+            "funding_rate_bps_per_interval": 0.0,
+            "funding_interval_hours": 8,
+            "leverage": session_leverage,
+            "accrued_funding": 0.0,
+            "status": session_status,
+            "current_price": current_price,
+            "position": position,
+            "positions": positions,
+            "net_position": net_position,
+            "trade_mode": session_trade_mode,
+            "position_model": session_position_model,
+            "trades": session_trades,
+            "indicators": indicators,
+            "pending_signals": pending_signals,
+            "last_signal": last_signal,
+            "capital": capital,
+            # Real Hyperliquid balance fields (deployed/live only). For paper
+            # sessions account_value is None and balance_source='simulated';
+            # the UI uses these to show the true wallet for live cards and a
+            # 'balance unavailable' state instead of a fabricated number.
+            "account_value": account_value,
+            "account_withdrawable": account_withdrawable,
+            "account_margin_used": account_margin_used,
+            "balance_source": balance_source,
+            "account_network": account_network,
+            "account_synced_at": account_synced_at,
+            # GO-LIVE-1: per-asset notional ceiling enforced on every live
+            # open (None = no per-strategy cap; deployed sessions only).
+            "live_notional_ceiling_usd": live_notional_ceiling_usd,
+            "total_pnl": total_pnl,
+            "total_pnl_pct": total_pnl_pct,
+            "total_trades": len(all_closed_trade_views),
+            "winning_trades": winning_trades,
+            "performance": performance,
+            "win_rate_pct": performance.get("win_rate_pct"),
+            "avg_pnl": performance.get("avg_pnl"),
+            "avg_pnl_pct": performance.get("avg_pnl_pct"),
+            "profit_factor": performance.get("profit_factor"),
+            "expectancy": performance.get("expectancy"),
+            "started_at": started_at,
+            "compat_kind": "deployed" if is_deployed else "paper",
+            "gated_by_regime": gated_by_regime,
+            "gated_reason": gated_reason,
+            "blocked_reason": diagnostic_blocked_reason or None,
+            "multi_coin": container,
+            "coin_breakdown": coin_breakdown,
+        }
+    )
+
+
 def _find_compat_paper_session(session_id: str, include_deployed: bool = True) -> dict:
     target = str(session_id or "").strip()
     if not target:
@@ -1046,19 +1128,35 @@ def _find_compat_paper_session(session_id: str, include_deployed: bool = True) -
     normalized_target_id = _compat_session_id(_compat_strategy_id_from_session_id(target))
     target_strategy_id = _compat_strategy_id_from_session_id(target).strip()
 
-    sessions = _collect_compat_paper_sessions(include_deployed=include_deployed)
-    for session in sessions:
-        session_id_value = str(session.get("id") or "").strip()
-        strategy_id_value = _compat_strategy_id_from_session_id(session_id_value)
-        if target == session_id_value:
-            return session
-        if target == strategy_id_value:
-            return session
-        if target.startswith(_COMPAT_SESSION_PREFIX) and target_strategy_id == strategy_id_value:
-            return session
-        if normalized_target_id == session_id_value and target_strategy_id == strategy_id_value:
-            return session
-    raise HTTPException(status_code=404, detail=f"paper session not found: {target}")
+    def _match(sessions: list[dict]) -> dict | None:
+        for session in sessions:
+            session_id_value = str(session.get("id") or "").strip()
+            strategy_id_value = _compat_strategy_id_from_session_id(session_id_value)
+            if target == session_id_value:
+                return session
+            if target == strategy_id_value:
+                return session
+            if target.startswith(_COMPAT_SESSION_PREFIX) and target_strategy_id == strategy_id_value:
+                return session
+            if normalized_target_id == session_id_value and target_strategy_id == strategy_id_value:
+                return session
+        return None
+
+    # Every session page request (chart, markers, indicators, trades) lands
+    # here, so build the one card it names. Only an id that does not resolve
+    # that way falls back to searching the whole fleet.
+    found = None
+    if target_strategy_id:
+        found = _match(
+            _collect_compat_paper_sessions(
+                include_deployed=include_deployed, only_strategy_id=target_strategy_id
+            )
+        )
+    if found is None:
+        found = _match(_collect_compat_paper_sessions(include_deployed=include_deployed))
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"paper session not found: {target}")
+    return found
 
 
 def _load_session_bars(

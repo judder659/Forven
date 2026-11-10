@@ -9291,6 +9291,25 @@ def _add_item_part(name: str, started: float) -> float:
 _SCAN_EXEC_TIMINGS: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "forven_scan_exec_timings", default=None
 )
+# When the running scan must stop starting new paper work (time.monotonic()).
+# Set only around the execution of strategies with no open position, and only
+# when the caller gave the scan a time budget.
+_SCAN_DEADLINE: "contextvars.ContextVar[float | None]" = contextvars.ContextVar(
+    "forven_scan_deadline", default=None
+)
+# Paper strategies the last pass ran out of time for. They go first in the next
+# pass, so a fleet too large for one pass is worked through in turn.
+_DEFERRED_PAPER_IDS: set[str] = set()
+_DEFERRED_PAPER_LOCK = threading.Lock()
+
+
+def _deferred_first(items: list[dict]) -> list[dict]:
+    """``items`` with the strategies deferred by the last pass moved to the front."""
+    with _DEFERRED_PAPER_LOCK:
+        waiting = set(_DEFERRED_PAPER_IDS)
+    if not waiting:
+        return items
+    return sorted(items, key=lambda item: str(item.get("strategy_id") or "") not in waiting)
 
 
 def _apply_execution_actions(
@@ -9303,7 +9322,12 @@ def _apply_execution_actions(
     Kernel-PAPER strategies execute on a bounded thread pool (their work is local and
     per-strategy independent); everything else (live kernel, legacy engines) keeps the
     original sequential semantics on this thread, running CONCURRENTLY with the pool so
-    a fresh entry lands seconds after its scan instead of behind the whole sweep."""
+    a fresh entry lands seconds after its scan instead of behind the whole sweep.
+
+    While ``_SCAN_DEADLINE`` is set (the scan arms it only for the rows with no
+    open position) and that time has passed, the pooled paper strategies not yet
+    started are left for the next pass, which takes them first. Live strategies
+    and the priority exit lane are never deferred."""
     all_actions: list[str] = []
     account_equity = _get_account_equity()
 
@@ -9334,11 +9358,25 @@ def _apply_execution_actions(
                 for name, sec in parts.items():
                     part_totals[name] = part_totals.get(name, 0.0) + sec
 
+    deadline = _SCAN_DEADLINE.get()
+    deferred: list[str] = []
+    if deadline is not None:
+        pooled = _deferred_first(pooled)
+
+    def _pooled(item: dict) -> list[str]:
+        # The pool starts its tasks in the order submitted, so once the budget
+        # is spent everything still queued is skipped in a few milliseconds.
+        if deadline is not None and time.monotonic() >= deadline:
+            with parts_lock:
+                deferred.append(str(item.get("strategy_id") or ""))
+            return []
+        return _timed(item)
+
     serial_started = time.monotonic()
     serial_seconds = 0.0
     if pooled:
         with ThreadPoolExecutor(max_workers=min(_EXEC_POOL_WORKERS, len(pooled))) as pool:
-            futures = [pool.submit(_timed, item) for item in pooled]
+            futures = [pool.submit(_pooled, item) for item in pooled]
             for item in serial:
                 all_actions.extend(_timed(item))
             serial_seconds = time.monotonic() - serial_started
@@ -9352,9 +9390,21 @@ def _apply_execution_actions(
             all_actions.extend(_timed(item))
         serial_seconds = time.monotonic() - serial_started
 
+    if deadline is not None:
+        with _DEFERRED_PAPER_LOCK:
+            _DEFERRED_PAPER_IDS.clear()
+            _DEFERRED_PAPER_IDS.update(sid for sid in deferred if sid)
+        if deferred:
+            log.info(
+                "Execution scan ran out of time: %d of %d paper strategies wait for the next pass, "
+                "which takes them first",
+                len(deferred), len(pooled),
+            )
+
     if timings_out is None:
         timings_out = _SCAN_EXEC_TIMINGS.get()
     if timings_out is not None:
+        timings_out["deferred"] = timings_out.get("deferred", 0) + len(deferred)
         timings_out["pooled"] = timings_out.get("pooled", 0) + len(pooled)
         timings_out["serial"] = timings_out.get("serial", 0) + len(serial)
         timings_out["serial_s"] = timings_out.get("serial_s", 0.0) + serial_seconds
@@ -9635,10 +9685,17 @@ def _build_signal_diagnostics(
 _RUN_SCAN_EXEC_LOCK = threading.Lock()
 
 
-def run_scan(*, execute_positions: bool = True) -> dict:
+def run_scan(*, execute_positions: bool = True, time_budget_seconds: float | None = None) -> dict:
     """Run strategy evaluation, optionally applying execution actions.
 
     `execute_positions=False` performs a signal-only scan that does not open/close trades.
+
+    ``time_budget_seconds`` (the scheduler passes most of the job's limit) is how
+    long the pass may keep STARTING paper strategies that hold no position. At a
+    bar close every paper walk is cold, and a large fleet then took longer than
+    the limit: the job was reported failed, its thread kept the scheduler lock,
+    and later passes were skipped (2026-11: 1,104 legs, 12 overruns in 48 h).
+    With a budget the pass ends on time and the next one takes the rest first.
 
     The EXECUTION phase is single-flighted (RACE-1): if another execution scan is
     already running in this process, this call degrades to signal-only so two scans
@@ -9653,7 +9710,9 @@ def run_scan(*, execute_positions: bool = True) -> dict:
         )
         return _run_scan_impl(execute_positions=False)
     try:
-        return _run_scan_impl(execute_positions=True)
+        if time_budget_seconds is None:
+            return _run_scan_impl(execute_positions=True)
+        return _run_scan_impl(execute_positions=True, time_budget_seconds=time_budget_seconds)
     finally:
         _RUN_SCAN_EXEC_LOCK.release()
 
@@ -9671,7 +9730,7 @@ def _open_position_strategy_ids() -> set[str]:
         return set()
 
 
-def _run_scan_impl(*, execute_positions: bool = True) -> dict:
+def _run_scan_impl(*, execute_positions: bool = True, time_budget_seconds: float | None = None) -> dict:
     """Inner scan body. Call ``run_scan`` (the single-flight wrapper) instead."""
     # Per-step wall times, logged with the scan (2026-10-30: execution scans took
     # 220-335 s and no profiler could be attached on the operator's PC).
@@ -9679,6 +9738,14 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     exec_timings: dict = {}
     _SCAN_EXEC_TIMINGS.set(exec_timings)
     scan_started = step_started = time.monotonic()
+    budget = None
+    try:
+        if time_budget_seconds is not None and float(time_budget_seconds) > 0:
+            budget = float(time_budget_seconds)
+    except (TypeError, ValueError):
+        budget = None
+    scan_deadline = None if budget is None else scan_started + budget
+    _SCAN_DEADLINE.set(None)
     exec_timings["walk_cache_start"] = _kernel_walk_cache_stats()
 
     def _step(name: str) -> None:
@@ -9852,7 +9919,11 @@ def _run_scan_impl(*, execute_positions: bool = True) -> dict:
     _step("diagnostics")
     all_actions: list[str] = list(priority_actions)
     if execution_allowed:
-        all_actions.extend(_apply_execution_actions(rest_rows, execution_diagnostics))
+        _SCAN_DEADLINE.set(scan_deadline)
+        try:
+            all_actions.extend(_apply_execution_actions(rest_rows, execution_diagnostics))
+        finally:
+            _SCAN_DEADLINE.set(None)
         _step("execution")
         scan_diagnostics.update(execution_diagnostics)
     elif requested_execution:
@@ -9982,6 +10053,8 @@ def _log_scan_timings(scan_mode: str, total: float, steps: dict[str, float], exe
                     f"{name}:{now_stats[name] - int(start.get(name, 0))}" for name in ("hit", "miss", "expired")
                 )
             )
+        if exec_timings.get("deferred"):
+            parts.append(f"deferred={int(exec_timings['deferred'])}")
         slowest = sorted(exec_timings.get("items", []), key=lambda pair: pair[1], reverse=True)[:5]
         if slowest:
             parts.append("slowest=" + ",".join(f"{sid}:{sec:.1f}s" for sid, sec in slowest))

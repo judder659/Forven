@@ -1240,6 +1240,9 @@ CREATE TABLE IF NOT EXISTS gate_rejections (
     resolved_thresholds JSON,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
 );
+-- Every reader asks for one strategy's rejections (pipeline explainer, gate
+-- cooldowns, the paper queue); without this each of them scans the whole table.
+CREATE INDEX IF NOT EXISTS idx_gate_rejections_strategy ON gate_rejections(strategy_id);
 
 CREATE TABLE IF NOT EXISTS scanner_signal_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1257,6 +1260,12 @@ CREATE TABLE IF NOT EXISTS scanner_signal_results (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_results_strategy_ts ON scanner_signal_results(strategy_id, ts);
 CREATE INDEX IF NOT EXISTS idx_signal_results_symbol_ts ON scanner_signal_results(symbol, ts);
+-- Refused signals only (matched but not executed), with every column the fleet
+-- scorecards read, so "what was refused for this strategy since X" is answered
+-- from the index alone instead of fetching thousands of wide rows per strategy.
+CREATE INDEX IF NOT EXISTS idx_signal_results_refused
+    ON scanner_signal_results(strategy_id, ts, signal_type, block_reason)
+    WHERE matched = 1 AND executed = 0;
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     delivery_id TEXT PRIMARY KEY,
@@ -3013,6 +3022,7 @@ def _run_migrations(conn: sqlite3.Connection):
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))
     )
     """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gate_rejections_strategy ON gate_rejections(strategy_id)")
     conn.execute("""
     CREATE TABLE IF NOT EXISTS scanner_signal_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3031,6 +3041,11 @@ def _run_migrations(conn: sqlite3.Connection):
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_signal_results_strategy_ts ON scanner_signal_results(strategy_id, ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_signal_results_symbol_ts ON scanner_signal_results(symbol, ts)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_signal_results_refused "
+        "ON scanner_signal_results(strategy_id, ts, signal_type, block_reason) "
+        "WHERE matched = 1 AND executed = 0"
+    )
     conn.execute("""
     CREATE TABLE IF NOT EXISTS webhook_deliveries (
         delivery_id TEXT PRIMARY KEY,

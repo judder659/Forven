@@ -172,13 +172,43 @@ def trade_intervals(conn: Any, strategy_id: str, execution_type: str) -> list[tu
         """,
         (strategy_id, execution_type),
     ).fetchall()
-    out: list[tuple[datetime, datetime | None]] = []
+    return [interval for interval in map(_interval, rows) if interval is not None]
+
+
+def _interval(row: Any) -> tuple[datetime, datetime | None] | None:
+    opened = _parse_ts(row["opened_at"])
+    if opened is None:
+        return None
+    closed = _parse_ts(row["closed_at"]) if str(row["status"] or "").upper() != "OPEN" else None
+    return opened, closed
+
+
+def _fleet_trade_intervals(
+    conn: Any, strategy_ids: list[str], execution_type: str
+) -> dict[str, list[tuple[datetime, datetime | None]]]:
+    """``trade_intervals`` for a whole fleet from one read of the trades table.
+
+    ``COALESCE(strategy_id, strategy) = ?`` cannot use an index, so asking per
+    strategy scans every trade once for each strategy in the fleet.
+    """
+    out: dict[str, list[tuple[datetime, datetime | None]]] = {sid: [] for sid in strategy_ids}
+    if not out:
+        return out
+    rows = conn.execute(
+        """
+        SELECT COALESCE(strategy_id, strategy) AS sid, opened_at, closed_at, status FROM trades
+        WHERE LOWER(COALESCE(execution_type, '')) = ?
+          AND UPPER(COALESCE(status, '')) != 'FAILED' AND opened_at IS NOT NULL
+        """,
+        (execution_type,),
+    ).fetchall()
     for row in rows:
-        opened = _parse_ts(row["opened_at"])
-        if opened is None:
+        bucket = out.get(str(row["sid"]))
+        if bucket is None:
             continue
-        closed = _parse_ts(row["closed_at"]) if str(row["status"] or "").upper() != "OPEN" else None
-        out.append((opened, closed))
+        interval = _interval(row)
+        if interval is not None:
+            bucket.append(interval)
     return out
 
 
@@ -230,32 +260,49 @@ def recovered(reason: object, at: datetime | None, healthy_at: datetime | None) 
     )
 
 
-def _refusals(conn: Any, strategy_id: str, since: datetime, signal_type: str) -> list[Any]:
+def _refusals(
+    conn: Any, strategy_id: str, since: datetime, *, mainnet_armed: bool
+) -> dict[str, list[Any]]:
+    """Refused entry and exit signals since ``since``, newest first, by signal type.
+
+    Both types come from one query: they share the same rows of the strategy's
+    scan history, and the fleet scorecard asks for every strategy on every load.
+    """
     placeholders = ",".join("?" for _ in NOT_BLOCKS)
-    params: tuple[Any, ...] = (strategy_id, since.strftime(_SCANNER_TS_FORMAT), signal_type, *NOT_BLOCKS)
+    params: tuple[Any, ...] = (strategy_id, since.strftime(_SCANNER_TS_FORMAT), *NOT_BLOCKS)
     stale_guard = ""
-    if _mainnet_armed():
+    if mainnet_armed:
         stale_guard = "AND COALESCE(block_reason, '') NOT LIKE ?"
         params = (*params, _MAINNET_UNARMED_REFUSAL)
     rows = conn.execute(
         f"""
-        SELECT ts, block_reason FROM scanner_signal_results
+        SELECT ts, block_reason, signal_type FROM scanner_signal_results
         WHERE strategy_id = ? AND ts >= ?
-          AND signal_type = ? AND matched = 1 AND executed = 0
+          AND signal_type IN ('entry', 'exit') AND matched = 1 AND executed = 0
           AND COALESCE(block_reason, '') NOT IN ({placeholders})
           {stale_guard}
         ORDER BY ts DESC
         """,
         params,
     ).fetchall()
-    if not any(is_transient_refusal(row["block_reason"]) for row in rows):
-        return rows
-    healthy_at = last_healthy_scan(conn, strategy_id)
-    return [row for row in rows if not recovered(row["block_reason"], _parse_ts(row["ts"]), healthy_at)]
+    out: dict[str, list[Any]] = {"entry": [], "exit": []}
+    for row in rows:
+        out[row["signal_type"]].append(row)
+    healthy_at: datetime | None = None
+    healthy_known = False
+    for signal_type, typed in out.items():
+        if not any(is_transient_refusal(row["block_reason"]) for row in typed):
+            continue
+        if not healthy_known:
+            healthy_at = last_healthy_scan(conn, strategy_id)
+            healthy_known = True
+        out[signal_type] = [
+            row for row in typed if not recovered(row["block_reason"], _parse_ts(row["ts"]), healthy_at)
+        ]
+    return out
 
 
-def _blocked_entries(conn: Any, strategy_id: str, since: datetime) -> dict[str, Any]:
-    rows = _refusals(conn, strategy_id, since, "entry")
+def _blocked_entries(rows: list[Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "count": len(rows),
         "last_at": None,
@@ -279,9 +326,7 @@ def _blocked_entries(conn: Any, strategy_id: str, since: datetime) -> dict[str, 
 
 
 def _blocked_exits(
-    conn: Any,
-    strategy_id: str,
-    since: datetime,
+    rows: list[Any],
     intervals: list[tuple[datetime, datetime | None]],
 ) -> dict[str, Any]:
     """Refused exit signals, split by whether a position was open at the time.
@@ -289,7 +334,6 @@ def _blocked_exits(
     A refused exit while flat is harmless noise; the same refusal on an open
     position means the strategy wanted out and could not get out.
     """
-    rows = _refusals(conn, strategy_id, since, "exit")
     summary: dict[str, Any] = {
         "count": len(rows),
         "positioned_count": 0,
@@ -499,6 +543,8 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
         strategy_rows = fleet_strategy_rows(conn, mode)
         strategy_ids = [str(row["id"]) for row in strategy_rows]
         stats = _trade_stats(conn, strategy_ids, mode)
+        intervals_by_strategy = _fleet_trade_intervals(conn, strategy_ids, mode)
+        mainnet_armed = _mainnet_armed()
         strategies = []
         for row in strategy_rows:
             sid = str(row["id"])
@@ -506,9 +552,9 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
             window_start = now - timedelta(days=BLOCK_WINDOW_DAYS)
             if stage_since and stage_since > window_start:
                 window_start = stage_since
-            intervals = trade_intervals(conn, sid, mode)
-            blocked = _blocked_entries(conn, sid, window_start)
-            blocked_exits = _blocked_exits(conn, sid, window_start, intervals)
+            refusals = _refusals(conn, sid, window_start, mainnet_armed=mainnet_armed)
+            blocked = _blocked_entries(refusals["entry"])
+            blocked_exits = _blocked_exits(refusals["exit"], intervals_by_strategy[sid])
             last_scan = _last_scan(conn, sid)
             trade_row = stats.get(sid, {})
             open_ids = [tid for tid in str(trade_row.get("open_ids") or "").split(",") if tid]

@@ -342,3 +342,31 @@ def test_platform_responses_keep_embedded_instructions(monkeypatch: pytest.Monke
     messages = [{"role": "developer", "content": "Use this output format."}, {"role": "user", "content": "hi"}]
     asyncio.run(turn(providers.OpenAIAutoProvider(), "gpt-6-astra", messages, False))
     assert captured[0]["body"]["input"][0] == messages[0]
+
+
+def test_a_refresh_on_one_worker_reaches_the_others(monkeypatch) -> None:
+    # Each API worker process has its own model list cache. A forced refresh
+    # leaves a shared mark, and a worker whose list is older than the mark
+    # fetches again instead of serving it for the rest of the 30-minute TTL.
+    import time
+
+    def no_token(_: str) -> tuple[str, bool]:
+        raise ValueError("not connected")
+
+    stale = [{"provider": "anthropic", "model_id": "list-from-before-the-refresh"}]
+    cache = {"anthropic": {"fetched_at": int(time.time()) - 60, "models": stale, "error": None}}
+    monkeypatch.setattr(discovery, "_AGENT_MODEL_LIST_CACHE", cache)
+
+    monkeypatch.setattr(discovery, "_model_lists_refreshed_at", lambda: 0)
+    rows, _ = discovery._discover_provider_models("anthropic", token_getter=no_token)
+    assert rows == stale  # nobody refreshed: the cached list is still good
+
+    monkeypatch.setattr(discovery, "_model_lists_refreshed_at", lambda: int(time.time()) - 5)
+    rows, _ = discovery._discover_provider_models("anthropic", token_getter=no_token)
+    assert rows != stale
+    assert cache["anthropic"]["fetched_at"] >= int(time.time()) - 5
+
+    marks: list[int] = []
+    monkeypatch.setattr(discovery, "_mark_model_lists_refreshed", marks.append)
+    discovery._discover_provider_models("anthropic", force_refresh=True, token_getter=no_token)
+    assert len(marks) == 1
