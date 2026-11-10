@@ -20,6 +20,14 @@ CANDLE_CACHE_PREFIX = "market:candles"
 # next tick republishes, and readers re-fetch when the cache is empty/stale.
 _SNAPSHOT_WRITE_TIMEOUT_SECONDS = 2.0
 
+# The most candles a snapshot holds. load_candle_snapshot never returned more
+# than this, so a longer snapshot could not be served: a request for more bars
+# is fetched directly. Yet the scanner published every bar it had fetched, and
+# a deep window (a strategy replaying months of 5m or 15m bars) left a JSON
+# blob of 8 to 25 MB per coin that each later read parsed in full and then cut
+# to this many rows. One install held 300 MB of them.
+MAX_SNAPSHOT_ROWS = 600
+
 
 def candle_cache_key(asset: str, interval: str = "1h") -> str:
     symbol = str(asset or "").strip().upper()
@@ -103,7 +111,7 @@ def load_price_snapshot(*, cache_key: str | None = None) -> tuple[dict[str, floa
     return prices, age_seconds
 
 
-def _normalize_candle_rows(rows: list[dict], *, max_rows: int = 600) -> list[dict]:
+def _normalize_candle_rows(rows: list[dict], *, max_rows: int = MAX_SNAPSHOT_ROWS) -> list[dict]:
     """Normalize candle payload rows into stable, JSON-safe OHLCV records."""
     normalized: list[dict] = []
     if not isinstance(rows, list):
@@ -166,16 +174,20 @@ def publish_candle_snapshot(
     source: str,
     *,
     interval: str = "1h",
-    max_rows: int = 600,
+    max_rows: int = MAX_SNAPSHOT_ROWS,
 ) -> dict:
-    """Persist normalized candle rows to KV and return snapshot metadata."""
+    """Persist normalized candle rows to KV and return snapshot metadata.
+
+    Keeps the newest ``max_rows`` candles, and never more than
+    ``MAX_SNAPSHOT_ROWS`` (a reader gets no more than that back)."""
     cache_key = candle_cache_key(asset, interval)
+    keep = max(1, min(int(max_rows), MAX_SNAPSHOT_ROWS))
     payload = {
         "asset": str(asset or "").strip().upper(),
         "interval": str(interval or "1h").strip().lower(),
         "updated_at": _iso_now(),
         "source": str(source or "unknown"),
-        "rows": _normalize_candle_rows(rows, max_rows=max_rows),
+        "rows": _normalize_candle_rows(rows, max_rows=keep),
     }
     kv_set_best_effort(cache_key, payload, timeout_seconds=_SNAPSHOT_WRITE_TIMEOUT_SECONDS)
     return payload
