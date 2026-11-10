@@ -3886,6 +3886,13 @@ def kv_set(key: str, value):
     _bump_kv_write_generation()
 
 
+def kv_delete(key: str) -> None:
+    """Remove a key from the key-value store (a later kv_get returns its default)."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM kv WHERE key = ?", (key,))
+    _bump_kv_write_generation()
+
+
 def kv_set_many(items: dict) -> None:
     """Write several KV keys inside ONE transaction (all-or-nothing).
 

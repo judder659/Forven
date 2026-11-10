@@ -296,3 +296,106 @@ def test_agent_spend_rollup_survives_run_prune(forven_db):
     assert spend[0]["tasks"] == 2
     assert abs(spend[0]["cost_usd"] - 0.75) < 1e-9
     assert spend[0]["input_tokens"] == 110
+
+
+# --- reviewed runs ----------------------------------------------------------
+
+def test_old_reviewed_rows_are_pruned(forven_db):
+    """``reviewed`` is ``done`` after the Brain has read it. The Brain reviews
+    nearly every finished run, so skipping the status kept them all forever."""
+    keep = _insert_agent_task(status="reviewed", completed_at=_ts(1))
+    drop = _insert_agent_task(status="reviewed", completed_at=_ts(100))
+    blocked = _insert_agent_task(status="blocked", completed_at=_ts(100))
+
+    assert prune_terminal_task_rows(72) == 1
+    assert _exists_agent(keep)
+    assert not _exists_agent(drop)
+    assert _exists_agent(blocked)  # an operator can still resume it
+
+
+# --- key-value rows nothing can read again ----------------------------------
+
+def _kv_keys(prefix: str) -> set[str]:
+    with get_db() as conn:
+        rows = conn.execute("SELECT key FROM kv WHERE key LIKE ?", (prefix + "%",)).fetchall()
+    return {row["key"] for row in rows}
+
+
+def _set_kv(key: str, value: str = "{}", updated_at: str | None = None) -> None:
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, value, updated_at or datetime.now(timezone.utc).isoformat()),
+        )
+
+
+def test_checkpoints_of_finished_tasks_are_pruned(forven_db):
+    from forven.maintenance import prune_finished_agent_checkpoints
+
+    by_status = {
+        status: _insert_agent_task(status=status, completed_at=_ts(1))
+        for status in ("done", "completed", "reviewed", "cancelled", "blocked", "failed", "interrupted", "pending", "running")
+    }
+    for task_id in by_status.values():
+        _set_kv(f"agent_checkpoint:{task_id}", '{"messages": [{"role": "user", "content": "x"}]}')
+    _set_kv("agent_checkpoint:999999", '{"messages": []}')  # its task row is gone
+    _set_kv("agent_checkpoints_other", "{}")  # not a checkpoint key
+    _set_kv("agent_task_progress:1", "{}")
+
+    assert prune_finished_agent_checkpoints() == 5
+
+    kept = _kv_keys("agent_checkpoint:")
+    assert kept == {
+        f"agent_checkpoint:{by_status[status]}"
+        for status in ("blocked", "failed", "interrupted", "pending", "running")
+    }
+    assert _kv_keys("agent_checkpoints_other") == {"agent_checkpoints_other"}
+    assert _kv_keys("agent_task_progress:") == {"agent_task_progress:1"}
+
+
+def test_checkpoint_prune_works_through_several_batches(forven_db):
+    from forven.maintenance import prune_finished_agent_checkpoints
+
+    for task_id in range(500_000, 500_007):
+        _set_kv(f"agent_checkpoint:{task_id}")
+
+    assert prune_finished_agent_checkpoints(batch=3) == 7
+    assert _kv_keys("agent_checkpoint:") == set()
+
+
+def test_stale_candle_snapshots_are_pruned(forven_db):
+    from forven.maintenance import prune_stale_candle_snapshots
+
+    old = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat()
+    fresh = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    _set_kv("market:candles:BTC/USDT:5m", '{"rows": []}', old)
+    _set_kv("market:candles:BTC:1h", '{"rows": []}', fresh)
+    _set_kv("market:prices", "{}", old)  # the price snapshot is not a candle snapshot
+
+    assert prune_stale_candle_snapshots(0) == 0
+    assert prune_stale_candle_snapshots() == 1
+    assert _kv_keys("market:") == {"market:candles:BTC:1h", "market:prices"}
+
+
+def test_run_db_maintenance_reports_the_key_value_prunes(forven_db):
+    _set_kv("agent_checkpoint:424242", '{"messages": []}')
+
+    summary = run_db_maintenance({})
+
+    assert summary["agent_checkpoints"] == 1
+    assert summary["candle_snapshots"] == 0
+
+
+def test_a_cleared_checkpoint_leaves_no_row(forven_db):
+    """Clearing used to write an empty object, one row per finished task."""
+    from forven.agents.execution_state import load_execution
+
+    task_id = _insert_agent_task(status="running", completed_at=None)
+    execution = load_execution(task_id, "agent-test")
+    execution.save(messages=[{"role": "user", "content": "hello"}], inflight=False)
+    assert _kv_keys(f"agent_checkpoint:{task_id}")
+
+    execution.clear()
+
+    assert _kv_keys(f"agent_checkpoint:{task_id}") == set()
+    assert load_execution(task_id, "agent-test").checkpoint == {}
