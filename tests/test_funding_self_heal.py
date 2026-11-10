@@ -158,6 +158,9 @@ class TestReconcileFundingHistory:
 
         monkeypatch.setattr(mdc, "ensure_funding_history", fake_ensure)
         monkeypatch.setattr(mdc, "_pipeline_scan_assets", lambda: ["BTC", "ETH", "SOL"])
+        monkeypatch.setattr(mdc, "_strategy_universe_assets", lambda: [])
+        monkeypatch.setattr(mdc, "_hyperliquid_funding_coins", lambda assets: {a: a for a in assets})
+        monkeypatch.setattr(mdc, "_load_backfill_state", lambda: {})
         monkeypatch.setattr(mdc, "log_activity", lambda *a, **k: None)
 
         summary = mdc.reconcile_funding_history(target_days=365)
