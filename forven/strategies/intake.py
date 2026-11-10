@@ -706,6 +706,15 @@ def register_imported_strategy_file(
         raise ValueError(
             f"imported strategy validation failed: {meta.get('error') or 'unknown error'}"
         )
+    # The truncation probe misses a future read the strategy never fires on, or one
+    # only its vectorized signals make (S20977, S21756): the source says it plainly.
+    if not meta.get("lookahead_blocked"):
+        from forven.strategies.source_lookahead import file_negative_shift_lines, negative_shift_reason
+
+        shift_reason = negative_shift_reason(file_negative_shift_lines(target))
+        if shift_reason:
+            meta["lookahead_blocked"] = True
+            meta["lookahead_reason"] = shift_reason
 
     # Fail-closed on cross-asset / multi-source imports. There is NO parent-side
     # cross-asset enrichment, and the sandbox worker is network/DB-jailed (R3), so a
