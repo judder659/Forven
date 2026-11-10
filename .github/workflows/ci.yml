@@ -290,6 +290,14 @@ jobs:
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-launcher.ps1
 
+      # Import every test module on Windows. A POSIX-only import at the top of
+      # one test file (`import resource`, 2026-10-28) kept the nightly Windows
+      # suite red for two weeks and held back two weekly releases; this catches
+      # that on the PR that adds it.
+      - name: Collect backend tests on Windows
+        if: ${{ !cancelled() }}
+        run: python -m pytest --collect-only -q
+
       # Tests whose code takes a different path on Windows, plus the
       # strategy-sandbox security set (it spawns worker processes, which work
       # differently without fork).

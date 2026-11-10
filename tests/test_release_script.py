@@ -158,3 +158,23 @@ def test_ai_notes_parse_the_model_reply(monkeypatch):
         "Safety": [],
     }
     assert sent["model"] == "some/model"
+
+
+def _main_with_no_green_commit(monkeypatch, waiting: int, argv: list[str]) -> int:
+    monkeypatch.setattr(release, "git", lambda *args: "")
+    monkeypatch.setattr(release, "last_release", lambda: ("v0.3.0", (0, 3, 0)))
+    monkeypatch.setattr(release, "pick_commit", lambda kind, after: None)
+    monkeypatch.setattr(release, "unreleased_count", lambda after: waiting)
+    return release.main(argv)
+
+
+def test_release_fails_when_merged_work_is_held_back_by_a_red_check(monkeypatch, capsys):
+    assert _main_with_no_green_commit(monkeypatch, 22, []) == 1
+    out = capsys.readouterr().out
+    assert "::error::22 change(s) merged since v0.3.0" in out
+    assert "nightly Windows suite" in out
+
+
+def test_release_with_nothing_merged_or_a_dry_run_still_succeeds(monkeypatch):
+    assert _main_with_no_green_commit(monkeypatch, 0, []) == 0
+    assert _main_with_no_green_commit(monkeypatch, 22, ["--dry-run"]) == 0
