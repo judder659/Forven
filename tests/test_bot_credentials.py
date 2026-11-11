@@ -305,3 +305,23 @@ def test_live_bot_without_master_key_uses_forwarded_exchange_creds(forven_db, mo
     assert creds["HL_API_SECRET"] == "0xforwarded"
     assert creds["HL_WALLET_ADDRESS"] == "0xforwardedwallet"
     secret_storage._reset_cache_for_tests()
+
+
+def test_a_bot_reads_market_data_from_the_backends_folder(monkeypatch, tmp_path):
+    """A source install runs with no FORVEN_HOME in its environment, so its
+    market data lives in <repo>/data. A bot is always handed FORVEN_HOME, which
+    alone pointed it at FORVEN_HOME/data: missing on a source install, or an
+    old copy nothing updates."""
+    import forven.data as data
+
+    backend_dir = tmp_path / "repo" / "data" / "ohlcv"
+    monkeypatch.setattr(data, "DATA_DIR", backend_dir)
+
+    env = _build_isolated_env({"id": "b1", "model": "gpt-4.1-mini"}, "t")
+    assert env["FORVEN_DATA_DIR"] == str(backend_dir)
+
+    # What the bot process resolves from that environment.
+    monkeypatch.setenv("FORVEN_HOME", env["FORVEN_HOME"])
+    monkeypatch.setenv("FORVEN_DATA_DIR", env["FORVEN_DATA_DIR"])
+    assert data._resolve_data_dir() == backend_dir
+    assert data.data_root() == backend_dir.parent

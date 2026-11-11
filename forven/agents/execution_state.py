@@ -29,8 +29,9 @@ class ExecutionState:
         importlib.import_module("forven.db").kv_set(f"agent_checkpoint:{self.task_id}", self.checkpoint)
 
     def clear(self) -> None:
+        # Remove the row: an empty one per finished task was kept forever.
         self.checkpoint = {}
-        importlib.import_module("forven.db").kv_set(f"agent_checkpoint:{self.task_id}", {})
+        importlib.import_module("forven.db").kv_delete(f"agent_checkpoint:{self.task_id}")
 
 
 current_execution: ContextVar[ExecutionState | None] = ContextVar("agent_execution", default=None)

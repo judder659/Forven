@@ -124,6 +124,9 @@
 		<div class={tile}>
 			<span class={label}>Realized, net of costs</span>
 			{@render realizedBlock()}
+			<!-- The paper totals cover the strategies in paper now, so they differ
+			     from a sum over every paper trade once strategies have left. -->
+			<span class="text-[11px] text-sc-ink3" data-testid="desk-paper-realized-scope">Strategies in paper now. Trades of strategies that left paper are not counted.</span>
 		</div>
 		<div class={tile}>
 			<span class={label}>Positions</span>

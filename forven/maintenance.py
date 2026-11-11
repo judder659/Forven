@@ -287,7 +287,13 @@ _TERMINAL_TASK_TABLES: tuple[tuple[str, str], ...] = (
     ("agent_tasks", "completed_at"),
     ("tasks", "completed_at"),
 )
-_DEFINITIVE_TERMINAL_STATUSES = ("done", "completed", "cancelled")
+# ``reviewed`` is ``done`` after the Brain has read the result
+# (brain.mark_agent_tasks_reviewed). The Brain reviews nearly every finished
+# task within a cycle, so leaving it out kept almost every completed run
+# forever: on one two-month-old install agent_tasks was 927 MB (plus 298 MB of
+# search index) while the 30-day window only ever applied to the few runs the
+# Brain had not read.
+_DEFINITIVE_TERMINAL_STATUSES = ("done", "completed", "reviewed", "cancelled")
 
 # Child tables keyed by the run's display id (T…/B…). Cascade-deleted with
 # their parent queue row so pruning a run never strands transcript/audit
@@ -449,6 +455,83 @@ def prune_terminal_task_rows(
     return deleted_total
 
 
+# A task in one of these states never runs again, so the checkpoint its run
+# saved (the whole conversation, rewritten after every tool round) can never
+# be resumed. ``failed`` and ``interrupted`` are left out: recovery re-queues
+# those, and a checkpoint that says a tool call was in flight is what stops
+# that call from being replayed.
+_FINISHED_CHECKPOINT_STATUSES = ("done", "completed", "reviewed", "cancelled")
+_AGENT_CHECKPOINT_PREFIX = "agent_checkpoint:"
+_CANDLE_SNAPSHOT_PREFIX = "market:candles:"
+# A candle snapshot is rewritten every time its coin and interval are fetched.
+# One that has gone a week without a write belongs to a pair nothing scans any
+# more.
+CANDLE_SNAPSHOT_MAX_AGE_DAYS = 7
+
+
+def _prefix_range(prefix: str) -> tuple[str, str]:
+    """Key bounds for a prefix scan that can use the kv primary key (SQLite's
+    LIKE is case-insensitive by default and cannot)."""
+    return prefix, prefix[:-1] + chr(ord(prefix[-1]) + 1)
+
+
+def prune_finished_agent_checkpoints(*, batch: int = 500, max_batches: int = 200) -> int:
+    """Delete saved agent checkpoints whose task has finished or no longer exists.
+
+    A blocked run can be resumed from its checkpoint, so those are kept, as
+    are the checkpoints of failed, interrupted, queued and running tasks. The
+    rest were never removed: one install held 12,207 of them (413 MB), 90% for
+    tasks that could not run again.
+    """
+    low, high = _prefix_range(_AGENT_CHECKPOINT_PREFIX)
+    status_ph = ",".join("?" for _ in _FINISHED_CHECKPOINT_STATUSES)
+    deleted_total = 0
+    for _ in range(max_batches):
+        with get_db() as conn:
+            cur = conn.execute(
+                f"""
+                DELETE FROM kv WHERE key IN (
+                    SELECT k.key FROM kv k
+                    LEFT JOIN agent_tasks t ON t.id = CAST(substr(k.key, ?) AS INTEGER)
+                    WHERE k.key >= ? AND k.key < ?
+                      AND (t.id IS NULL OR t.status IN ({status_ph}))
+                    LIMIT ?
+                )
+                """,
+                (len(_AGENT_CHECKPOINT_PREFIX) + 1, low, high, *_FINISHED_CHECKPOINT_STATUSES, int(batch)),
+            )
+            deleted = cur.rowcount or 0
+        deleted_total += deleted
+        if deleted < batch:
+            break
+        time.sleep(0)
+    if deleted_total:
+        log.info("Pruned %d agent checkpoints of finished tasks", deleted_total)
+    return deleted_total
+
+
+def prune_stale_candle_snapshots(max_age_days: int = CANDLE_SNAPSHOT_MAX_AGE_DAYS) -> int:
+    """Delete shared candle snapshots that nothing has refreshed for a week.
+
+    They are a cache (forven.market_cache): a reader that finds none fetches
+    the candles and writes a new one. ``<= 0`` disables it.
+    """
+    if max_age_days <= 0:
+        return 0
+    low, high = _prefix_range(_CANDLE_SNAPSHOT_PREFIX)
+    cutoff = (_now() - timedelta(days=max_age_days)).isoformat()
+    with get_db() as conn:
+        cur = conn.execute(
+            "DELETE FROM kv WHERE key >= ? AND key < ? "
+            "AND updated_at IS NOT NULL AND datetime(updated_at) < datetime(?)",
+            (low, high, cutoff),
+        )
+        deleted = cur.rowcount or 0
+    if deleted:
+        log.info("Pruned %d candle snapshots not refreshed in %d days", deleted, max_age_days)
+    return deleted
+
+
 def run_db_maintenance(settings: dict | None = None, *, vacuum: bool = False) -> dict:
     """Prune aged rows across all retention-managed tables, then checkpoint WAL.
 
@@ -482,6 +565,18 @@ def run_db_maintenance(settings: dict | None = None, *, vacuum: bool = False) ->
     summary["terminal_task_rows"] = prune_terminal_task_rows(
         _resolve_failed_retention_hours(settings)
     )
+
+    # Key-value rows nothing can read again: checkpoints of finished agent
+    # tasks and candle snapshots of pairs no longer scanned.
+    for name, prune in (
+        ("agent_checkpoints", prune_finished_agent_checkpoints),
+        ("candle_snapshots", prune_stale_candle_snapshots),
+    ):
+        try:
+            summary[name] = prune()
+        except sqlite3.OperationalError as exc:
+            log.warning("maintenance: skipping %s prune (%s)", name, exc)
+            summary[name] = 0
 
     # GO-LIVE-1 hygiene: reap live notional ceilings still held by terminal
     # (or deleted) strategies — dormant live arming must not outlive its owner.

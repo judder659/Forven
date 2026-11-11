@@ -3,6 +3,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
@@ -8859,11 +8860,17 @@ def _create_inline_backtest_task(
 
                 display_id = assign_task_display_id(conn, task_id)
     except Exception as exc:
-        log.warning(
-            "agent_tasks insert failed for inline backtest %s: %s; Now Working panel will not surface this run",
-            strategy_id,
-            exc,
-        )
+        if isinstance(exc, sqlite3.IntegrityError) and "agent_tasks.strategy_id, agent_tasks.type" in str(exc):
+            # The one-active-task-per-strategy index refused the row: another
+            # backtest task for this strategy is already open and is the one
+            # the Now Working panel shows. Expected, so not a warning.
+            log.debug("Inline backtest %s runs under its already-open backtest task", strategy_id)
+        else:
+            log.warning(
+                "agent_tasks insert failed for inline backtest %s: %s; Now Working panel will not surface this run",
+                strategy_id,
+                exc,
+            )
         task_id = None
         display_id = None
 

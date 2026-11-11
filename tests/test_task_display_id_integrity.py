@@ -36,3 +36,22 @@ def test_inline_backtest_task_rows_get_row_based_display_ids(forven_db):
 
     assert task_id is not None
     assert display_id == format_prefixed_id("T", task_id)
+
+
+def test_second_inline_backtest_for_a_strategy_is_not_reported_as_a_failure(forven_db, caplog):
+    """One open backtest task per strategy is the rule; hitting it is not a warning."""
+    import logging
+
+    from forven.api_core import _create_inline_backtest_task
+
+    kwargs = dict(
+        body={}, strategy_id="S00001", dataset_id=None, symbol="BTC/USDT",
+        timeframe="1h", strategy_type="ema_cross", params={},
+    )
+    first_id, _display, _source = _create_inline_backtest_task(**kwargs)
+    with caplog.at_level(logging.DEBUG, logger="forven.api"):
+        second_id, second_display, _source = _create_inline_backtest_task(**kwargs)
+
+    assert first_id is not None
+    assert second_id is None and second_display is None
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]

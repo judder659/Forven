@@ -28,6 +28,32 @@ def normalize_trade_mode(value: object) -> str | None:
     return _TRADE_MODE_ALIASES.get(raw)
 
 
+def _numeric_text_overrides(default_params: dict, params: dict | None) -> dict:
+    """The overrides, with a number given as text read as that number.
+
+    Agents (and hand-edited JSON) pass ``{"atr_len": "14"}`` for a parameter
+    whose default is ``14``. The strategy then compares or does arithmetic
+    with text and dies in its indicators with
+    ``'>' not supported between instances of 'int' and 'str'``. Only a text
+    value for a parameter whose default is an int or a float is read, and
+    only when it is a plain finite number; anything else is passed through
+    untouched.
+    """
+    overrides = dict(params or {})
+    for key, value in overrides.items():
+        default = default_params.get(key)
+        if not isinstance(value, str) or isinstance(default, bool) or not isinstance(default, (int, float)):
+            continue
+        try:
+            number = float(value.strip())
+        except ValueError:
+            continue
+        if number != number or number in (float("inf"), float("-inf")):
+            continue
+        overrides[key] = int(number) if isinstance(default, int) and number.is_integer() else number
+    return overrides
+
+
 class ParamAccessor:
     """Compatibility wrapper for generated strategies that use ``self.p``."""
 
@@ -256,7 +282,7 @@ class BaseStrategy(ABC):
             default_params = {}
         if not isinstance(default_params, dict):
             raise TypeError("default_params must resolve to a dict")
-        self.params = {**default_params, **(params or {})}
+        self.params = {**default_params, **_numeric_text_overrides(default_params, params)}
         self.p = ParamAccessor(self.params)
 
     @property

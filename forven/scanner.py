@@ -50,6 +50,7 @@ from forven.strategies import sizing as _sizing
 from forven.strategies.execution_contract import EXECUTION_RUNTIME_REVISION as EXECUTION_RUNTIME_REVISION
 from forven.strategies.execution_kernel import cost_breakdown_usd as _kernel_cost_breakdown_usd
 from forven.market_cache import (
+    MAX_SNAPSHOT_ROWS,
     load_price_snapshot,
     load_candle_snapshot,
     publish_candle_snapshot,
@@ -1950,12 +1951,15 @@ def _single_flight_market_candles(coin: str, interval: str, required_bars: int, 
             raise
         _FETCH_MEMO[key] = (time.time(), df, fetch_bars)
         try:
+            # The snapshot serves requests of up to MAX_SNAPSHOT_ROWS bars;
+            # converting and storing a deeper window only cost time and space.
+            snapshot_rows = min(fetch_bars, MAX_SNAPSHOT_ROWS)
             publish_candle_snapshot(
                 coin,
-                dataframe_to_ohlcv_rows(df, max_rows=fetch_bars),
+                dataframe_to_ohlcv_rows(df, max_rows=snapshot_rows),
                 "scanner_fallback",
                 interval=interval,
-                max_rows=fetch_bars,
+                max_rows=snapshot_rows,
             )
         except Exception as exc:
             log.debug("Failed to publish scanner fallback candle cache for %s: %s", coin, exc)
@@ -9182,7 +9186,13 @@ def _evaluate_signal_matrix(
 
                     entry_mark = "ENTRY" if signal.get("entry_signal") else "-"
                     exit_mark = "EXIT" if signal.get("exit_signal") else "-"
-                    log.info(
+                    # A scan with nothing to act on is recorded in
+                    # scanner_signal_results below; logging it too wrote one
+                    # line per strategy per scan (about 200k a day on a
+                    # 440-strategy fleet, the largest single source in the log).
+                    quiet = entry_mark == "-" and exit_mark == "-"
+                    log.log(
+                        logging.DEBUG if quiet else logging.INFO,
                         "[%s] %s @ $%.2f | ADX=%.1f | entry=%s | exit=%s",
                         strat_id, strat["asset"], signal["price"], signal.get("adx", 0),
                         entry_mark, exit_mark,
