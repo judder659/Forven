@@ -16,7 +16,10 @@ import asyncio
 import logging
 import os
 import signal
+import sys
+import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -732,21 +735,60 @@ def _runtime_candle_refresh_interval() -> int:
     )
 
 
+_STEP_CODE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _describe_stuck_step(started: dict) -> str:
+    """Say where a timed-out step is, so the log line names the cause.
+
+    A step that never got a worker thread waited for the pool; one that is
+    running is named by the innermost frames of its thread (a database call,
+    an exchange request, strategy code). Diagnostics only: never raises.
+    """
+    try:
+        ident = started.get("ident")
+        if ident is None:
+            return "never started: no free worker thread"
+        waited = max(0.0, float(started.get("at", 0.0)) - float(started.get("queued_at", 0.0)))
+        frame = sys._current_frames().get(ident)
+        if frame is None:
+            return "finished as the timeout fired"
+        stack = traceback.extract_stack(frame)
+        shown = list(reversed(stack[-3:]))
+        # Library frames alone (ssl, sqlite3, threading) do not say which step
+        # code made the call, so the innermost Forven frame is always named.
+        ours = next((entry for entry in reversed(stack[:-3]) if _STEP_CODE_DIR in entry.filename), None)
+        if ours is not None and not any(_STEP_CODE_DIR in entry.filename for entry in shown):
+            shown.append(ours)
+        where = " < ".join(f"{os.path.basename(entry.filename)}:{entry.lineno} {entry.name}" for entry in shown)
+        queued = f"waited {waited:.1f}s for a thread, " if waited >= 0.5 else ""
+        return f"{queued}still running at {where}"
+    except Exception:
+        return "position unknown"
+
+
 async def _to_thread_with_timeout(task_name: str, timeout_seconds: float, fn, *args, **kwargs):
     """Run a sync function in a thread with bounded timeout."""
     timeout = max(0.1, float(timeout_seconds or 0.1))
     now = time.time()
     last_logged_at = float(_task_warning_last_logged_at.get(task_name, 0.0) or 0.0)
     should_log = (now - last_logged_at) >= _TASK_WARNING_THROTTLE_SECONDS
+    started: dict = {"queued_at": time.monotonic()}
+
+    def _call():
+        started["at"] = time.monotonic()
+        started["ident"] = threading.get_ident()
+        return fn(*args, **kwargs)
+
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(fn, *args, **kwargs),
+            asyncio.to_thread(_call),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
         if should_log:
             _task_warning_last_logged_at[task_name] = now
-            log.warning("%s timed out after %.1fs", task_name, timeout)
+            log.warning("%s timed out after %.1fs (%s)", task_name, timeout, _describe_stuck_step(started))
         return None
     except Exception as exc:
         if should_log:
