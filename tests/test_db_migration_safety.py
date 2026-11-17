@@ -70,6 +70,57 @@ def test_failing_named_migration_rolls_back_partial_dml_and_sets_flag(monkeypatc
         assert row["c"] >= 1
 
 
+def test_named_migration_that_loses_a_busy_race_is_retried(monkeypatch):
+    """Windows nightly 2026-11-13/16: a busy upgrade deferred the named
+    migrations, so a fresh test database had no parent_strategy_id column."""
+    import sqlite3
+
+    init_db()
+    monkeypatch.setattr(db_mod, "_NAMED_MIGRATION_BUSY_BACKOFF_SECONDS", 0.0)
+    calls = {"n": 0}
+
+    def _up_busy_once(conn):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("database is locked")
+        conn.execute(
+            "INSERT OR REPLACE INTO kv (key, value) VALUES ('busy_retry_marker', '1')"
+        )
+
+    monkeypatch.setattr(
+        mig, "MIGRATIONS", [mig.Migration("test_busy_once_mig", _up_busy_once)]
+    )
+    init_db()
+
+    assert calls["n"] == 2
+    assert kv_get("busy_retry_marker") == 1
+    with get_db() as conn:
+        assert mig.is_applied(conn, "test_busy_once_mig") is True
+
+
+def test_named_migration_still_busy_after_retries_is_deferred_not_failed(monkeypatch):
+    import sqlite3
+
+    init_db()
+    monkeypatch.setattr(db_mod, "_NAMED_MIGRATION_BUSY_BACKOFF_SECONDS", 0.0)
+    calls = {"n": 0}
+
+    def _up_always_busy(conn):
+        calls["n"] += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(
+        mig, "MIGRATIONS", [mig.Migration("test_always_busy_mig", _up_always_busy)]
+    )
+    init_db()
+
+    assert calls["n"] == db_mod._NAMED_MIGRATION_BUSY_ATTEMPTS
+    with get_db() as conn:
+        assert mig.is_applied(conn, "test_always_busy_mig") is False
+    flag = kv_get(SCHEMA_MIGRATION_FAILED_KV_KEY)
+    assert not (flag and any(f["migration"] == "named_migrations" for f in flag.get("failures", [])))
+
+
 def test_failing_gauntlet_schema_init_sets_flag(monkeypatch):
     # NOTE: no rollback assertion here — the real init_gauntlet_schema uses
     # executescript (statements auto-commit; savepoints cannot span it), so

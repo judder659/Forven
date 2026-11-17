@@ -8,6 +8,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -716,6 +717,10 @@ def _snapshot_before_pending_migrations(conn: sqlite3.Connection) -> None:
         )
 
 
+_NAMED_MIGRATION_BUSY_ATTEMPTS = 4
+_NAMED_MIGRATION_BUSY_BACKOFF_SECONDS = 0.25
+
+
 def init_db():
     """Create all tables if they don't exist."""
     identity = _database_identity()
@@ -762,41 +767,58 @@ def init_db():
         # H-D3: record the legacy bulk migration in the named-migrations
         # tracking table so operators can see what's been applied, then run
         # any new-style migrations registered in forven.migrations.
-        conn.execute("SAVEPOINT named_migrations")
-        try:
-            from forven.migrations import apply_pending, record_applied
-            record_applied(conn, f"legacy_bulk_v{SCHEMA_VERSION}")
-            apply_pending(conn)
-        except Exception as exc:
-            # Roll back the failing migration's partial DML (and any
-            # migrations applied in this same batch — they re-apply on the
-            # next boot; the named-migration design relies on idempotency).
-            ready = False
-            conn.execute("ROLLBACK TO SAVEPOINT named_migrations")
-            busy = isinstance(exc, sqlite3.OperationalError) and (
-                "locked" in str(exc).lower() or "busy" in str(exc).lower()
-            )
-            if busy:
-                # Worker subprocesses run init_db concurrently with the main
-                # writer; bookkeeping losing the WAL lock is routine contention,
-                # not a failed migration — it re-applies on the next init. A
-                # full ERROR traceback here was ~26x/day of operator-facing
-                # noise that looked like schema corruption.
-                log.warning(
-                    "Named-migration bookkeeping deferred (database busy); re-applies on next init."
+        # A busy error here is usually SQLITE_BUSY_SNAPSHOT: another connection
+        # wrote after this one's read snapshot began, so the upgrade to a write
+        # lock fails at once whatever the busy timeout. A fresh transaction gets
+        # a fresh snapshot, so retry a few times before deferring. Deferring left
+        # a new database without the new columns until the next init (the
+        # Windows nightly failed on "no column named parent_strategy_id").
+        for attempt in range(1, _NAMED_MIGRATION_BUSY_ATTEMPTS + 1):
+            conn.execute("SAVEPOINT named_migrations")
+            retry = False
+            try:
+                from forven.migrations import apply_pending, record_applied
+                record_applied(conn, f"legacy_bulk_v{SCHEMA_VERSION}")
+                apply_pending(conn)
+            except Exception as exc:
+                # Roll back the failing migration's partial DML (and any
+                # migrations applied in this same batch — they re-apply on the
+                # next boot; the named-migration design relies on idempotency).
+                conn.execute("ROLLBACK TO SAVEPOINT named_migrations")
+                busy = isinstance(exc, sqlite3.OperationalError) and (
+                    "locked" in str(exc).lower() or "busy" in str(exc).lower()
                 )
-            else:
-                log.exception(
-                    "Named migrations failed; legacy migrations already applied."
-                )
-                failures.append(
-                    {
-                        "migration": "named_migrations",
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
-        finally:
-            conn.execute("RELEASE SAVEPOINT named_migrations")
+                if busy and attempt < _NAMED_MIGRATION_BUSY_ATTEMPTS:
+                    retry = True
+                elif busy:
+                    ready = False
+                    # Worker subprocesses run init_db concurrently with the main
+                    # writer; bookkeeping losing the WAL lock is routine contention,
+                    # not a failed migration — it re-applies on the next init. A
+                    # full ERROR traceback here was ~26x/day of operator-facing
+                    # noise that looked like schema corruption.
+                    log.warning(
+                        "Named-migration bookkeeping deferred (database busy); re-applies on next init."
+                    )
+                else:
+                    ready = False
+                    log.exception(
+                        "Named migrations failed; legacy migrations already applied."
+                    )
+                    failures.append(
+                        {
+                            "migration": "named_migrations",
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
+            finally:
+                conn.execute("RELEASE SAVEPOINT named_migrations")
+            if not retry:
+                break
+            # End any outer transaction too, so the next attempt reads a fresh
+            # snapshot instead of the one that just lost the race.
+            conn.commit()
+            time.sleep(_NAMED_MIGRATION_BUSY_BACKOFF_SECONDS * attempt)
         _record_schema_migration_failures(conn, failures)
 
     if ready and not failures:
