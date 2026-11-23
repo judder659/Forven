@@ -63,7 +63,7 @@ launcher only uses bash, curl and lsof, which `start_all.sh` already needs.
 
 Every action is also a command: `status`, `start`, `restart`,
 `restart-backend` (alias `reload`), `restart-frontend`, `stop`, `open`, `logs`,
-`gui`, `menu`, `uninstall`. Add `-y` to skip the confirmation before stop and
+`gui`, `menu`, `uninstall`, `autostart [on|off]`. Add `-y` to skip the confirmation before stop and
 restart. Run `install` again after updating from an older launcher.
 
 - **Start** runs `start_all.sh` in the background in its own session, so closing
@@ -80,6 +80,31 @@ restart. Run `install` again after updating from an older launcher.
 - **Restart / Stop Forven** stop the supervisor of this folder (also one running
   in a terminal window) and everything it started, then wait for the backend's
   graceful shutdown before forcing anything left on the Forven ports.
+
+### Start on boot
+
+Forven does not start by itself after a reboot unless you turn it on:
+
+```bash
+./launcher.sh autostart on     # or menu option 9
+./launcher.sh autostart        # is it on?
+./launcher.sh autostart off
+```
+
+`autostart on` writes a systemd **user** service
+(`~/.config/systemd/user/forven.service`) that runs `launcher.sh start` about
+20 seconds after your service manager starts, and stops Forven gracefully at
+shutdown. It also turns on lingering for your user (`loginctl enable-linger`),
+so it starts at boot, before anyone logs in. If your system does not let you
+turn on lingering yourself, it tells you the one `sudo` command that does;
+until then Forven starts when you log in. Without systemd it adds an XDG
+autostart entry instead, which starts Forven when the desktop session starts.
+No root is needed for either. The service records the `PATH` it was turned on
+from, so run `autostart on` again if you move Node, the venv or the `claude`
+CLI. Turning it on or off does not start or stop Forven now.
+
+On Windows, the scheduled watchdog (`watchdog.ps1`, see its header) restarts
+Forven when it is down, including after a reboot.
 
 As on Windows, stop and restart do **not** close exchange positions. Only the
 supervisor whose `start_all.sh` lives in this folder, and listeners whose working
