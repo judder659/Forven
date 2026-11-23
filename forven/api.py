@@ -297,6 +297,12 @@ async def lifespan(_app: FastAPI):
     # Configure logging FIRST so every subsequent startup step, the scheduler
     # loop, and the agent workers emit observable log lines under any launcher.
     _configure_runtime_logging()
+    try:
+        from forven.warning_throttle import install as _install_warning_throttle
+
+        _install_warning_throttle()
+    except Exception:
+        log.debug("warning throttle install failed", exc_info=True)
 
     _spawn_zombie_reaper()
 

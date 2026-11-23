@@ -83,7 +83,9 @@ def test_inline_jitter_budget_is_what_is_left_of_the_callers_work_budget():
 
     assert engine._param_jitter_outer_budget_s() == engine._PARAM_JITTER_INLINE_BUDGET_S
     with work_budget(time.monotonic() + 1200):
-        assert 1190 < engine._param_jitter_outer_budget_s() <= 1200
+        # A coarse monotonic clock (Windows: ~16 ms ticks) can read the same tick
+        # twice, which leaves the remainder a few ULPs above 1200.
+        assert 1190 < engine._param_jitter_outer_budget_s() <= 1200 + 1e-6
 
 
 def test_a_gauntlet_sweep_honors_the_configured_deadline(forven_db, monkeypatch):
