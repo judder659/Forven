@@ -736,6 +736,8 @@ def _runtime_candle_refresh_interval() -> int:
 
 
 _STEP_CODE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Set while async_market_loop runs; names what blocks the loop when it stalls.
+_LOOP_STALL_WATCHDOG = None
 
 
 def _describe_stuck_step(started: dict) -> str:
@@ -753,6 +755,18 @@ def _describe_stuck_step(started: dict) -> str:
         frame = sys._current_frames().get(ident)
         if frame is None:
             return "finished as the timeout fired"
+        if frame.f_code.co_name == "_worker" and frame.f_code.co_filename.replace("\\", "/").endswith(
+            "concurrent/futures/thread.py"
+        ):
+            # The worker thread is back waiting for work: the step finished, but
+            # the daemon loop was too busy to collect the result in time.
+            watchdog = _LOOP_STALL_WATCHDOG
+            blocked = (
+                f"; last loop stall {watchdog.last_stall_seconds:.1f}s"
+                if watchdog is not None and watchdog.stalls
+                else ""
+            )
+            return f"step had finished; the daemon loop was blocked and late to collect it{blocked}"
         stack = traceback.extract_stack(frame)
         shown = list(reversed(stack[-3:]))
         # Library frames alone (ssl, sqlite3, threading) do not say which step
@@ -2048,6 +2062,12 @@ async def async_market_loop(state: dict):
             run_capture_supervised(shutdown), name="daemon-liquidation-ws"
         )
 
+    global _LOOP_STALL_WATCHDOG
+    from forven.loop_stall_watchdog import LoopStallWatchdog
+
+    _LOOP_STALL_WATCHDOG = LoopStallWatchdog("daemon")
+    stall_watch_task = spawn(_LOOP_STALL_WATCHDOG.run(), name="daemon-loop-stall-watch")
+
     price_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
     async def enqueue_price(source: str, prices: dict):
@@ -2188,6 +2208,8 @@ async def async_market_loop(state: dict):
                 log.error("Unhandled exception in async_market_loop: %s", e, exc_info=True)
                 await asyncio.sleep(1)
     finally:
+        _LOOP_STALL_WATCHDOG.stop()
+        stall_watch_task.cancel()
         await _stop_market_workers()
         if liq_capture_task is not None:
             liq_capture_task.cancel()
