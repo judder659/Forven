@@ -91,6 +91,19 @@ def _percentile(values: list[float], p: float) -> float:
     return ordered[lo] * (1 - frac) + ordered[hi] * frac
 
 
+_PAPER_DECAY_STAGES = ("paper", "paper_trading")
+
+
+def _paper_decay_request_recorded(conn, strategy_id: str, since_iso: str) -> bool:
+    """True when the tracker's declined request is already on the strategy's history."""
+    row = conn.execute(
+        "SELECT 1 FROM strategy_events WHERE strategy_id = ? AND actor = 'decay_tracker' "
+        "AND from_state = to_state AND datetime(created_at) >= datetime(?) LIMIT 1",
+        (strategy_id, since_iso),
+    ).fetchone()
+    return row is not None
+
+
 def run_decay_tracker(
     demote_status: str = "archived",
     window_hours: int | None = None,
@@ -162,6 +175,17 @@ def run_decay_tracker(
             degradation = 1 - (live_sharpe / baseline_sharpe)
 
             if degradation <= degradation_threshold:
+                continue
+
+            # A paper strategy is retired by the paper pool's rules, so the
+            # transition below records the request on its history and declines
+            # it. Record that once per decay window: asking again every cycle
+            # wrote an event, an audit entry and a warning each time (396 in
+            # 72 hours for one strategy on one install).
+            if current_stage in _PAPER_DECAY_STAGES and _paper_decay_request_recorded(
+                conn, strategy_id, cutoff
+            ):
+                skipped.append({"strategy_id": strategy_id, "reason": "paper_request_already_recorded"})
                 continue
 
             note = (

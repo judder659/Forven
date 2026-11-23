@@ -278,8 +278,17 @@ def _build_isolated_env(bot_config: dict, bot_token: str | None = None) -> dict[
     guard, and only the credential(s) for the bot's RESOLVED LLM provider. Does
     NOT inherit the parent's full environment (no Discord/exchange secrets, etc.).
     """
+    from forven.data import DATA_DIR
+
     env = {
         "FORVEN_HOME": str(FORVEN_HOME),
+        # The backend resolves its market-data folder from its own environment:
+        # with no FORVEN_HOME set (a source install) that is <repo>/data. A bot
+        # is always handed FORVEN_HOME, which on its own would point it at
+        # FORVEN_HOME/data instead: a folder that does not exist on a source
+        # install (the bot's higher-timeframe input came back empty) or an old
+        # copy that nothing updates (it read weeks-old candles as current).
+        "FORVEN_DATA_DIR": str(DATA_DIR),
         "BOT_ID": bot_config["id"],
         # Minimal system env needed for Python to function
         "PATH": os.environ.get("PATH", ""),

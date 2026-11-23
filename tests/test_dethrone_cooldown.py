@@ -310,6 +310,76 @@ def test_decay_tracker_passes_structured_evidence(forven_db, monkeypatch):
     assert evidence["degradation"] > 0.30
 
 
+def _decay_events(sid):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM strategy_events WHERE strategy_id = ? AND actor = 'decay_tracker'",
+            (sid,),
+        ).fetchone()
+    return int(row["c"])
+
+
+def test_decay_tracker_records_a_declined_paper_request_once(forven_db):
+    """The paper pool declines the tracker's archive request every time. One
+    install logged the same declined request 396 times in 72 hours: the
+    request belongs on the strategy's history once per decay window."""
+    from forven import monitoring
+
+    sid = _seed_strategy("S-CD-DECAY-ONCE", metrics='{"sharpe": 2.0}')
+    now = datetime.now(timezone.utc)
+    for i, pnl in enumerate([-1.0, -2.0, -0.5, -1.5, -3.0, -1.1]):
+        _seed_closed_trade(f"T-ONCE-{i}", sid, pnl, closed_at=(now - timedelta(hours=i)).isoformat())
+
+    first = monitoring.run_decay_tracker(window_hours=72, degradation_threshold=0.30, min_trades=5)
+    assert _decay_events(sid) == 1
+    assert any(s.get("reason_code") == "paper_retirement_rules_decide" for s in first["skipped"])
+
+    second = monitoring.run_decay_tracker(window_hours=72, degradation_threshold=0.30, min_trades=5)
+    assert _decay_events(sid) == 1
+    assert {"strategy_id": sid, "reason": "paper_request_already_recorded"} in second["skipped"]
+
+    # Once the recorded request is older than the decay window, the next
+    # sighting of the same decay is recorded again.
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE strategy_events SET created_at = ? WHERE strategy_id = ? AND actor = 'decay_tracker'",
+            ((now - timedelta(hours=80)).isoformat(), sid),
+        )
+    monitoring.run_decay_tracker(window_hours=72, degradation_threshold=0.30, min_trades=5)
+    assert _decay_events(sid) == 2
+
+
+def test_decay_tracker_still_demotes_a_live_strategy_every_run(forven_db, monkeypatch):
+    """The once-per-window rule is for paper only: a live strategy's decay is
+    acted on every run."""
+    from forven import monitoring
+
+    sid = _seed_strategy("S-CD-DECAY-LIVE", stage="live_graduated", metrics='{"sharpe": 2.0}')
+    now = datetime.now(timezone.utc)
+    for i, pnl in enumerate([-1.0, -2.0, -0.5, -1.5, -3.0, -1.1]):
+        _seed_closed_trade(
+            f"T-LIVE-{i}", sid, pnl, closed_at=(now - timedelta(hours=i)).isoformat(), execution_type="live"
+        )
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategy_events (strategy_id, from_state, to_state, actor, reason, created_at) "
+            "VALUES (?, 'live_graduated', 'live_graduated', 'decay_tracker', 'earlier request', ?)",
+            (sid, now.isoformat()),
+        )
+
+    calls = []
+
+    def _fake_transition(**kwargs):
+        calls.append(kwargs["strategy_id"])
+        return {"from": "live_graduated", "to": "live_graduated", "reason_code": "operator_approval_required"}
+
+    monkeypatch.setattr("forven.brain.transition_stage", _fake_transition)
+
+    monitoring.run_decay_tracker(window_hours=72, degradation_threshold=0.30, min_trades=5)
+
+    assert calls == [sid]
+
+
 # --- paper soak guard ----------------------------------------------------------
 
 def test_force_bypasses_soak(forven_db):

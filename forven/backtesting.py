@@ -119,6 +119,18 @@ def _normalize_api_base(raw: str | None) -> str | None:
 
 # ── Client ───────────────────────────────────────────────────────────
 
+def _route_is_missing(resp) -> bool:
+    """True for the router's own 404, false for a 404 a handler raised."""
+    if resp.status_code != 404:
+        return False
+    try:
+        payload = resp.json()
+    except Exception:
+        return True
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    return detail in (None, "", "Not Found")
+
+
 class BacktestingClient:
     """HTTP client for the backtesting AI Dropzone API.
     
@@ -405,10 +417,14 @@ class BacktestingClient:
         if tests:
             payload["tests"] = tests
 
+        # Only a 404 from the router (the path is not served here) sends the
+        # request on to the next spelling. The handler's own 404 means the
+        # strategy has no recorded backtest: retrying it on two more paths
+        # turned one clear answer into three "missing route" errors.
         resp = self._client.post("/backtesting/verdict/run", json=payload)
-        if resp.status_code == 404:
+        if _route_is_missing(resp):
             resp = self._client.post("/verdict/run", json=payload)
-        if resp.status_code == 404:
+        if _route_is_missing(resp):
             resp = httpx.post(
                 f"{self.service_base_url.rstrip('/')}/verdict/run",
                 json=payload,

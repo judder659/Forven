@@ -483,7 +483,8 @@ def test_backtesting_client_run_verdict_falls_back_to_native_route_on_404(monkey
 
         def post(self, url: str, json: dict[str, object] | None = None):
             calls.append(("client", url))
-            return _Response(404, {"detail": "missing"}, f"http://127.0.0.1:8003/api{url}")
+            # The router's own 404 body: the path is not served here.
+            return _Response(404, {"detail": "Not Found"}, f"http://127.0.0.1:8003/api{url}")
 
         def close(self):
             return None
@@ -507,6 +508,55 @@ def test_backtesting_client_run_verdict_falls_back_to_native_route_on_404(monkey
         ("client", "/verdict/run"),
         ("fallback", "http://127.0.0.1:8003/verdict/run"),
     ]
+
+
+def test_backtesting_client_run_verdict_reports_a_missing_backtest_once(monkeypatch):
+    """The handler's 404 is the answer; it must not be retried as a missing route."""
+    import httpx
+    import pytest
+
+    from forven.backtesting import BacktestingClient
+
+    calls: list[str] = []
+
+    class _Response:
+        status_code = 404
+
+        def json(self):
+            return {"detail": "Strategy result not found: S00039"}
+
+        def raise_for_status(self):
+            request = httpx.Request("POST", "http://127.0.0.1:8003/api/backtesting/verdict/run")
+            raise httpx.HTTPStatusError(
+                "HTTP 404", request=request, response=httpx.Response(404, request=request, json=self.json())
+            )
+
+    class _DummyClient:
+        def __init__(self, *args, **kwargs):
+            self.headers = kwargs.get("headers", {})
+
+        def post(self, url: str, json: dict[str, object] | None = None):
+            calls.append(url)
+            return _Response()
+
+        def close(self):
+            return None
+
+    def _unexpected_post(*args, **kwargs):
+        raise AssertionError("a handler 404 must not fall back to another route")
+
+    monkeypatch.setattr("forven.backtesting.httpx.Client", _DummyClient)
+    monkeypatch.setattr("forven.backtesting.httpx.post", _unexpected_post)
+
+    client = BacktestingClient(base_url="http://127.0.0.1:8003/api")
+    try:
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            client.run_verdict("S00039", "bt-s00039")
+    finally:
+        client.close()
+
+    assert calls == ["/backtesting/verdict/run"]
+    assert excinfo.value.response.json()["detail"] == "Strategy result not found: S00039"
 
 
 def test_backtesting_client_sends_forven_api_and_operator_keys(monkeypatch):

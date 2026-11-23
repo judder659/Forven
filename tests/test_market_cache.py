@@ -94,3 +94,42 @@ def test_load_candle_snapshot_returns_rows_and_age(monkeypatch):
     assert rows[0]["close"] == 1.5
     assert age is not None
     assert 0 <= age < 30
+
+
+def _rows(count: int) -> list[dict]:
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return [
+        {"t": (start + timedelta(minutes=5 * i)).isoformat(), "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 3.0}
+        for i in range(count)
+    ]
+
+
+def test_candle_snapshot_never_holds_more_than_a_reader_gets_back(monkeypatch):
+    """A deep window (months of 5m bars) was stored whole, 8 to 25 MB per coin,
+    although a read returns at most MAX_SNAPSHOT_ROWS candles."""
+    writes: dict[str, dict] = {}
+    monkeypatch.setattr(market_cache, "kv_set_best_effort", lambda key, value, **_k: writes.update({key: value}) or True)
+    rows = _rows(market_cache.MAX_SNAPSHOT_ROWS + 250)
+
+    payload = market_cache.publish_candle_snapshot("btc", rows, "scanner_fallback", interval="5m", max_rows=len(rows))
+
+    stored = writes[market_cache.candle_cache_key("BTC", "5m")]["rows"]
+    assert len(stored) == market_cache.MAX_SNAPSHOT_ROWS
+    assert stored[-1]["t"] == rows[-1]["t"]  # the newest candles are the ones kept
+    assert payload["rows"] == stored
+
+    # What a reader gets is unchanged: the same rows the full blob gave it.
+    monkeypatch.setattr(market_cache, "kv_get", lambda key, default=None: {"updated_at": payload["updated_at"], "rows": rows})
+    from_full_blob, _ = market_cache.load_candle_snapshot("btc", interval="5m")
+    monkeypatch.setattr(market_cache, "kv_get", lambda key, default=None: payload)
+    from_capped, _ = market_cache.load_candle_snapshot("btc", interval="5m")
+    assert from_capped == from_full_blob
+
+
+def test_candle_snapshot_keeps_a_smaller_requested_window(monkeypatch):
+    writes: dict[str, dict] = {}
+    monkeypatch.setattr(market_cache, "kv_set_best_effort", lambda key, value, **_k: writes.update({key: value}) or True)
+
+    market_cache.publish_candle_snapshot("eth", _rows(500), "daemon", interval="1h", max_rows=360)
+
+    assert len(writes[market_cache.candle_cache_key("ETH", "1h")]["rows"]) == 360

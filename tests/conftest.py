@@ -124,6 +124,11 @@ def _clear_data_manager_caches() -> None:
         if module is not None and hasattr(module, clear):
             getattr(module, clear)()
     manager_module = sys.modules.get("forven.data_manager")
+    if manager_module is not None and hasattr(manager_module, "_stats_synced_at"):
+        # A test that pins the telemetry in memory (_stats_loaded = True) must
+        # not start following the stored snapshot because an earlier test in
+        # this worker loaded one.
+        manager_module._stats_synced_at = None
     get_manager = getattr(manager_module, "get_data_manager", None)
     if hasattr(get_manager, "cache_clear"):
         get_manager.cache_clear()

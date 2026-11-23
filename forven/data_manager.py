@@ -32,6 +32,7 @@ import contextlib
 import logging
 import os
 import threading
+import time
 import weakref
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -164,8 +165,11 @@ def _now_iso() -> str:
 # ---------------------------------------------------------------------------
 # Per-stream counters + freshness (T22)
 #
-# Process-local (not persisted). ``data_manager_stats()`` returns a deep copy
-# of the current snapshot. Each ``collect_*`` method calls
+# Held in memory and persisted (without ``per_symbol``) to the KV store, so
+# the snapshot survives a restart and every process serves the same picture:
+# collection runs in one process, while each API worker answers health
+# reads. ``data_manager_stats()`` returns a deep copy of the current
+# snapshot. Each ``collect_*`` method calls
 # ``_record_collection`` exactly once per invocation — with per-symbol
 # attempted/failed tallies. A run where EVERY attempted symbol failed records
 # ``ok=False`` (collectors re-raise instead of swallowing), so freshness
@@ -175,6 +179,11 @@ def _now_iso() -> str:
 _stats_lock = threading.Lock()
 _stats: dict[str, dict[str, Any]] = {}
 _stats_loaded = False
+# Monotonic time of the last read of the persisted snapshot; None until this
+# process has loaded it.
+_stats_synced_at: float | None = None
+# How stale a read may be about streams another process collects.
+_TELEMETRY_REFRESH_SECONDS = 15.0
 _TELEMETRY_KV_KEY = "data_manager:collection_telemetry"
 
 
@@ -193,24 +202,58 @@ def _new_stream_entry() -> dict[str, Any]:
     }
 
 
+def _apply_persisted_telemetry(saved: Any) -> None:
+    """Take in every persisted stream that this process holds no newer run of.
+    The per-symbol detail is not persisted, so the local one is kept.
+    Caller holds _stats_lock."""
+    if not isinstance(saved, dict):
+        return
+    for stream, entry in saved.items():
+        if not isinstance(entry, dict):
+            continue
+        current = _stats.get(stream)
+        if current is not None and str(entry.get("last_run_ts") or "") <= str(current.get("last_run_ts") or ""):
+            continue
+        merged = _new_stream_entry()
+        merged.update({k: v for k, v in entry.items() if k != "per_symbol"})
+        if current is not None:
+            merged["per_symbol"] = current.get("per_symbol") or {}
+        _stats[stream] = merged
+
+
 def _load_telemetry_once() -> None:
     """Seed in-memory _stats from the persisted KV snapshot once per process so
     collection health survives a restart instead of resetting to empty/green.
     Caller holds _stats_lock."""
-    global _stats_loaded
+    global _stats_loaded, _stats_synced_at
     if _stats_loaded:
         return
     _stats_loaded = True
     try:
         from forven.db import kv_get
 
-        saved = kv_get(_TELEMETRY_KV_KEY, {})
-        if isinstance(saved, dict):
-            for stream, entry in saved.items():
-                if isinstance(entry, dict):
-                    merged = _new_stream_entry()
-                    merged.update({k: v for k, v in entry.items() if k != "per_symbol"})
-                    _stats[stream] = merged
+        _apply_persisted_telemetry(kv_get(_TELEMETRY_KV_KEY, {}))
+        _stats_synced_at = time.monotonic()
+    except Exception:
+        pass
+
+
+def _sync_telemetry(max_age_seconds: float) -> None:
+    """Load the persisted snapshot, then keep following it.
+
+    Loading once left every process but the collecting one on the snapshot
+    from its own start: with two API workers the health panel alternated
+    between current telemetry and telemetry hours old, depending on which
+    worker answered. Caller holds _stats_lock."""
+    global _stats_synced_at
+    _load_telemetry_once()
+    if _stats_synced_at is None or time.monotonic() - _stats_synced_at < max_age_seconds:
+        return
+    _stats_synced_at = time.monotonic()
+    try:
+        from forven.db import kv_get
+
+        _apply_persisted_telemetry(kv_get(_TELEMETRY_KV_KEY, {}))
     except Exception:
         pass
 
@@ -243,7 +286,9 @@ def _record_collection(
     per_symbol: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     with _stats_lock:
-        _load_telemetry_once()
+        # The whole snapshot is persisted below: take in the other streams'
+        # latest runs first so this write does not put older ones back.
+        _sync_telemetry(0.0)
         entry = _stats.setdefault(stream, _new_stream_entry())
         for _k, _v in _new_stream_entry().items():
             entry.setdefault(_k, _v)  # backfill keys from older snapshots
@@ -359,7 +404,7 @@ def data_manager_stats() -> dict[str, Any]:
     """
     with _stats_lock:
         import copy
-        _load_telemetry_once()
+        _sync_telemetry(_TELEMETRY_REFRESH_SECONDS)
         return copy.deepcopy(_stats)
 
 
