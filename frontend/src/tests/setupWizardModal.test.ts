@@ -66,7 +66,9 @@ describe('SetupWizardModal', () => {
 		await flush();
 
 		const text = target.textContent || '';
-		expect(text).toContain("can't place paper or live orders");
+		expect(text).toContain('Paper trading works without exchange keys');
+		expect(text).toContain('Connect Hyperliquid to enable live orders');
+		expect(text).not.toContain("can't place paper or live orders");
 	});
 
 	it('skip-all fires window.confirm when critical steps are unsatisfied', async () => {

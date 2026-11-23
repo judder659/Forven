@@ -1806,14 +1806,20 @@ def _fetch_range(
         seen_last_ts.add(last_ts_ms)
         chunks.append(chunk)
 
-        if len(rows) < limit_per_call:
-            break
-
-        cursor_ms = last_ts_ms + timeframe_ms
+        next_cursor_ms = last_ts_ms + timeframe_ms
         if progress_callback is not None:
-            progress_callback(cursor_ms, bound_ms, len(rows))
-        if cursor_ms > bound_ms:
+            progress_callback(next_cursor_ms, bound_ms, len(rows))
+        if next_cursor_ms > bound_ms:
             break
+        # Stop early only when a short page has already reached the tail of the
+        # requested window (allowing up to 2 bars for the unclosed live bar +
+        # `now_ms + tf_ms` padding). Venues with smaller per-request page caps
+        # (e.g. Coinbase's 300-bar cap) or a mid-range exchange gap return fewer
+        # than `limit_per_call` rows while `next_cursor_ms` is still well before
+        # `bound_ms` and must keep paging.
+        if len(rows) < limit_per_call and next_cursor_ms + 2 * timeframe_ms >= bound_ms:
+            break
+        cursor_ms = next_cursor_ms
 
         rate_limit = float(getattr(exchange, "rateLimit", 0) or 0)
         if rate_limit > 0:
@@ -2151,6 +2157,18 @@ _VENUE_OHLCV_MAX_BARS: dict[str, int] = {"kraken": 720}
 
 def _venue_ohlcv_max_bars(exchange_id: str) -> int | None:
     return _VENUE_OHLCV_MAX_BARS.get(str(exchange_id or "").strip().lower())
+
+
+# Per-request OHLCV page size for venues whose REST endpoint caps a single
+# fetch_ohlcv call below CHUNK_LIMIT (1000). Coinbase Advanced Trade caps at
+# 300 candles per call; matching `limit_per_call` avoids single-shot truncation
+# on the `limit` branch and keeps `_fetch_range` aligned with the venue's page
+# window.
+_VENUE_OHLCV_PAGE_LIMIT: dict[str, int] = {"coinbase": 300}
+
+
+def _venue_ohlcv_page_limit(exchange_id: str) -> int:
+    return _VENUE_OHLCV_PAGE_LIMIT.get(str(exchange_id or "").strip().lower(), CHUNK_LIMIT)
 
 
 # Capped venues that ALSO expose a full-history public Trades feed we can
@@ -2564,6 +2582,7 @@ def fetch_ohlcv_chunked(
             progress_callback=progress_callback, checkpoint=_trades_checkpoint,
         )
 
+    page_limit = _venue_ohlcv_page_limit(exchange_id)
     try:
         if use_trades:
             if all_available and snapshot is not None and not snapshot.empty:
@@ -2586,24 +2605,45 @@ def fetch_ohlcv_chunked(
                 latest = _to_ms(snapshot["timestamp"].iloc[-1])
                 if latest + tf_ms <= end_ms_to_use:
                     fetched_blocks.append(
-                        _fetch_range(exchange, ccxt_symbol, timeframe, latest + tf_ms, end_ms_to_use, progress_callback=progress_callback)
+                        _fetch_range(
+                            exchange, ccxt_symbol, timeframe, latest + tf_ms, end_ms_to_use,
+                            limit_per_call=page_limit, progress_callback=progress_callback,
+                        )
                     )
                 if earliest - tf_ms > 0:
                     fetched_blocks.append(
-                        _fetch_range(exchange, ccxt_symbol, timeframe, 0, earliest - tf_ms, progress_callback=progress_callback)
+                        _fetch_range(
+                            exchange, ccxt_symbol, timeframe, 0, earliest - tf_ms,
+                            limit_per_call=page_limit, progress_callback=progress_callback,
+                        )
                     )
             else:
-                fetched_blocks.append(_fetch_range(exchange, ccxt_symbol, timeframe, 0, end_ms_to_use, progress_callback=progress_callback))
+                fetched_blocks.append(
+                    _fetch_range(
+                        exchange, ccxt_symbol, timeframe, 0, end_ms_to_use,
+                        limit_per_call=page_limit, progress_callback=progress_callback,
+                    )
+                )
         elif since_ms is not None:
-            fetched_blocks.append(_fetch_range(exchange, ccxt_symbol, timeframe, int(since_ms), end_ms_to_use, progress_callback=progress_callback))
+            fetched_blocks.append(
+                _fetch_range(
+                    exchange, ccxt_symbol, timeframe, int(since_ms), end_ms_to_use,
+                    limit_per_call=page_limit, progress_callback=progress_callback,
+                )
+            )
         else:
             effective_limit = max(1, int(limit or 1000))
-            if effective_limit <= CHUNK_LIMIT:
+            if effective_limit <= page_limit:
                 rows = _fetch_ohlcv_once(exchange, ccxt_symbol, timeframe, None, effective_limit)
                 fetched_blocks.append(_rows_to_frame(rows))
             else:
                 start_ms = _estimate_limit_window_start(effective_limit, timeframe)
-                fetched_blocks.append(_fetch_range(exchange, ccxt_symbol, timeframe, start_ms, end_ms_to_use, progress_callback=progress_callback))
+                fetched_blocks.append(
+                    _fetch_range(
+                        exchange, ccxt_symbol, timeframe, start_ms, end_ms_to_use,
+                        limit_per_call=page_limit, progress_callback=progress_callback,
+                    )
+                )
     except Exception as exc:
         # A venue error (network/HTTP/exchange) counts against the breaker so a
         # dead venue fails fast after 3 strikes instead of paying the full

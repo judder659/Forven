@@ -20,7 +20,7 @@
 
 	const STEPS: Step[] = [
 		{ id: 'welcome', label: 'Welcome', critical: false, description: 'Get Forven set up.' },
-		{ id: 'trading', label: 'Trading basics', critical: true, description: 'Paste your Hyperliquid API credentials.' },
+		{ id: 'trading', label: 'Trading basics', critical: true, description: 'Connect Hyperliquid for live orders (optional — paper trading needs no exchange keys).' },
 		{ id: 'ai', label: 'AI providers', critical: true, description: 'Connect at least one provider so agents can run.' },
 		{ id: 'notifications', label: 'Notifications', critical: false, description: 'Which events pop up in the app, and Discord alerts (optional).' },
 		{ id: 'done', label: 'Done', critical: false, description: 'Review and finish.' },
@@ -101,7 +101,7 @@
 
 	function skipMessage(s: Step): string {
 		if (s.id === 'trading') {
-			return "Skip Trading basics? Forven won't be able to place paper or live orders until you connect an exchange in Settings.";
+			return "Skip Trading basics? Paper trading works without exchange keys, but live trading won't be available until you connect Hyperliquid in Settings.";
 		}
 		return "Skip AI providers? Forven won't be able to run research, propose strategies, or chat until you connect one in Settings.";
 	}
@@ -192,7 +192,7 @@
 				{#if step.critical && !isSatisfied(step)}
 					<div class="px-6 py-3 bg-yellow-500/5 border-b border-yellow-900 text-sm text-yellow-400">
 						{#if step.id === 'trading'}
-							⚠ Without an exchange API connection, Forven can't place paper or live orders.
+							⚠ Paper trading works without exchange keys. Connect Hyperliquid to enable live orders.
 						{:else}
 							⚠ Without an AI provider, agents can't research, propose strategies, or chat.
 						{/if}
