@@ -13,6 +13,9 @@
 #   ./launcher.sh logs             follow the supervisor log
 #   ./launcher.sh install          add Forven to the applications menu
 #   ./launcher.sh uninstall        remove it again
+#   ./launcher.sh autostart on     start Forven by itself after the computer boots
+#   ./launcher.sh autostart off    stop doing that
+#   ./launcher.sh autostart        say whether it is on
 #
 # Add -y to skip the confirmation before stop/restart. Needs nothing beyond
 # what start_all.sh already uses (bash, curl, lsof).
@@ -44,6 +47,10 @@ BACKEND_HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/api/health"
 FRONTEND_ROOT_URL="http://127.0.0.1:${FRONTEND_PORT}/"
 DASHBOARD_URL="http://localhost:${FRONTEND_PORT}"
 DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/forven.desktop"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+AUTOSTART_UNIT="forven.service"
+AUTOSTART_UNIT_FILE="$CONFIG_HOME/systemd/user/$AUTOSTART_UNIT"
+AUTOSTART_DESKTOP_FILE="$CONFIG_HOME/autostart/forven.desktop"
 ASSUME_YES=0
 
 info() { echo "[launcher] $*"; }
@@ -374,6 +381,142 @@ cmd_uninstall() {
 	info "Removed $DESKTOP_FILE"
 }
 
+# --- Start on boot ----------------------------------------------------------
+#
+# Preferred: a systemd user service that runs "launcher.sh start" when the
+# user's service manager starts. With lingering on (loginctl enable-linger,
+# which a user may turn on for themselves on Ubuntu/Fedora/Debian), that
+# manager starts at boot, before anyone logs in. Without systemd, an XDG
+# autostart entry starts Forven when the desktop session starts. Neither needs
+# root. The unit records the PATH this was turned on from, so Node, the venv
+# tools and the claude CLI are found the same way as from a terminal.
+
+user_systemd_ok() {
+	command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
+}
+
+linger_on() {
+	command -v loginctl >/dev/null 2>&1 || return 1
+	[[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" == "yes" ]]
+}
+
+autostart_mode() {
+	case "${FORVEN_AUTOSTART_MODE:-}" in
+		systemd | xdg) echo "$FORVEN_AUTOSTART_MODE"; return ;;
+	esac
+	if user_systemd_ok; then echo systemd; else echo xdg; fi
+}
+
+autostart_on() {
+	local mode
+	mode="$(autostart_mode)"
+	chmod +x "$DIR/launcher.sh" 2>/dev/null || true
+	if [[ "$mode" == "systemd" ]]; then
+		rm -f "$AUTOSTART_DESKTOP_FILE"
+		mkdir -p "$(dirname "$AUTOSTART_UNIT_FILE")"
+		cat >"$AUTOSTART_UNIT_FILE" <<EOF
+# Written by "launcher.sh autostart on"; remove with "launcher.sh autostart off".
+[Unit]
+Description=Forven (start after boot)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=$DIR
+Environment="PATH=${PATH//%/%%}"
+# Give the network a moment after boot; startup also retries on its own.
+ExecStartPre=/bin/sleep 20
+ExecStart="$DIR/launcher.sh" start
+# Stop gracefully when the machine shuts down.
+ExecStop="$DIR/launcher.sh" -y stop
+# "launcher.sh start" leaves Forven running in its own session; keep it
+# running when this one-shot unit's start command exits.
+KillMode=process
+TimeoutStartSec=420
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target
+EOF
+		systemctl --user daemon-reload || true
+		if ! systemctl --user enable "$AUTOSTART_UNIT" >/dev/null 2>&1; then
+			warn "Could not enable $AUTOSTART_UNIT; Forven will not start by itself."
+			return 1
+		fi
+		info "Forven will start by itself ($AUTOSTART_UNIT_FILE)."
+		if linger_on || loginctl --no-ask-password enable-linger "$(id -un)" >/dev/null 2>&1; then
+			info "It starts at boot, even before you log in."
+		else
+			warn "It starts when you log in. To start it at boot before anyone logs in, run: sudo loginctl enable-linger $(id -un)"
+		fi
+		info "This does not start Forven now; use \"./launcher.sh start\" for that."
+	else
+		mkdir -p "$(dirname "$AUTOSTART_DESKTOP_FILE")"
+		cat >"$AUTOSTART_DESKTOP_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Forven
+Comment=Start Forven after logging in (launcher.sh autostart off removes this)
+Exec="$DIR/launcher.sh" start
+Path=$DIR
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+		info "Forven will start when you log in to the desktop ($AUTOSTART_DESKTOP_FILE)."
+		info "systemd user services are not available here, so it cannot start before you log in."
+	fi
+}
+
+autostart_off() {
+	local removed=0
+	if [[ -f "$AUTOSTART_UNIT_FILE" ]]; then
+		if command -v systemctl >/dev/null 2>&1; then
+			systemctl --user disable "$AUTOSTART_UNIT" >/dev/null 2>&1 || true
+		fi
+		rm -f "$AUTOSTART_UNIT_FILE"
+		command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1
+		removed=1
+	fi
+	if [[ -f "$AUTOSTART_DESKTOP_FILE" ]]; then
+		rm -f "$AUTOSTART_DESKTOP_FILE"
+		removed=1
+	fi
+	if ((removed)); then
+		info "Forven will no longer start by itself. It keeps running now if it is running."
+	else
+		info "Start on boot was already off."
+	fi
+	# Lingering is left as it is: other user services may rely on it.
+}
+
+autostart_status() {
+	if [[ -f "$AUTOSTART_UNIT_FILE" ]]; then
+		if linger_on; then
+			info "Start on boot: on (systemd user service, starts at boot)."
+		else
+			info "Start on boot: on (systemd user service, starts when you log in; lingering is off)."
+		fi
+	elif [[ -f "$AUTOSTART_DESKTOP_FILE" ]]; then
+		info "Start on boot: on (starts when you log in to the desktop)."
+	else
+		info "Start on boot: off. Turn it on with \"./launcher.sh autostart on\"."
+	fi
+}
+
+cmd_autostart() {
+	case "${1:-status}" in
+		on | enable) autostart_on ;;
+		off | disable) autostart_off ;;
+		status) autostart_status ;;
+		*)
+			warn "Use: ./launcher.sh autostart [on|off|status]"
+			return 2
+			;;
+	esac
+}
+
+autostart_is_on() { [[ -f "$AUTOSTART_UNIT_FILE" || -f "$AUTOSTART_DESKTOP_FILE" ]]; }
+
 menu() {
 	local choice
 	while true; do
@@ -385,6 +528,11 @@ menu() {
 		echo "  2) Start Forven          6) Stop Forven"
 		echo "  3) Restart Forven        7) Follow logs"
 		echo "  4) Reload backend        8) Refresh status"
+		if autostart_is_on; then
+			echo "  9) Start on boot: on (turn off)"
+		else
+			echo "  9) Start on boot: off (turn on)"
+		fi
 		echo "  q) Quit (Forven keeps running)"
 		read -r -p "> " choice || return 0
 		case "$choice" in
@@ -396,13 +544,14 @@ menu() {
 			6) confirm "Stopping Forven" && cmd_stop ;;
 			7) cmd_logs ;;
 			8 | "") ;;
+			9) if autostart_is_on; then autostart_off; else autostart_on; fi ;;
 			q | Q) return 0 ;;
-			*) echo "Pick 1-8 or q." ;;
+			*) echo "Pick 1-9 or q." ;;
 		esac
 	done
 }
 
-usage() { sed -n '2,18p' "$DIR/launcher.sh" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$DIR/launcher.sh" | sed 's/^# \{0,1\}//'; }
 
 main() {
 	if [[ "$(uname -s)" != "Linux" ]]; then
@@ -432,6 +581,7 @@ main() {
 		logs) cmd_logs ;;
 		install) cmd_install ;;
 		uninstall) cmd_uninstall ;;
+		autostart) cmd_autostart "${args[1]:-status}" ;;
 		help | -h | --help) usage ;;
 		*)
 			usage
