@@ -2316,6 +2316,7 @@ export interface ForvenSettings {
 	scanner_execution_interval_minutes: number;
 	scanner_allow_direct_market_fetch: boolean;
 	daemon_candle_cache_refresh_seconds: number;
+	market_data_source?: 'binance' | 'hyperliquid';
 	pipeline_assignments_per_cycle: number;
 	pipeline_drain_mode: boolean;
 	pipeline_drain_max_seconds: number;

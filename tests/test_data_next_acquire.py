@@ -1092,3 +1092,117 @@ def test_venue_lookup_answers_from_an_expired_market_list_and_refreshes_behind(m
     assert fdata.cached_markets_stale_ok("bybit") == {"NEW/USDT": {}}  # never loaded: waits for its load
     assert calls == ["okx", "bybit"]
 
+
+# ============================================================ history source (Binance blocked)
+
+
+@pytest.fixture
+def okx_history(monkeypatch):
+    """An install that picked OKX as its research history source; Binance is
+    unreachable, so any call that reaches its market list fails the test."""
+    real = fdata._cached_markets
+
+    def _markets(ex):
+        if ex.startswith("binance"):
+            raise AssertionError(f"{ex} must not be consulted when OKX is the history source")
+        return real(ex)
+
+    monkeypatch.setattr(fdata, "_cached_markets", _markets)
+    monkeypatch.setattr(fdata, "history_source", lambda: "okx")
+    return "okx"
+
+
+def test_history_source_defaults_to_binance_and_validates():
+    from forven.dataeng.settings import DataEngineSettings, merge_data_engine_settings_payload
+
+    assert DataEngineSettings().history_source == "binance"
+    # An existing install's stored settings (no key) keep Binance.
+    assert merge_data_engine_settings_payload({"enabled": True})["history_source"] == "binance"
+    assert DataEngineSettings(history_source="okx").history_source == "okx"
+    with pytest.raises(Exception):
+        DataEngineSettings(history_source="kraken")
+
+
+def test_history_source_reads_the_setting_and_ignores_unknown_values(monkeypatch):
+    from types import SimpleNamespace
+
+    import forven.dataeng.settings as de_settings
+
+    monkeypatch.setattr(de_settings, "load_data_engine_settings", lambda: SimpleNamespace(history_source="bybit"))
+    assert fdata.history_source() == "bybit"
+    monkeypatch.setattr(de_settings, "load_data_engine_settings", lambda: SimpleNamespace(history_source="nope"))
+    assert fdata.history_source() == "binance"
+
+    def _broken():
+        raise RuntimeError("settings store unavailable")
+
+    monkeypatch.setattr(de_settings, "load_data_engine_settings", _broken)
+    assert fdata.history_source() == "binance"
+
+
+def test_configured_history_source_owns_the_canonical_series(lake, okx_history):
+    target = fdata.resolve_series_target("binance", "BTC/USDT")
+    assert (target["source"], target["market"], target["destination"]) == ("okx", "spot", "canonical")
+    assert fdata.resolve_series_target("okx", "BTC/USDT")["destination"] == "canonical"
+    for exchange, venue in (("bybit", "bybit:spot"), ("kraken", "kraken:spot"), ("binanceusdm", "binanceusdm:perp")):
+        assert fdata.resolve_series_target(exchange, "BTC/USDT")["venue"] == venue
+
+
+def test_default_fetch_downloads_the_canonical_series_from_the_history_source(lake, okx_history):
+    now = _hour_now()
+    start = now - 200 * H
+    okx = FakeOHLCV(150.0, start, now - H)
+    _exchange("okx", okx)
+
+    record = fdata.fetch_ohlcv_chunked("BTC/USDT", "1h", since_ms=start, limit=None)
+
+    assert okx.calls and okx.calls[0][0] == "BTC/USDT"
+    stored = fdata.load_parquet("BTC-USDT", "1h")
+    assert len(stored) == 200 and set(stored["close"]) == {150.0}
+    path = fdata.parquet_path("BTC-USDT", "1h")
+    assert (_stamp(path, b"forven_source"), _stamp(path, b"forven_market")) == ("okx", "spot")
+    assert record["destination"] == "canonical"
+
+
+def test_history_source_never_splices_into_a_stored_binance_series(lake, okx_history):
+    now = _hour_now()
+    canonical = _seed_canonical(start=now - 200 * H, count=150)
+    before = canonical.read_bytes()
+    _exchange("okx", FakeOHLCV(150.0, now - 200 * H, now - H))
+    with pytest.raises(fdata.LakeVenueRefused):
+        fdata.fetch_ohlcv_chunked("BTC/USDT", "1h", since_ms=now - 50 * H, limit=None)
+    assert canonical.read_bytes() == before
+
+
+def test_binance_vision_backfill_stands_aside_for_another_history_source(okx_history, monkeypatch):
+    from forven.binance_vision import BinanceVisionClient
+
+    client = BinanceVisionClient()
+
+    def _probe(*_a, **_k):
+        raise AssertionError("Binance Vision must not be probed")
+
+    monkeypatch.setattr(client, "probe_start_date", _probe)
+    assert client.backfill_ohlcv("BTC-USDT", "1h", None, save_fn=None, load_fn=None, lock_fn=None) == 0
+
+
+def test_targets_and_downloads_use_the_history_source(acquire, okx_history):
+    out = acquire.targets("BTC/USDT")
+    rows = {t["venue"]: t for t in out["targets"]}
+    assert set(rows) == {"canonical", "bybit:spot", "coinbase:spot", "kraken:spot", "hyperliquid:perp"}
+    assert (rows["canonical"]["exchange"], rows["canonical"]["market"], rows["canonical"]["listed"]) == (
+        "okx", "spot", True,
+    )
+    assert rows["bybit:spot"]["destination"] == "venue"
+
+    now = _hour_now()
+    okx = FakeOHLCV(120.0, now - 3000 * H, now - H)
+    _exchange("okx", okx)
+    (job,) = acquire.start_downloads(
+        [{"symbol": "BTC/USDT", "timeframe": "1h", "venue": "canonical", "history": {"mode": "days", "days": 10}}]
+    )
+    assert job["lane"] == "okx"
+    done = _wait(job["id"])
+    assert done["status"] == "succeeded", done
+    assert done["result"]["destination"] == "canonical"
+    assert set(fdata.load_parquet("BTC-USDT", "1h")["close"]) == {120.0}
