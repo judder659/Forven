@@ -70,6 +70,7 @@ _DEFAULT_JOB_IDS = {
     "forven-data-bv-backfill",
     "forven-overnight-summary",
     "forven-weekly-funnel-report",
+    "forven-xs-momentum-paper",
     "forven-data-lsr-collect",
     "forven-data-taker-collect",
     "forven-data-liquidation-collect",
@@ -1177,6 +1178,7 @@ def _job_running_stale_seconds(job: dict) -> int:
         "market_data_collect",
         "overnight_summary",
         "weekly_funnel_report",
+        "xs_momentum_paper_rebalance",
     }:
         timeout_seconds = 10 * 60
 
@@ -2009,9 +2011,27 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         # DataManager — Binance Vision bulk backfill
         if kind == "data_manager_backfill":
             from forven.data_manager import data_manager
-            # Match the bulk job's existing 30-minute scheduler allowance;
-            # the generic short-call timeout abandoned healthy archive imports.
-            result = await _run_sync_job(data_manager.backfill, timeout_seconds=30 * 60)
+
+            # Run fast monthly archives (funding + basis) across all symbols
+            # FIRST so slow daily OI/metrics downloads (~10 min/symbol) can
+            # never starve multi-year funding history on a 30-minute timeout.
+            def _staged_bulk_backfill() -> dict:
+                fast = data_manager.backfill(streams=("funding", "basis")) or {}
+                slow = data_manager.backfill(streams=("ohlcv", "oi")) or {}
+                merged: dict = {}
+                for sym in set(fast) | set(slow):
+                    f_val = fast.get(sym)
+                    s_val = slow.get(sym)
+                    if isinstance(f_val, dict) or isinstance(s_val, dict):
+                        merged[sym] = {
+                            **(f_val if isinstance(f_val, dict) else {}),
+                            **(s_val if isinstance(s_val, dict) else {}),
+                        }
+                    else:
+                        merged[sym] = s_val if s_val is not None else f_val
+                return merged
+
+            result = await _run_sync_job(_staged_bulk_backfill, timeout_seconds=30 * 60)
             errors = [
                 f"{symbol}: {key}: {value}"
                 for symbol, streams in (result or {}).items()
@@ -2179,6 +2199,15 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                     run_weekly_funnel_report_job(conn, emit_notification, days)
 
             await _run_sync_job(_weekly_funnel_report)
+            return "ok", None
+
+        # Paper-only Cross-Sectional Volatility-Adjusted Momentum daily rebalance
+        if kind == "xs_momentum_paper_rebalance":
+            from forven.xs_momentum_paper import rebalance_xs_momentum_paper
+
+            res = await _run_sync_job(rebalance_xs_momentum_paper, timeout_seconds=120)
+            if not (isinstance(res, dict) and res.get("ok")):
+                return "error", str((res or {}).get("error") or "xs_momentum_paper_rebalance failed")
             return "ok", None
 
         # Overnight Pipeline Summary
@@ -3358,6 +3387,17 @@ def seed_forven_jobs():
         command="weekly-funnel-report",
         timezone_str="America/Halifax",
         payload={"kind": "weekly_funnel_report", "days": 7},
+    )
+
+    # 16c. Paper-only Cross-Sectional Momentum book — daily at 00:05 UTC.
+    add_job(
+        job_id="forven-xs-momentum-paper",
+        name="XS-VolMom Paper Rebalance",
+        schedule_type="cron",
+        schedule_expr="5 0 * * *",
+        command="xs-momentum-paper-rebalance",
+        timezone_str="UTC",
+        payload={"kind": "xs_momentum_paper_rebalance"},
     )
 
     # 17. Derivatives: Long/Short Ratio — every 1 hour

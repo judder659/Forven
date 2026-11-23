@@ -162,3 +162,20 @@ def flip_paper_position(session_id: str):
 @router.post("/api/paper/sessions/{session_id}/position/auto-management")
 def set_paper_auto_management(session_id: str, body: core.PaperAutoManagementBody):
     return paper_control_domain.set_manual_pause(session_id, paused=body.paused)
+
+
+# --------------------------------------------------------------------------- #
+# Paper-only Cross-Sectional Momentum book (XS-VolMom; never touches live).
+# --------------------------------------------------------------------------- #
+@router.get("/api/paper/xs-momentum")
+def get_xs_momentum_paper(history_limit: int = 60) -> dict[str, Any]:
+    from forven.xs_momentum_paper import get_xs_momentum_paper_status
+
+    return get_xs_momentum_paper_status(history_limit=history_limit)
+
+
+@router.post("/api/paper/xs-momentum/rebalance")
+def trigger_xs_momentum_paper_rebalance(force: bool = False) -> dict[str, Any]:
+    from forven.xs_momentum_paper import rebalance_xs_momentum_paper
+
+    return rebalance_xs_momentum_paper(force=force)
