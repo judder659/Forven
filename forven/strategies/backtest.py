@@ -5193,8 +5193,6 @@ def _run_directional_signal_series(
     else:
         allowed_modes = ("long",)
 
-    active_trades: dict[str, dict | None] = {direction: None for direction in allowed_modes}
-    trades: list[dict] = []
     # Fees and slippage are paid on the leveraged notional, so the per-equity
     # drag scales with leverage. (A 4.5bps fee on 3x notional costs 13.5bps of equity.)
     round_trip_drag = 2.0 * (max(float(fee_bps or 0.0), 0.0) + max(float(slippage_bps or 0.0), 0.0)) / 10000.0 * max(float(leverage), 0.0)

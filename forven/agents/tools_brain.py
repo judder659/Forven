@@ -5,9 +5,9 @@ import json
 
 from forven import brain_memory as _brain_memory
 from forven.db import get_db
-from .context import _current_agent_id_var, _current_task_display_id_var
-from .tool_definitions import BRAIN_AGENT_IDS
-from .tool_registry import register_tool
+from forven.agents.context import _current_agent_id_var, _current_task_display_id_var
+from forven.agents.tool_definitions import BRAIN_AGENT_IDS
+from forven.agents.tool_registry import register_tool
 from forven.roster import normalize_agent_id as _normalize_agent_id
 
 

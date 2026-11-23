@@ -74,7 +74,6 @@ class GapFillStrategy(BaseStrategy):
         # Gap calculation
         gap = (curr_open - prev_close) / prev_close
         gap_abs = abs(gap)
-        gap_size = curr_open - prev_close
 
         entry = False
         exit_ = False

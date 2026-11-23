@@ -1,6 +1,6 @@
 """Agent team system."""
 
-from .runner import (
+from forven.agents.runner import (
     AGENT_TOOLS as AGENT_TOOLS,
     BACKTESTING_TOOLS as BACKTESTING_TOOLS,
     BRAIN_TOOLS as BRAIN_TOOLS,

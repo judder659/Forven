@@ -80,7 +80,6 @@ class FundingStrategy(BaseStrategy):
         parent: scanner/backtest add it by asset). Neutral when the column is absent."""
         from forven.strategies.indicators import atr
 
-        p = self.params
         close = df["close"]
         ema200 = close.ewm(span=200, adjust=False).mean()
         atr_14 = atr(df, 14)

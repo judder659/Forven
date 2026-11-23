@@ -69,7 +69,6 @@ class MomentumBurstMeanReversion(BaseStrategy):
     def _adx(self, df, period, atr):
         high = df["high"]
         low = df["low"]
-        close = df["close"]
         plus_dm = high.diff()
         minus_dm = -low.diff()
         plus_dm = plus_dm.clip(lower=0)
@@ -109,7 +108,6 @@ class MomentumBurstMeanReversion(BaseStrategy):
         percentile_rank = atr_normalized.rolling(20).apply(pct_rank_20, raw=True)
         adx = self._adx(df, int(p["adx_period"]), atr)
         ema = close.ewm(span=int(p["ema_trend"]), adjust=False).mean()
-        ema_bull = close > ema
         vol = df["volume"]
         vol_ema = vol.ewm(span=int(p["vol_ema_period"]), adjust=False).mean()
         vol_confirm = vol > vol_ema * float(p["vol_confirm_mult"])

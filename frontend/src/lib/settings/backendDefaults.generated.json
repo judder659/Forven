@@ -30,6 +30,7 @@
     "data_engine_settings.collector.strike_out_after": 3,
     "data_engine_settings.collector.tick_seconds": 120,
     "data_engine_settings.enabled": true,
+    "data_engine_settings.history_source": "binance",
     "data_engine_settings.point_in_time_as_of": "",
     "data_engine_settings.point_in_time_mode": "latest",
     "data_engine_settings.research_universe.asset_classes": [
@@ -131,6 +132,7 @@
     "live_min_daily_volume_usd": 5000000.0,
     "live_slice_combined_books": true,
     "maintenance_vacuum_enabled": false,
+    "market_data_source": "binance",
     "max_concurrent_positions": 5,
     "max_daily_loss_pct": 2,
     "max_drawdown_pct": 30,

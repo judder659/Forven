@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 
 from forven.workspace import append_workspace, read_workspace
-from .context import (
+from forven.agents.context import (
     _current_agent_id_var,
     _current_task_display_id_var,
 )
-from .tool_registry import register_tool
+from forven.agents.tool_registry import register_tool
 
 
 @register_tool(

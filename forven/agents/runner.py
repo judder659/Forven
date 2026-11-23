@@ -40,21 +40,21 @@ from forven.task_timeouts import (
 )
 from forven.workspace import append_workspace, read_workspace
 
-from .history import compact_old_rounds
-from .progress import note_progress, run_with_progress_watchdog
-from .context import (
+from forven.agents.history import compact_old_rounds
+from forven.agents.progress import note_progress, run_with_progress_watchdog
+from forven.agents.context import (
     _current_agent_id as _legacy_current_agent_id,
     reset_tool_context,
     set_tool_context,
 )
-from .tool_definitions import (
+from forven.agents.tool_definitions import (
     AGENT_TOOLS,
     BACKTESTING_TOOLS,  # noqa: F401 - legacy re-exported via forven.agents
     BRAIN_TOOLS,  # noqa: F401 - legacy re-exported via forven.agents
     MAX_TOOL_ROUNDS,
     PIPELINE_AUTO_HANDOFF_TASK_TYPES,
 )
-from .tool_registry import (
+from forven.agents.tool_registry import (
     execute_tool as _execute_tool,
     get_tools_for_agent as _get_tools_for_agent,
 )
@@ -63,7 +63,7 @@ import forven.agents.tools_core         # noqa: F401
 import forven.agents.tools_brain        # noqa: F401
 import forven.agents.tools_backtesting  # noqa: F401
 
-from .ownership import (
+from forven.agents.ownership import (
     _check_task_owner,
     _extract_task_strategy_id,
 )
@@ -653,7 +653,7 @@ async def _call_with_tools_single(
     side-effecting work — fallback to another provider is only safe BEFORE.
     """
     from forven.auth.store import get_token
-    from .providers import get_provider
+    from forven.agents.providers import get_provider
 
     # Materialize to a plain list: AGENT_TOOLS is a lazy descriptor (_LazyToolList)
     # that is list-LIKE but not a real list, so providers that json.dumps the tools
@@ -856,7 +856,7 @@ async def _call_with_tools_claude_code(
     checkpointed: a resumed task starts again from its original prompt.
     """
     from forven.model_selection import assert_callable
-    from .claude_code_runner import run_agent_task as run_in_claude
+    from forven.agents.claude_code_runner import run_agent_task as run_in_claude
 
     assert_callable("claude-code", model_id, slot="agent-tool-call:claude-code")
     tool_round = 0

@@ -37,6 +37,6 @@ keys are optional (omit them unless auth is enabled):
     }
 """
 
-from .server import build_server, main
+from forven.mcp_server.server import build_server, main
 
 __all__ = ["build_server", "main"]

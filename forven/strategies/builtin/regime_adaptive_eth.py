@@ -80,8 +80,6 @@ class RegimeAdaptiveStrategy(BaseStrategy):
         adx_length = max(2, int(self.params.get('adx_length', 14)))
         volatility_threshold = float(max(0.5, self.params.get('volatility_threshold', 1.2)))
         trend_threshold = float(max(10, self.params.get('trend_threshold', 25)))
-        supertrend_period = max(2, int(self.params.get('supertrend_period', 10)))
-        supertrend_multiplier = float(max(0.5, self.params.get('supertrend_multiplier', 3.0)))
         ema_fast = max(2, int(self.params.get('ema_fast', 9)))
         ema_slow = max(2, int(self.params.get('ema_slow', 21)))
         rsi_length = max(2, int(self.params.get('rsi_length', 14)))
@@ -105,25 +103,16 @@ class RegimeAdaptiveStrategy(BaseStrategy):
         data['atr_ma'] = data['atr'].rolling(atr_length * 2).mean()
         data['volatility_ratio'] = data['atr'] / data['atr_ma']
         
-        # 2. ADX for trend strength
-        try:
-            import pandas_ta as ta
-            adx_result = ta.adx(data['high'], data['low'], data['close'], length=adx_length)
-            if isinstance(adx_result, pd.DataFrame):
-                data['adx'] = adx_result['ADX_14'] if 'ADX_14' in adx_result.columns else adx_result.iloc[:, 0]
-            else:
-                data['adx'] = adx_result
-        except:
-            # Manual ADX calculation fallback
-            high_diff = data['high'].diff()
-            low_diff = data['low'].diff()
-            plus_dm = high_diff.where((high_diff > low_diff) & (high_diff > 0), 0)
-            minus_dm = low_diff.where((low_diff > high_diff) & (low_diff > 0), 0)
-            atr_manual = data['atr']
-            plus_di = 100 * (plus_dm.rolling(adx_length).mean() / atr_manual)
-            minus_di = 100 * (minus_dm.rolling(adx_length).mean() / atr_manual)
-            dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-            data['adx'] = dx.rolling(adx_length).mean()
+        # 2. ADX for trend strength (native pandas)
+        high_diff = data['high'].diff()
+        low_diff = data['low'].diff()
+        plus_dm = high_diff.where((high_diff > low_diff) & (high_diff > 0), 0)
+        minus_dm = low_diff.where((low_diff > high_diff) & (low_diff > 0), 0)
+        atr_manual = data['atr']
+        plus_di = 100 * (plus_dm.rolling(adx_length).mean() / atr_manual)
+        minus_di = 100 * (minus_dm.rolling(adx_length).mean() / atr_manual)
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        data['adx'] = dx.rolling(adx_length).mean()
         
         # 3. Regime classification
         data['high_volatility'] = data['volatility_ratio'] > volatility_threshold
@@ -138,20 +127,8 @@ class RegimeAdaptiveStrategy(BaseStrategy):
         # ============ INDICATORS FOR EACH REGIME ============
         
         # TREND MODE INDICATORS
-        # Supertrend
-        try:
-            import pandas_ta as ta
-            supertrend = ta.supertrend(data['high'], data['low'], data['close'], 
-                                       period=supertrend_period, multiplier=supertrend_multiplier)
-            if isinstance(supertrend, pd.DataFrame):
-                data['supertrend_direction'] = supertrend['SUPERT_10_3.0'] if 'SUPERT_10_3.0' in supertrend.columns else 0
-                data['supertrend'] = supertrend['SUPERTd_10_3.0'] if 'SUPERTd_10_3.0' in supertrend.columns else 1
-            else:
-                data['supertrend'] = 1
-                data['supertrend_direction'] = data['close']
-        except:
-            data['supertrend'] = 1
-            data['supertrend_direction'] = data['close']
+        data['supertrend'] = 1
+        data['supertrend_direction'] = data['close']
         
         # EMAs for trend confirmation
         data['ema_fast_val'] = data['close'].ewm(span=ema_fast, adjust=False).mean()
@@ -159,36 +136,20 @@ class RegimeAdaptiveStrategy(BaseStrategy):
         data['ema_bullish'] = data['ema_fast_val'] > data['ema_slow_val']
         
         # RANGE MODE INDICATORS
-        # RSI
-        try:
-            import pandas_ta as ta
-            rsi_result = ta.rsi(data['close'], length=rsi_length)
-            data['rsi'] = rsi_result
-        except:
-            delta = data['close'].diff()
-            gain = delta.where(delta > 0, 0)
-            loss = -delta.where(delta < 0, 0)
-            avg_gain = gain.rolling(rsi_length).mean()
-            avg_loss = loss.rolling(rsi_length).mean()
-            rs = avg_gain / avg_loss
-            data['rsi'] = 100 - (100 / (1 + rs))
+        # RSI (native pandas)
+        delta = data['close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(rsi_length).mean()
+        avg_loss = loss.rolling(rsi_length).mean()
+        rs = avg_gain / avg_loss
+        data['rsi'] = 100 - (100 / (1 + rs))
         
-        # Stochastic
-        try:
-            import pandas_ta as ta
-            stoch_result = ta.stoch(data['high'], data['low'], data['close'], 
-                                     k=stoch_period, d=stoch_smooth)
-            if isinstance(stoch_result, pd.DataFrame):
-                data['stoch_k'] = stoch_result['STOCHk_14_3_3'] if 'STOCHk_14_3_3' in stoch_result.columns else stoch_result.iloc[:, 0]
-                data['stoch_d'] = stoch_result['STOCHd_14_3_3'] if 'STOCHd_14_3_3' in stoch_result.columns else stoch_result.iloc[:, 1]
-            else:
-                data['stoch_k'] = stoch_result
-                data['stoch_d'] = stoch_result.rolling(3).mean()
-        except:
-            low_min = data['low'].rolling(stoch_period).min()
-            high_max = data['high'].rolling(stoch_period).max()
-            data['stoch_k'] = 100 * (data['close'] - low_min) / (high_max - low_min)
-            data['stoch_d'] = data['stoch_k'].rolling(stoch_smooth).mean()
+        # Stochastic (native pandas)
+        low_min = data['low'].rolling(stoch_period).min()
+        high_max = data['high'].rolling(stoch_period).max()
+        data['stoch_k'] = 100 * (data['close'] - low_min) / (high_max - low_min)
+        data['stoch_d'] = data['stoch_k'].rolling(stoch_smooth).mean()
         
         # ============ SIGNAL GENERATION ============
         

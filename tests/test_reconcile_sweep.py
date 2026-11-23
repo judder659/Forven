@@ -384,7 +384,7 @@ def test_local_paper_trade_without_price_or_mark_closes_at_entry(monkeypatch, fo
     monkeypatch.setattr(hl_mod, "get_positions", _boom)
     monkeypatch.setattr(hl_mod, "close_position", _boom)
 
-    summary = scanner_mod.sweep_pending_close_reconcile()
+    scanner_mod.sweep_pending_close_reconcile()
 
     trade = _get_trade("T-PAPER-ENTRY")
     assert trade["status"] == "CLOSED"
