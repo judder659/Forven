@@ -129,6 +129,9 @@ def targets(symbol: str) -> dict[str, Any]:
     each download would be stored."""
     fs_symbol = _safe_fs_symbol(symbol)
     display = _display(fs_symbol)
+    history = fdata.history_source()
+    if history != "binance":
+        return _targets_without_binance(fs_symbol, display, history)
     exchanges = ("binanceusdm", "binance", *SPOT_VENUES, "hyperliquid")
     with ThreadPoolExecutor(max_workers=len(exchanges), thread_name_prefix="forven-acquire-markets") as pool:
         markets = dict(zip(exchanges, pool.map(_venue_markets, exchanges)))
@@ -181,6 +184,49 @@ def targets(symbol: str) -> dict[str, Any]:
                 "note": note,
             }
         )
+    return {"symbol": fs_symbol, "display_symbol": display, "targets": rows}
+
+
+def _targets_without_binance(fs_symbol: str, display: str, history: str) -> dict[str, Any]:
+    """targets() when another venue is the history source: Binance is not
+    consulted, the canonical row is that venue, and it is not offered twice."""
+    others = tuple(exchange for exchange in (*SPOT_VENUES, "hyperliquid") if exchange != history)
+    exchanges = (history, *others)
+    with ThreadPoolExecutor(max_workers=len(exchanges), thread_name_prefix="forven-acquire-markets") as pool:
+        markets = dict(zip(exchanges, pool.map(_venue_markets, exchanges)))
+    history_markets = markets.get(history)
+    if history_markets is None:
+        note = f"{_label(history)} markets could not be loaded right now; try again shortly."
+    elif _venue_market_symbol(history, fs_symbol) in history_markets:
+        note = f"{_label(history)} spot, the research history source chosen in Settings. Every backtest reads it."
+    else:
+        note = f"{_label(history)} does not list {display}, so it has no canonical research series."
+    rows: list[dict[str, Any]] = [{
+        "venue": "canonical", "canonical": True, "destination": "canonical",
+        "exchange": history, "market": fdata.market_for_source(history),
+        "listed": bool(history_markets) and _venue_market_symbol(history, fs_symbol) in history_markets,
+        "note": note,
+    }]
+    for exchange in others:
+        target = _download_target(exchange, fs_symbol)
+        venue_markets = markets.get(exchange)
+        listed = bool(venue_markets) and _venue_market_symbol(exchange, fs_symbol) in venue_markets
+        note = f"Stored as a separate {target['venue']} series; backtests keep reading the canonical series."
+        if venue_markets is None:
+            note = f"{_label(exchange)} markets could not be loaded right now, so the listing is unknown. {note}"
+        if exchange == "kraken":
+            note += " Deep history is rebuilt from every trade (slow)."
+        elif exchange == "hyperliquid":
+            note += f" Hyperliquid serves only its latest {HL_MAX_BARS:,} candles."
+        rows.append({
+            "venue": HL_VENUE if exchange == "hyperliquid" else f"{exchange}:spot",
+            "exchange": exchange,
+            "market": target["market"],
+            "listed": listed,
+            "canonical": False,
+            "destination": target["destination"],
+            "note": note,
+        })
     return {"symbol": fs_symbol, "display_symbol": display, "targets": rows}
 
 
@@ -339,6 +385,10 @@ def _plan(item: dict[str, Any], series_index: dict[tuple[str, str, str], lake.Se
     if exchange is None:
         plan.blocked = f"Unknown venue {plan.venue!r}."
         return plan
+    if exchange == "binance":
+        # The canonical series downloads from the configured history source
+        # (Settings > Data engine); Binance unless the install changed it.
+        exchange = plan.exchange = fdata.history_source()
 
     # Listing and destination.
     listing_ms: int | None = None

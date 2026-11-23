@@ -410,6 +410,33 @@ _SOURCE_MARKET = {
 CANONICAL_SOURCES = frozenset({"binanceusdm", "binance-vision", "binance", "ccxt"})
 
 
+# Where the canonical research series is downloaded from. "binance" (the
+# default) keeps the Binance family above. An install that cannot reach Binance
+# (a geo-blocked region) picks another deep-history venue in Settings > Data
+# engine; downloads and refreshes that ask for the default "binance" then go to
+# that venue, and its bars own the canonical series. A stored series from another
+# family is still refused (_enforce_series_venue), so venues never mix in a file.
+HISTORY_SOURCES = ("binance", "okx", "bybit")
+
+
+def history_source() -> str:
+    """The configured canonical-history venue ("binance" unless changed)."""
+    try:
+        from forven.dataeng.settings import load_data_engine_settings
+
+        source = str(load_data_engine_settings().history_source or "binance").strip().lower()
+    except Exception:
+        return "binance"
+    return source if source in HISTORY_SOURCES else "binance"
+
+
+def _effective_exchange(exchange_id: str | None) -> str:
+    """The exchange a fetch actually calls: the default "binance" is replaced by
+    the configured history source; anything else is honoured as given."""
+    source = str(exchange_id or "binance").strip().lower() or "binance"
+    return history_source() if source == "binance" else source
+
+
 def market_for_source(source: str) -> str:
     return _SOURCE_MARKET.get(str(source or "").strip().lower(), "unknown")
 
@@ -2003,10 +2030,18 @@ def _series_target(source: str, symbol: str) -> dict[str, Any]:
     source = str(source or "").strip().lower()
     fs_symbol = symbol_to_fs(symbol)
     market = market_for_source(source)
-    canonical = source in CANONICAL_SOURCES
-    # A non-canonical source owns the canonical path only when Binance
-    # provably lists neither market; an unknown listing takes the venue path.
-    destination = "canonical" if canonical or _binance_listing(fs_symbol) is False else "venue"
+    configured = history_source()
+    if configured != "binance":
+        # Binance is not this install's history source (often unreachable):
+        # the configured venue owns the canonical series and Binance is not
+        # consulted. Every other venue keeps its own venue series.
+        canonical = source == configured
+        destination = "canonical" if canonical else "venue"
+    else:
+        canonical = source in CANONICAL_SOURCES
+        # A non-canonical source owns the canonical path only when Binance
+        # provably lists neither market; an unknown listing takes the venue path.
+        destination = "canonical" if canonical or _binance_listing(fs_symbol) is False else "venue"
     return {
         "venue": "canonical" if destination == "canonical" else f"{source}:{market}",
         "source": source,
@@ -2028,7 +2063,7 @@ def resolve_series_target(exchange_id: str, symbol: str) -> dict[str, Any]:
     — or the canonical path when Binance lists neither a perp nor a spot market
     for the pair (nothing canonical can exist for it). For "binance", raises
     when the USD-M market list cannot be loaded (see _binance_perp_symbol)."""
-    source = str(exchange_id or "binance").strip().lower() or "binance"
+    source = _effective_exchange(exchange_id)
     if source == "binance" and _binance_perp_symbol(symbol) is not None:
         source = "binanceusdm"
     return _series_target(source, symbol)
@@ -2046,7 +2081,7 @@ def _resolve_ohlcv_target(exchange_id: str, symbol: str) -> tuple[Any, str, str]
     instead of guessing spot. Explicit non-binance exchange_ids are honoured
     unchanged (where their bars are stored is resolve_series_target's decision).
     """
-    normalized = str(exchange_id or "binance").strip().lower() or "binance"
+    normalized = _effective_exchange(exchange_id)
     if normalized == "binance":
         try:
             perp_symbol = _binance_perp_symbol(symbol)
