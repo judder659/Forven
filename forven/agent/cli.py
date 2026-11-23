@@ -30,7 +30,7 @@ import argparse
 import json
 import sys
 
-from .client import ForvenAgentClient, ForvenAPIError
+from forven.agent.client import ForvenAgentClient, ForvenAPIError
 
 
 def _emit(obj) -> None:

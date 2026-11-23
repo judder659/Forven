@@ -42,7 +42,6 @@ def _frame_with_funding(n: int = 12, funding_rate: float = 0.001) -> pd.DataFram
 
 
 def _one_long_signal(df: pd.DataFrame, entry_i: int, exit_i: int) -> DirectionalSignals:
-    n = len(df)
     le = pd.Series(False, index=df.index)
     lx = pd.Series(False, index=df.index)
     le.iloc[entry_i] = True   # fills at entry_i+1 open
@@ -147,7 +146,6 @@ def test_short_receives_funding_credit_sign_convention():
     """A short RECEIVES positive funding: its funding term is POSITIVE (credit), so its
     kelly evidence and pnl are HIGHER than price-only — the opposite of the long."""
     df = _frame_with_funding(funding_rate=0.001)
-    n = len(df)
     se = pd.Series(False, index=df.index)
     sx = pd.Series(False, index=df.index)
     se.iloc[2] = True

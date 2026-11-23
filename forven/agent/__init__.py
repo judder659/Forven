@@ -21,6 +21,6 @@ Or from a shell (great for Claude Code / Codex):
     python -m forven.agent backtest --strategy S02545 --dataset BTC/USDT-1h --compact
 """
 
-from .client import ForvenAgentClient, ForvenAPIError, QUICK_SCREEN_THRESHOLDS
+from forven.agent.client import ForvenAgentClient, ForvenAPIError, QUICK_SCREEN_THRESHOLDS
 
 __all__ = ["ForvenAgentClient", "ForvenAPIError", "QUICK_SCREEN_THRESHOLDS"]

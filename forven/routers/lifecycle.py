@@ -140,7 +140,6 @@ def run_timeframe_sweep(strategy_id: str):
         return {"ok": False, "error": "Strategy not found"}
 
     symbol = str(row["symbol"] or "BTC/USDT").strip()
-    strategy_type = str(row["type"] or "").strip()
     raw_params = row["params"]
 
     import json as _json

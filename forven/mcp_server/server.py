@@ -30,7 +30,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .client import ForvenClient
+from forven.mcp_server.client import ForvenClient
 
 log = logging.getLogger("forven.mcp_server")
 

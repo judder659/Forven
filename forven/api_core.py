@@ -622,18 +622,7 @@ async def _on_startup():
                 # request, so there is no request loop to starve — and the retry
                 # must actually delay (an await here would let the app begin
                 # serving with no scheduler jobs).
-                #
-                # This line WANTS a trailing per-line ASYNC251 suppression so the
-                # whole-file exemption in pyproject.toml can be dropped. It does
-                # not have one yet because the suppression and the pyproject entry
-                # must land in the SAME commit as a third edit:
-                # tests/test_harden_infra.py::test_test9_api_core_blocking_sleep_stays_a_single_known_instance
-                # re-runs ruff with `lint.per-file-ignores = {}` and asserts
-                # exactly ONE ASYNC251 hit here. A suppression removes that hit, so
-                # adding it alone turns the pin test red. api_core.py is also now
-                # clean under F841 (ARCH-07), so BOTH entries of the
-                # "forven/api_core.py" per-file-ignores line can go at once.
-                _time.sleep(_BOOTSTRAP_RETRY_DELAY)
+                _time.sleep(_BOOTSTRAP_RETRY_DELAY)  # noqa: ASYNC251
             else:
                 log.critical(
                     "Scheduler bootstrap FAILED after %d attempts: %s — API starting without scheduler jobs",

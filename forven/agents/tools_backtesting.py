@@ -12,8 +12,8 @@ import httpx
 from forven.db import get_db, parent_strategy_lineage_error
 from forven.verdict_engine import build_strategy_verdict_blob, get_overall_verdict
 
-from .context import _current_agent_id_var, _current_strategy_id_var, _current_task_display_id_var
-from .tool_registry import register_tool
+from forven.agents.context import _current_agent_id_var, _current_strategy_id_var, _current_task_display_id_var
+from forven.agents.tool_registry import register_tool
 
 _PARENT_STRATEGY_ID_DESCRIPTION = (
     "When this candidate mutates an existing strategy, that strategy's id (e.g. S10418); "

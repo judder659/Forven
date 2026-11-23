@@ -71,7 +71,7 @@ class IntakeScanBody(BaseModel):
 def scan_strategy_intake(body: IntakeScanBody | None = None):
     """Scan custom/ for new strategy files and validate them.
 
-    By default this is a dry-run (report only).  Pass ``register: true``
+    By default this is a dry-run (report only).  Pass ``do_register: true``
     to also create DB containers for newly discovered strategies.
     """
     from forven.strategies.intake import scan_custom_strategies

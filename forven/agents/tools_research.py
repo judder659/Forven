@@ -40,8 +40,8 @@ def _wrap_untrusted(payload: Any) -> str:
     """
     return _UNTRUSTED_PREFIX + json.dumps(payload) + _UNTRUSTED_SUFFIX
 
-from .context import _current_agent_id_var, _current_task_display_id_var
-from .tool_registry import register_tool
+from forven.agents.context import _current_agent_id_var, _current_task_display_id_var
+from forven.agents.tool_registry import register_tool
 
 from forven.db import get_db
 from forven.hypotheses import (

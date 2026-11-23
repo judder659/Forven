@@ -147,9 +147,6 @@ def test_fetch_candles_max_cache_age_overrides_shared_threshold(monkeypatch):
     cached_rows = [
         {"t": "2026-02-25T00:00:00+00:00", "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10},
     ]
-    fresh_rows = [
-        {"t": "2026-02-25T00:01:00+00:00", "open": 2, "high": 3, "low": 1.5, "close": 2.5, "volume": 10},
-    ]
 
     # 90s old: within the shared 180s default, but past a 60s caller-supplied bound.
     monkeypatch.setattr(scanner_mod, "load_candle_snapshot", lambda asset, interval="1h": (cached_rows, 90.0))

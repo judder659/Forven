@@ -187,9 +187,6 @@ def _resolve_pipeline_execution_plan(candidate_count: int) -> dict[str, int | bo
 
     adaptive_enabled = _coerce_bool(settings.get("adaptive_pipeline_throughput_enabled"), False)
     target_clear_hours = _coerce_int(settings.get("pipeline_target_clear_hours"), 6, 1, 168)
-    testing_interval_minutes = _coerce_int(settings.get("testing_interval_minutes"), 15, 1, 1440)
-    agent_claim_limit = _coerce_int(settings.get("agent_task_claim_limit"), 12, 1, 100)
-    brain_claim_limit = _coerce_int(settings.get("brain_task_claim_limit"), 12, 1, 100)
 
     backlog = max(int(candidate_count), 0)
 

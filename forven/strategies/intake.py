@@ -317,7 +317,6 @@ def scan_custom_strategies(*, register: bool = False) -> dict:
             report.already_known += 1
             continue
 
-        fqn = f"forven.strategies.custom.{modname}"
         file_name = f"{modname}.py"
         source_ref = str((custom_dir / file_name).resolve())
 

@@ -78,9 +78,9 @@ def test_recall_fts_only_returns_hits_when_aux_disabled(forven_db, monkeypatch):
 
 
 def test_recall_rerank_uses_llm_scores(forven_db, monkeypatch):
-    a = _seed_decision("ZARFZIPZAR market opened with low volume")
-    b = _seed_decision("ZARFZIPZAR market printed a clean breakout pattern")
-    c = _seed_decision("ZARFZIPZAR market chopped sideways for 3 hours")
+    _seed_decision("ZARFZIPZAR market opened with low volume")
+    _seed_decision("ZARFZIPZAR market printed a clean breakout pattern")
+    _seed_decision("ZARFZIPZAR market chopped sideways for 3 hours")
 
     # The LLM is called twice: once for re-rank (returns JSON scores), once
     # for synthesis (returns prose). We score b > a > c.

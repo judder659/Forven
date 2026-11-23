@@ -134,10 +134,8 @@ def test_rsi_is_100_not_nan_in_all_gains_window():
 
 
 def test_not_equal_does_not_fire_on_nan_warmup_bars():
-    # An EMA(50) is NaN for the first ~49 bars; `close != ema` must NOT fire there.
+    # An SMA(50) is NaN for the first 49 bars; `close != sma` must NOT fire there.
     df = _df(list(np.linspace(100, 130, 80)))
-    table = re.build_series_table(df, {"indicators": [{"id": "ema", "kind": "ema", "params": {"length": 50}}]})
-    # ema warmup: ewm has values from bar 0, but force a NaN-bearing series via sma
     table2 = re.build_series_table(df, {"indicators": [{"id": "sma", "kind": "sma", "params": {"length": 50}}]})
     res = re.eval_condition({"left": "close", "op": "!=", "right": "sma"}, table2, {}, df.index)
     # sma is NaN for the first 49 bars -> condition must be False there (not True).

@@ -87,7 +87,7 @@ def test_backfill_still_covers_quick_screen_with_no_workflow(forven_db):
 def test_backfill_leaves_active_workflow_untouched(forven_db):
     _insert_strategy("already-active", stage="gauntlet")
     wf = create_or_get_workflow(strategy_id="already-active", created_by="pytest")
-    healed = backfill_missing_quick_screen_workflows(limit=10)
+    backfill_missing_quick_screen_workflows(limit=10)
     # No new/extra heal for a strategy that already has an active workflow.
     act = _active_wf("already-active")
     assert act is not None and act["id"] == wf["id"]
