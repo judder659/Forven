@@ -34,6 +34,12 @@ class DataEngineSettings(BaseModel):
             "asset_classes": ["crypto", "tradfi"],
         }
     )
+    # Where the canonical research series (every backtest, the gauntlet) is
+    # downloaded from. Binance by default; an install that cannot reach Binance
+    # (geo-blocked) picks OKX or Bybit, whose deep history then owns the
+    # canonical series. A series already stored from another venue is never
+    # overwritten (forven.data._enforce_series_venue).
+    history_source: Literal["binance", "okx", "bybit"] = "binance"
     stream_reconnect_initial_seconds: float = 1.0
     stream_reconnect_max_seconds: float = 60.0
     # Per-candidate reproducibility: gauntlet stages pin as_of to their

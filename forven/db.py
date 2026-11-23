@@ -8603,7 +8603,6 @@ def close_bot_trade(
     exit_fee = float(exit_fee_usd or 0)
     total_fees = entry_fee + exit_fee
 
-    net_pnl = float(pnl_usd)
     if total_fees > 0:
         adjusted = float(pnl_usd) - total_fees
         entry = result.get("entry_price") or 0
@@ -8644,7 +8643,6 @@ def close_bot_trade(
         result["gross_pnl_usd"] = float(pnl_usd)
         result["total_fees_usd"] = total_fees
         result["signal_data"] = signal_data
-        net_pnl = adjusted
 
     # Rebuild the bot's realized_pnl from the closed-trade ledger. The close
     # choke-point (close_trade_record) already reconciled with the GROSS P&L;

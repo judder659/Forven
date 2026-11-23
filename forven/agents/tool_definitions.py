@@ -51,7 +51,7 @@ def _ensure_tools_imported():
 def _build_lists() -> tuple[list[dict], list[dict], list[dict]]:
     """Build the three backward-compatible tool definition lists from the registry."""
     _ensure_tools_imported()
-    from .tool_registry import _REGISTRY
+    from forven.agents.tool_registry import _REGISTRY
 
     agent_tools: list[dict] = []
     brain_tools: list[dict] = []
@@ -226,7 +226,7 @@ def _validate_chat_toolsets() -> list[str]:
     tool registration so the registry is populated before checking.
     """
     _ensure_tools_imported()
-    from .tool_registry import _REGISTRY
+    from forven.agents.tool_registry import _REGISTRY
 
     missing = [
         name

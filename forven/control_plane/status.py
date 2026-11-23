@@ -244,7 +244,6 @@ def get_system_status() -> dict[str, object]:
     paused_at = state.get("paused_at")
     generation_paused = bool(state.get("generation_paused"))
     generation_paused_at = state.get("generation_paused_at")
-    settings_payload = core._load_settings_payload()
     return {
         "paused": paused,
         "paused_at": str(paused_at) if paused_at else None,
@@ -555,8 +554,6 @@ def get_system_heartbeat() -> dict[str, object]:
         notification_summary = get_actionable_notification_summary()
     except Exception:
         notification_summary = {"count": 0, "highest_severity": "info", "notification_ids": []}
-
-    settings_payload = core._load_settings_payload()
 
     return {
         "dashboard": dashboard,

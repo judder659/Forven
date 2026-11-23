@@ -66,10 +66,6 @@ from forven.market_data import (
     ohlcv_rows_to_dataframe,
 )
 from forven.regime import (
-    HIGH_VOL,
-    RANGE_BOUND,
-    TREND_DOWN,
-    TREND_UP,
     check_direction_regime_gate,
     is_strategy_allowed,
     normalize_regime_label,
@@ -2731,7 +2727,6 @@ def check_bb_squeeze_signal(df: pd.DataFrame, p: dict) -> dict:
     
     curr = d.iloc[-1]
     prev = d.iloc[-2]
-    prev2 = d.iloc[-3] if len(d) >= 3 else prev
     
     # Detect squeeze: BB inside KC
     # Squeeze ON: BB upper < KC upper AND BB lower > KC lower
@@ -3250,8 +3245,6 @@ def check_orb_signal(df: pd.DataFrame, p: dict) -> dict:
     """ORB (Opening Range Breakout): breakout of high/low from first N bars of session."""
     p = p or {}
     range_bars = int(p.get("range_bars", 4))
-    risk_pct = float(p.get("risk_pct", 0.01))
-    leverage = float(p.get("leverage", 1.0) or 1.0)  # match the unified default (was 3x)
 
     df = df.copy()
     price_fallback = float(df["close"].iloc[-1]) if not df.empty else 0.0
@@ -3301,7 +3294,7 @@ def check_williams_r_signal(df: pd.DataFrame, p: dict) -> dict:
     if len(d) < 2:
         return {"price": 0, "wr": 0, "adx": 0, "entry_signal": False, "exit_signal": False, "direction": "long"}
 
-    curr, prev = d.iloc[-1], d.iloc[-2]
+    curr = d.iloc[-1]
     price = curr["close"]
     wr_oversold = float(p.get("wr_oversold", -80))
     wr_overbought = float(p.get("wr_overbought", -20))
@@ -4837,7 +4830,6 @@ def manage_positions(
     direction_label = direction.upper()
     mode = get_execution_mode()
     mode_label = mode.upper()
-    paper_test_mode = _paper_test_mode_enabled()
     paper_test_bypass_gates = _paper_test_bypass_gates_enabled()
     paper_test_local_execution = _paper_test_local_execution_for(strat)
     stop_loss_pct = _coerce_positive_float(p.get("stop_loss_pct"))
@@ -5904,10 +5896,6 @@ def _load_deployed_strategies() -> dict:
     there are zero active DB strategies.
     """
     global _LAST_STRATEGY_LOAD_DIAGNOSTICS
-    bypass_market_gates = _paper_test_bypass_gates_enabled() or _scanner_bool_setting(
-        "relaxed_trade_filters_enabled",
-        False,
-    )
     load_diagnostics: dict[str, dict] = {}
     # REG-RACE-1: code that rebuilds the strategy registry empties it for the ~30s
     # a full discovery takes. Loading in that window left every custom-type
@@ -5942,12 +5930,6 @@ def _load_deployed_strategies() -> dict:
         rows = []
 
     merged: dict = {}
-    regime_to_pot = {
-        TREND_UP: "BULL",
-        TREND_DOWN: "BEAR",
-        RANGE_BOUND: "RANGE",
-        HIGH_VOL: "VOLATILE",
-    }
     for row in rows:
         # Per-row safety net: an unexpected error on a single strategy must
         # not silently dump every other strategy out of the scan. Without
@@ -6010,7 +5992,6 @@ def _load_deployed_strategies() -> dict:
                 params,
             )
             canonical_params = certification.canonical_params
-            canonical_meta = certification.canonical_meta
             diagnostic["family_type"] = certification.family_type or diagnostic["family_type"]
             diagnostic["param_alias_resolutions"] = certification.alias_resolutions
             diagnostic["param_unknown_params"] = certification.unknown_params
@@ -8564,7 +8545,6 @@ def manage_positions_via_kernel(strat_id: str, strat: dict, *, account_equity=No
     if strat.get("paper_exits_only"):
         actions_plan = [a for a in actions_plan if a.recorded is not None]
     open_applier = _kernel_open_live_trade if is_live else _kernel_open_paper_trade
-    close_applier = _kernel_close_live_trade if is_live else _kernel_close_paper_trade
     label = "live" if is_live else "paper"
 
     # DATA-2 / LIVE-5 / FREEZE-2: the kernel execution path (the DEFAULT for paper

@@ -870,9 +870,10 @@ def test_test9_ruff_selects_the_async_blocking_rules() -> None:
 def test_test9_async_exemptions_are_per_file_and_narrow() -> None:
     lint = _ruff_lint_config()
     per_file = lint["per-file-ignores"]
-    # The startup bootstrap sleep is genuinely one-shot; the starvation test
+    # api_core.py's single startup-bootstrap sleep uses a line-level
+    # ASYNC251 noqa instead of a whole-file exemption; the starvation test
     # blocks the loop on purpose to prove the watchdog sees it.
-    assert "ASYNC251" in per_file["forven/api_core.py"]
+    assert "forven/api_core.py" not in per_file
     assert per_file["tests/test_loop_starvation_fixes.py"] == ["ASYNC251"]
 
     # ASYNC109 (`timeout=` on an async def) is an API-shape convention, not a
@@ -894,20 +895,18 @@ def test_test9_async_exemptions_are_per_file_and_narrow() -> None:
 
 
 def test_test9_api_core_blocking_sleep_stays_a_single_known_instance() -> None:
-    """Compensating gate for the whole-file ASYNC251 ignore on api_core.py.
+    """Pin api_core.py to its single reviewed line-level `# noqa: ASYNC251`.
 
-    The ignore exists only because the group that added it does not own
-    api_core.py; a whole-file exemption in the app's hottest async module would
-    otherwise let a NEW blocking call in unseen. Pin the count until someone with
-    ownership replaces it with a line-level `# noqa: ASYNC251`.
+    With the whole-file exemption gone, normal ruff catches any NEW unsuppressed
+    blocking sleep; `--ignore-noqa` ensures nobody silently papers over another
+    blocking call with a second `# noqa: ASYNC251`.
     """
     result = subprocess.run(
         [
             sys.executable, "-m", "ruff", "check",
             "--no-cache",
             "--select", "ASYNC251",
-            # Neutralise the very exemption this test compensates for.
-            "--config", "lint.per-file-ignores = {}",
+            "--ignore-noqa",
             "--output-format", "concise",
             str(API_CORE),
         ],
@@ -917,11 +916,9 @@ def test_test9_api_core_blocking_sleep_stays_a_single_known_instance() -> None:
     )
     hits = [line for line in result.stdout.splitlines() if "ASYNC251" in line]
     assert len(hits) == 1, (
-        "forven/api_core.py is exempted from ASYNC251 as a WHOLE FILE for the "
-        "one reviewed startup-bootstrap sleep. It now has "
-        f"{len(hits)}:\n" + "\n".join(hits) + "\nEither justify and update this "
-        "count, or (better) add a line-level `# noqa: ASYNC251` at the sanctioned "
-        "sleep and drop the pyproject per-file entry."
+        "forven/api_core.py has exactly one reviewed startup-bootstrap sleep "
+        f"(line-level `# noqa: ASYNC251`). It now has {len(hits)}:\n"
+        + "\n".join(hits)
     )
 
 
@@ -946,16 +943,15 @@ def test_test9_f841_is_a_shrinking_baseline_not_a_blanket_ignore() -> None:
     lint = _ruff_lint_config()
     assert "F841" not in lint.get("ignore", []), (
         "a blanket ignore means the unused-local count can only grow; F841 is now "
-        "enabled with a per-file baseline so it can only shrink"
+        "enabled tree-wide with no blanket or per-file ignores"
     )
     f841_files = [
         path for path, codes in lint["per-file-ignores"].items() if "F841" in codes
     ]
-    assert f841_files, "the baseline must name the files that currently trip F841"
-    for path in f841_files:
-        assert (ROOT / path).exists(), (
-            f"{path} is baselined for F841 but does not exist — delete the stale entry"
-        )
+    assert not f841_files, (
+        "F841 baseline was burned down to zero; do not re-add per-file ignores: "
+        + ", ".join(f841_files)
+    )
 
 
 def test_test9_async_rule_actually_fires_under_the_project_config(tmp_path: Path) -> None:
@@ -1025,10 +1021,11 @@ def test_runtime_critical_dependencies_have_upper_bounds() -> None:
 
 def test_pydantic_is_declared_so_preflight_can_verify_it() -> None:
     deps = _spec_map(tomllib.loads(_read(PYPROJECT))["project"]["dependencies"])
-    assert "pydantic" in deps, (
-        "pydantic is imported directly by many forven modules; undeclared, "
-        "forven.preflight could not catch it missing from a partial venv"
-    )
+    for pkg in ("pydantic", "orjson", "packaging"):
+        assert pkg in deps, (
+            f"{pkg} is imported directly by forven; undeclared, "
+            "forven.preflight could not catch it missing from a partial venv"
+        )
 
 
 def test_ci_requirements_bounds_match_pyproject() -> None:

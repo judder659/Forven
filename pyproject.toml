@@ -37,6 +37,8 @@ dependencies = [
     # pydantic was an UNDECLARED direct dependency (imported by 26 forven
     # modules) — so `forven.preflight` could not catch it missing. Declared now.
     "pydantic>=2.7,<3",
+    "orjson>=3.9,<4",
+    "packaging>=23.0",
     "python-multipart>=0.0.9,<1",
     "uvicorn>=0.30.0,<1",
     "websockets>=13.0,<17",
@@ -65,6 +67,8 @@ dependencies = [
     "duckdb>=1.1.0,<2",
     "feedparser>=6.0",
     "trafilatura>=2.0",
+    # dateparser (pulled in by trafilatura) fails at import time on tzlocal 5.4.2.
+    "tzlocal>=5.2,!=5.4.2",
     "beautifulsoup4>=4.12",
     "yfinance>=0.2",
     "yt-dlp>=2025.1.0",
@@ -174,46 +178,16 @@ ignore = ["ASYNC109"]
 "tests/test_no_ta_imports.py" = ["TID251"]
 
 # --- TEST-9: ASYNC exemptions (deliberate, reviewed) ------------------------
-# ASYNC251 = blocking `time.sleep` in an async def. These two are the ONLY
-# sanctioned instances; everything else must use `await asyncio.sleep`.
-#   api_core.py — one-shot startup bootstrap sleep, before the app serves any
-#     request, so it starves nothing. This is a WHOLE-FILE ignore only because
-#     the audit group that added it does not own api_core.py; it leaves a gate
-#     hole in the app's hottest async module, so
-#     tests/test_harden_infra.py::test_test9_api_core_blocking_sleep_stays_a_single_known_instance
-#     pins the count in the meantime. Whoever next touches api_core.py should
-#     add a line-level `# noqa: ASYNC251` at the sleep and delete this entry.
-#   api_core.py is also on the F841 baseline below (4 unused locals, all
-#     `lifecycle_tag`-shaped) for the same ownership reason.
-"forven/api_core.py" = ["ASYNC251", "F841"]
+# ASYNC251 = blocking `time.sleep` in an async def.
+#   api_core.py's single startup-bootstrap sleep uses a line-level
+#     `# noqa: ASYNC251` so the rest of the module is gated normally.
 #   test_loop_starvation_fixes.py — deliberately blocks the loop to PROVE the
 #     stall watchdog observes it. Removing the block would delete the test.
 "tests/test_loop_starvation_fixes.py" = ["ASYNC251"]
 
-# --- TEST-9: F841 baseline --------------------------------------------------
-# Pre-existing unused locals, frozen file-by-file so the rule gates NEW code.
-# Several of these (scanner.py's risk_pct/leverage/canonical_meta, db.py's
-# net_pnl, backtest.py's active_trades/trades) may be real logic bugs — an
-# unused computed value in a sizing or PnL path is a smell, not lint noise — so
-# they want a careful audit, not a blind delete. Delete the entry, not just the
-# variable, when a file is cleaned.
-"forven/bot_factory/runner.py" = ["F841"]
-"forven/control_plane/status.py" = ["F841"]
-"forven/db.py" = ["F841"]
-"forven/evolution.py" = ["F841"]
-"forven/routers/lifecycle.py" = ["F841"]
-"forven/scanner.py" = ["F841"]
-"forven/strategies/backtest.py" = ["F841"]
-"forven/strategies/builtin/funding.py" = ["F841"]
-"forven/strategies/builtin/gap_fill.py" = ["F841"]
-"forven/strategies/builtin/momentum_burst_mean_reversion.py" = ["F841"]
-"forven/strategies/intake.py" = ["F841"]
-"tests/test_funding_kelly_single_application.py" = ["F841"]
-"tests/test_gauntlet_workflow_backfill.py" = ["F841"]
-"tests/test_recall.py" = ["F841"]
-"tests/test_reconcile_sweep.py" = ["F841"]
-"tests/test_rule_engine.py" = ["F841"]
-"tests/test_scanner_indicators.py" = ["F841"]
+# F841 baseline burned down to zero: every module is now gated with no per-file
+# exemptions.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

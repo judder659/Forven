@@ -3804,6 +3804,39 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
 
   // Data Engine (system)
   {
+    id: 'data-engine.history_source',
+    label: 'Research history source',
+    default: 'binance',
+    type: 'select',
+    options: [
+      { value: 'binance', label: 'Binance (default)' },
+      { value: 'okx', label: 'OKX' },
+      { value: 'bybit', label: 'Bybit' },
+    ],
+    area: 'data',
+    subsection: 'data-engine-core',
+    backendSection: 'data-engine',
+    backendPath: 'data_engine_settings.history_source',
+    description: 'Where the main candle history that every backtest and the gauntlet read is downloaded from. Pick OKX or Bybit if Binance is blocked where you are, and set "Live and paper candles" to Hyperliquid too. Series already stored from another exchange are left as they are: delete them on the Data page to rebuild them from the new source.',
+    usedBy: ['forven.data', 'forven.dataeng.acquire', 'forven.binance_vision', 'forven.dataeng.settings'],
+  },
+  {
+    id: 'bot-operations.market_data_source',
+    label: 'Live and paper candles',
+    default: 'binance',
+    type: 'select',
+    options: [
+      { value: 'binance', label: 'Binance (default)' },
+      { value: 'hyperliquid', label: 'Hyperliquid' },
+    ],
+    area: 'data',
+    subsection: 'data-engine-core',
+    backendSection: 'bot-operations',
+    backendPath: 'market_data_source',
+    description: 'Where the scanner, paper trading and the price feed get recent candles and prices. Pick Hyperliquid if Binance is blocked where you are. Live orders always go to Hyperliquid either way. Restart Forven after changing it so the price feed switches too.',
+    usedBy: ['forven.market_data', 'forven.scanner', 'forven.daemon', 'forven.trade_state'],
+  },
+  {
     id: 'data-engine.enabled',
     label: 'Data Engine enabled',
     default: true,

@@ -617,6 +617,15 @@ class BinanceVisionClient:
 
         Returns total rows added.
         """
+        from forven.data import history_source
+
+        if history_source() != "binance":
+            # Another venue owns the canonical series on this install; Binance
+            # Vision bars would be refused by (or, on an empty series, take
+            # over) that series, so the bulk backfill stands aside.
+            log.debug("BV: OHLCV backfill skipped for %s (%s): history source is %s",
+                      fs_symbol, timeframe, history_source())
+            return 0
         bv_symbol = self.fs_to_bv(fs_symbol)
         start = self.probe_start_date(bv_symbol, "klines", timeframe=timeframe)
         if start is None:

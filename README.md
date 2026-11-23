@@ -43,7 +43,7 @@ Forven is under active development and changes quickly. It is a research tool: *
 
 ## Quick start
 
-**Requirements:** Python 3.11+, Node.js 18+ and git.
+**Requirements:** Python 3.11+, Node.js 20.19+ (or 22+) and git.
 
 ```bash
 git clone https://github.com/judder659/Forven.git
