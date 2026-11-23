@@ -1093,7 +1093,6 @@ def test_venue_lookup_answers_from_an_expired_market_list_and_refreshes_behind(m
     assert calls == ["okx", "bybit"]
 
 
-
 # ============================================================ history source (Binance blocked)
 
 
