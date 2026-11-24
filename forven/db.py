@@ -6904,9 +6904,10 @@ def factory_reset(keep_categories: list[str] | None = None, *, allow_credentials
 
             # Surgically wipe results artifacts
             if config.get("results_dir"):
-                repo_root = Path(__file__).parent.parent
+                from forven.config import repo_results_dir
+
                 dirs = [
-                    repo_root / "data" / "results",
+                    repo_results_dir(),
                     FORVEN_HOME / "data" / "results",
                 ]
                 for d in dirs:
