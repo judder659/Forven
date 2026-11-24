@@ -146,7 +146,7 @@
 				exchange in case Forven is not running.
 			{:else}
 				Off: one live strategy can hold a coin at a time and every other entry on that coin is refused. Turn this on
-				to let live strategies share coins. It can only be switched while no live position is open.
+				to let live strategies share coins. Open live positions are taken over when you turn it on.
 			{/if}
 		</p>
 		{#if status.books_on}
@@ -159,7 +159,7 @@
 		{#if asking && !status.enabled}
 			<div class="space-y-2 border border-yellow-900 p-3">
 				<p class="text-[11px] text-yellow-500">
-					With this on, a live trade no longer has its own stop order on the exchange. Forven closes it when its
+					With this on, a live trade no longer has its own stop order on the exchange, and the stop orders of positions that are open now are replaced. Forven closes it when its
 					stop or target is touched, so Forven must be running. The exchange keeps one disaster stop per coin,
 					{num(status.settings.live_netting_disaster_gap_pct, 2)}% beyond the furthest strategy stop. Type
 					{NETTING_CONFIRM_PHRASE} to turn it on.

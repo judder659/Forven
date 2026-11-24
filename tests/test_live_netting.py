@@ -182,7 +182,7 @@ def test_off_by_default_and_every_call_goes_straight_to_the_exchange(ex):
     assert ex.orders[-1] == {"kind": "close", "coin": "SOL", "buy": False, "size": 1.0, "reduce_only": True}
 
 
-def test_the_switch_cannot_change_while_a_live_position_is_open(ex):
+def test_it_cannot_be_turned_off_while_a_live_position_is_open(ex):
     _row("T1", "S1", "long", 1.0, 190.0)
     with pytest.raises(ValueError, match="live position"):
         netting.set_enabled(False)
@@ -190,6 +190,51 @@ def test_the_switch_cannot_change_while_a_live_position_is_open(ex):
     _close_row("T1")
     assert netting.set_enabled(False)["enabled"] is False
     assert netting.enabled() is False
+
+
+def _legacy_position(ex) -> None:
+    """One live trade opened under the old rules, its own stop and target resting."""
+    kv_set(netting.SETTINGS_KV_KEY, {})
+    netting._invalidate_enabled()
+    ex.stops["501"] = {"coin": "SOL", "direction": "long", "size": 1.0, "price": 190.0}
+    ex.stops["502"] = {"coin": "SOL", "direction": "long", "size": 1.0, "price": 230.0}
+    _row("T1", "S1", "long", 1.0, 190.0, netted=False, extra={
+        "exchange_stop_order_id": "501", "exchange_take_profit_order_id": "502",
+        "take_profit_price": 230.0, "exchange_stop_requested": True,
+    })
+    ex.positions["SOL"] = 1.0
+
+
+def test_turning_it_on_takes_over_the_open_positions(ex):
+    _legacy_position(ex)
+    out = netting.set_enabled(True)
+    assert out["enabled"] is True and out["takeover"]["taken_over"] == ["T1"]
+    assert netting.enabled() is True
+    # The disaster stop is in place and the trade's own orders are gone.
+    assert [s["price"] for s in ex.stops.values()] == [pytest.approx(190.0 * 0.995)]
+    assert sorted(ex.cancelled) == ["501", "502"]
+    row = netting.open_rows("SOL")[0]
+    assert row["signal_data"]["netting"] is True and row["signal_data"]["exchange_stop_requested"] is False
+    assert (row["stop_price"], row["target_price"]) == (190.0, 230.0)  # Forven now enforces both
+    assert netting.sweep()["mismatched"] == []
+
+
+def test_a_refused_disaster_stop_leaves_everything_as_it_was(ex):
+    _legacy_position(ex)
+    ex.reject_stop = "would immediately trigger"
+    with pytest.raises(ValueError, match="Nothing was changed"):
+        netting.set_enabled(True)
+    assert netting.enabled() is False
+    assert sorted(ex.stops) == ["501", "502"] and not ex.cancelled  # its own stop still protects it
+    assert netting.open_rows("SOL")[0]["signal_data"]["netting"] is False
+
+
+def test_it_will_not_take_over_a_coin_whose_books_differ_from_the_exchange(ex):
+    _legacy_position(ex)
+    ex.positions["SOL"] = 0.5
+    with pytest.raises(ValueError, match="Nothing was changed"):
+        netting.set_enabled(True)
+    assert netting.enabled() is False and sorted(ex.stops) == ["501", "502"]
 
 
 def test_it_stays_off_while_direction_books_are_on(ex, monkeypatch):

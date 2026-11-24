@@ -6,8 +6,15 @@ entry on it. With the engine on, any number of live strategies can trade the
 same coin, long or short, at the same time.
 
 It is **off by default**. Turn it on from the Risk page ("Shared coins"), by
-typing `NETTING`. It can only be switched while no live position is open, and it
-runs on the main wallet only (it stays off while direction books are on).
+typing `NETTING`. It runs on the main wallet only (it stays off while direction
+books are on).
+
+Turning it on with live positions open takes them over: the coin's disaster stop
+is placed first, then each trade's own stop and target orders are cancelled and
+Forven runs those levels from then on. If the exchange refuses a disaster stop,
+or a coin's trades do not match the exchange, nothing is changed and the engine
+stays off. Turning it off waits until the live positions have closed, because by
+then several strategies may share a coin.
 
 ## What changes when it is on
 

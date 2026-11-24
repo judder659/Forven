@@ -255,8 +255,119 @@ def _invalidate_enabled() -> None:
     _enabled_cache.update(at=0.0, value=False)
 
 
+def _write_switch(value: bool) -> None:
+    raw = kv_get(SETTINGS_KV_KEY, {})
+    raw = dict(raw) if isinstance(raw, dict) else {}
+    raw["live_netting_enabled"] = bool(value)
+    kv_set(SETTINGS_KV_KEY, raw)
+    _invalidate_enabled()
+
+
+def _mark_rows(rows: list[dict], netted: bool) -> None:
+    from forven.scanner import _update_trade_signal_data
+
+    for row in rows:
+        _update_trade_signal_data(row["trade_id"], {
+            "netting": netted,
+            "netting_taken_over_at": _iso() if netted else None,
+        })
+    try:
+        from forven.mark_watcher import invalidate_armed_cache
+
+        invalidate_armed_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _own_order_ids(row: dict) -> list[str]:
+    sd = row["signal_data"]
+    found = [sd.get("exchange_stop_order_id"), sd.get("exchange_take_profit_order_id"),
+             *(sd.get("recovery_open_order_ids") or [])]
+    return [str(oid) for oid in found if oid]
+
+
+def _take_over_open_positions(rows: list[dict]) -> dict:
+    """Turn the engine on with live positions open: bring them under it.
+
+    Order matters, so a position is never without protection:
+      1. the books must match the exchange on every coin, or nothing changes;
+      2. the rows are marked netted and the switch goes on, so Forven's mark
+         watcher starts running their stops and targets;
+      3. each coin's disaster stop is placed. If any is refused, everything is
+         put back as it was and each trade keeps its own exchange stop;
+      4. only then are the trades' own stop and target orders cancelled.
+    """
+    from forven.scanner import _update_trade_signal_data
+
+    testnet = _testnet()
+    positions = exchange_positions(testnet)
+    coins = sorted({r["coin"] for r in rows})
+    for coin in coins:
+        books, held = book_net(coin, rows), float(positions.get(coin, 0.0))
+        if not _same(books, held):
+            raise ValueError(
+                f"{coin}: Forven's live trades add up to {books:g} but the exchange holds {held:g}. "
+                "Nothing was changed. Fix that difference first, then turn the engine on."
+            )
+
+    _ensure_schema()
+    _mark_rows(rows, True)
+    _write_switch(True)
+    failed: list[str] = []
+    for coin in coins:
+        try:
+            if refresh_disaster_stop(coin, testnet=testnet) == "failed":
+                failed.append(coin)
+        except Exception as exc:  # noqa: BLE001
+            log.error("live netting: takeover of %s failed: %s", coin, exc)
+            failed.append(coin)
+    if failed:
+        for coin, stop in _tracked_stops().items():
+            if stop.get("oid"):
+                _cancel_stop(coin, stop["oid"], testnet)
+        with get_db() as conn:
+            conn.execute("DELETE FROM live_netting_stops")
+        _write_switch(False)
+        _mark_rows(rows, False)
+        raise ValueError(
+            f"The exchange refused the disaster stop on {', '.join(failed)}, so the engine was left off "
+            "and every trade keeps its own stop. Nothing was changed."
+        )
+
+    leftover: list[str] = []
+    for row in rows:
+        for oid in _own_order_ids(row):
+            try:
+                from forven.exchange.hyperliquid import cancel_order
+
+                result = cancel_order(row["coin"], int(oid), testnet=testnet, protective_cleanup=True)
+                if isinstance(result, dict) and result.get("error"):
+                    leftover.append(f"{row['coin']} #{oid}")
+            except Exception:  # noqa: BLE001 - already filled or gone
+                leftover.append(f"{row['coin']} #{oid}")
+        _update_trade_signal_data(row["trade_id"], {
+            "exchange_stop_requested": False, "exchange_take_profit_requested": False,
+            "exchange_stop_order_id": None, "exchange_take_profit_order_id": None,
+            "recovery_open_order_ids": [],
+        })
+    if leftover:
+        _notify(
+            "live_netting_takeover_leftover", "takeover",
+            "Old stop orders may still be resting",
+            "The engine is on, but these orders could not be confirmed cancelled: "
+            f"{', '.join(leftover)}. Check the open orders on the exchange and cancel them by hand.",
+            severity="warning",
+        )
+    return {"taken_over": [r["trade_id"] for r in rows], "coins": coins, "uncancelled": leftover}
+
+
 def set_enabled(value: bool) -> dict:
-    """Turn the engine on or off. Refused while a live position is open."""
+    """Turn the engine on or off.
+
+    On: open live positions are taken over (see ``_take_over_open_positions``).
+    Off: refused while a live position is open. Several strategies may share a
+    coin by then, and the one-position-per-coin rules cannot hold that.
+    """
     value = bool(value)
     current = bool(settings()["live_netting_enabled"])
     if value == current:
@@ -267,24 +378,27 @@ def set_enabled(value: bool) -> dict:
             "only: turn direction books off first."
         )
     rows = open_rows()
-    if rows:
+    takeover = None
+    if value and rows:
+        takeover = _take_over_open_positions(rows)
+    elif rows:
         coins = ", ".join(sorted({r["coin"] for r in rows}))
         raise ValueError(
-            f"{len(rows)} live position(s) are open ({coins}). Close them first: a position cannot "
-            "change rules while it is open."
+            f"{len(rows)} live position(s) are open ({coins}). The engine can be turned off once they "
+            "have closed: the old rules allow only one position per coin."
         )
-    raw = kv_get(SETTINGS_KV_KEY, {})
-    raw = dict(raw) if isinstance(raw, dict) else {}
-    raw["live_netting_enabled"] = value
-    kv_set(SETTINGS_KV_KEY, raw)
-    _invalidate_enabled()
+    else:
+        _write_switch(value)
     try:
         from forven.db import log_activity
 
         log_activity("warning", "live_netting", f"Live netting engine turned {'ON' if value else 'OFF'}")
     except Exception:  # noqa: BLE001
         pass
-    return status()
+    out = status()
+    if takeover:
+        out["takeover"] = takeover
+    return out
 
 
 def update_settings(
