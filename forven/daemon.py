@@ -156,6 +156,11 @@ _LAST_LIQ_CHECK = [0.0]
 MARK_WATCH_MIN_INTERVAL_SECONDS = 1.0
 MARK_WATCH_TIMEOUT_SECONDS = 15.0
 _LAST_MARK_WATCH = [0.0]
+# Netting engine shadow (forven.netting_shadow): records what a shared live
+# account would hold and send. Off by default, sends no orders.
+NETTING_SHADOW_INTERVAL_SECONDS = 60.0
+NETTING_SHADOW_TIMEOUT_SECONDS = 20.0
+_LAST_NETTING_SHADOW = [0.0]
 # KS-1: while the kill-switch is persisted-active, re-flatten any residual
 # position on this cadence (a missed/partial/failed first flatten, a restart
 # between state-persist and flatten, or a close timeout) instead of relying on
@@ -1757,6 +1762,13 @@ def _run_mark_watcher(prices: dict[str, float]) -> list[str]:
     return check_mark_exits(prices)
 
 
+def _run_netting_shadow(prices: dict[str, float]) -> dict | None:
+    """Thread-side netting shadow pass. Lazy import keeps daemon startup light."""
+    from forven.netting_shadow import tick
+
+    return tick(prices)
+
+
 async def _run_tick(state: dict, prices: dict[str, float], source: str, last_reconcile: list[float]) -> None:
     """One daemon tick: publish prices FIRST (fresh), then enforce risk, reconcile periodically."""
     now = time.time()
@@ -1799,6 +1811,20 @@ async def _run_tick(state: dict, prices: dict[str, float], source: str, last_rec
                 state["last_mark_watch_at"] = _iso_now()
         except Exception as e:
             log.warning("Mark watcher tick failed: %s", e)
+
+    if now - _LAST_NETTING_SHADOW[0] >= NETTING_SHADOW_INTERVAL_SECONDS:
+        _LAST_NETTING_SHADOW[0] = now
+        try:
+            shadow = await _to_thread_with_timeout(
+                "daemon.netting_shadow",
+                NETTING_SHADOW_TIMEOUT_SECONDS,
+                _run_netting_shadow,
+                prices,
+            )
+            if isinstance(shadow, dict) and any(shadow.values()):
+                log.info("Netting shadow: %s", shadow)
+        except Exception as e:
+            log.warning("Netting shadow tick failed: %s", e)
 
     risk_snapshot = await _run_risk_cycle()
 

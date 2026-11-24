@@ -67,6 +67,7 @@ from forven.routers.webhooks import router as webhooks_router
 from forven.routers.updates import router as updates_router
 from forven.routers.backtesting import router as backtesting_router
 from forven.routers.breadth import router as breadth_router
+from forven.routers.netting_shadow import router as netting_shadow_router
 from forven.routers.probation import router as probation_router
 from forven.routers.lifecycle import router as lifecycle_router
 from forven.routers.verdict import router as verdict_router
@@ -819,6 +820,7 @@ if not _is_beta_build():
 app.include_router(backtesting_router)
 app.include_router(lifecycle_router)
 app.include_router(probation_router)
+app.include_router(netting_shadow_router)
 app.include_router(deepdive_router)
 app.include_router(assistant_router)
 app.include_router(verdict_router)
