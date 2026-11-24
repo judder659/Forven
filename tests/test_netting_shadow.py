@@ -36,12 +36,32 @@ def test_level_covering_reads_the_overlap_that_holds_for_most_of_the_time():
 
 def test_slots_follow_history_until_capital_runs_out():
     spans = [_span(0, 20), _span(10, 20), _span(19, 20)]
-    roomy = shadow.slot_plan(10_000, spans, coverage_pct=95, leverage=2, size_pct=25)
+    roomy = shadow.slot_plan(10_000, spans, coverage_pct=95, leverage=2, smallest_size_pct=25)
     assert (roomy["slots"], roomy["capital_bound"]) == (3, False)  # 2 wanted + 1 spare
     # $50 at 2x and 25% size: one $25 order, so only 2 slots clear the $10 minimum.
-    tight = shadow.slot_plan(50, spans, coverage_pct=95, leverage=2, size_pct=25)
+    tight = shadow.slot_plan(50, spans, coverage_pct=95, leverage=2, smallest_size_pct=25)
     assert (tight["slots"], tight["slots_capital_cap"], tight["capital_bound"]) == (2, 2, True)
-    assert shadow.slot_plan(0, spans, coverage_pct=95, leverage=2, size_pct=25)["slots"] == 1
+    assert shadow.slot_plan(0, spans, coverage_pct=95, leverage=2, smallest_size_pct=25)["slots"] == 1
+
+
+def test_the_ceiling_scales_with_the_balance_and_nothing_else():
+    busy = [_span(0, 20)] * 5000
+    caps = [
+        shadow.slot_plan(eq, busy, coverage_pct=95, leverage=2, smallest_size_pct=25)["slots_capital_cap"]
+        for eq in (100, 1_000, 10_000)
+    ]
+    assert caps == [5, 50, 500]
+    full = shadow.slot_plan(1_000, busy, coverage_pct=95, leverage=2, smallest_size_pct=100)
+    assert full["slots_capital_cap"] == 200
+
+
+def test_probation_trades_take_a_share_of_a_slot():
+    # Four quarter-size trades open together load one slot, not four.
+    quarter = [(*_span(0, 20), 0.25)] * 4
+    assert shadow.level_covering(quarter, 1.0) == pytest.approx(1.0)
+    assert shadow.slot_plan(10_000, quarter, coverage_pct=95, leverage=2, smallest_size_pct=25)["slots"] == 2
+    mixed = quarter + [(*_span(0, 20), 1.0)]
+    assert shadow.level_covering(mixed, 1.0) == pytest.approx(2.0)
 
 
 def test_an_order_under_the_exchange_minimum_stays_a_residual():
@@ -164,10 +184,12 @@ def test_an_exit_trades_only_the_difference_and_books_that_strategy(book):
 
 
 def test_a_full_book_blocks_the_entry_and_counts_the_miss(book):
-    # $30 at 2x and 25% size: one slot gives a $15 order; a second slot would not clear $10.
+    # Two full-size live strategies on $5 at 2x: one slot gives a $10 order; a second would not clear $10.
     kv_set(shadow.SETTINGS_KV_KEY, {
-        **kv_get(shadow.SETTINGS_KV_KEY, {}), "live_netting_shadow_equity_usd": 30,
+        **kv_get(shadow.SETTINGS_KV_KEY, {}), "live_netting_shadow_equity_usd": 5,
     })
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET stage = 'live_graduated', status = 'live_graduated' WHERE id IN ('NS-A', 'NS-B')")
     _paper("NS-1", "NS-A", "long", 194.0, hours_ago=3)
     _paper("NS-2", "NS-B", "long", 199.0, hours_ago=2)
 
@@ -179,6 +201,24 @@ def test_a_full_book_blocks_the_entry_and_counts_the_miss(book):
     assert (blocked["status"], blocked["reason"]) == ("blocked", "slots_full")
     # A blocked entry is never retried into the same paper trade later.
     assert shadow.tick({"SOL": 200.0}) == {"opened": 0, "closed": 0, "blocked": 0, "orders": 0}
+
+
+def test_full_size_and_probation_strategies_share_the_book(book):
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET stage = 'live_graduated', status = 'live_graduated' WHERE id IN ('NS-A', 'NS-B')")
+        conn.execute(
+            "INSERT INTO strategy_probation (strategy_id, state, size_pct) VALUES ('NS-B', 'active', 50)"
+        )
+    _paper("NS-1", "NS-A", "long", 194.0, hours_ago=3)   # live, full size
+    _paper("NS-2", "NS-B", "long", 199.0, hours_ago=2)   # live probation at 50%
+    _paper("NS-3", "NS-C", "long", 190.0, hours_ago=1)   # ready, would start at 25%
+
+    assert shadow.tick({"SOL": 200.0})["opened"] == 3
+    state = shadow.status()
+    units = {r["strategy_id"]: r["units"] for r in state["recent_rows"]}
+    assert units["NS-B"] == pytest.approx(units["NS-A"] * 0.5)
+    assert units["NS-C"] == pytest.approx(units["NS-A"] * 0.25)
+    assert (state["positions_open"], state["slots_in_use"]) == (3, pytest.approx(1.75))
 
 
 def test_no_price_means_wait_not_guess(book):

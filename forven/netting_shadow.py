@@ -46,7 +46,8 @@ DEFAULTS = {
     "live_netting_slot_coverage_pct": 95.0,
     # The disaster stop sits this far beyond the furthest strategy stop.
     "live_netting_disaster_gap_pct": 0.5,
-    # Size of a shadow position as a share of one slot (probation start size).
+    # Size, as a share of one slot, of a strategy that is ready but not live yet:
+    # the size it would start probation at. Live strategies use their real size.
     "live_netting_shadow_size_pct": 25.0,
     "live_netting_leverage": 2.0,
     # Used only when the daemon has no account equity snapshot.
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS netting_shadow_rows (
     coin         TEXT NOT NULL,
     side         INTEGER NOT NULL,
     units        REAL NOT NULL,
+    size_frac    REAL NOT NULL DEFAULT 1.0,
     entry_price  REAL,
     stop_price   REAL,
     status       TEXT NOT NULL,
@@ -96,33 +98,37 @@ def coin_of(asset: object) -> str:
     return str(asset or "").strip().upper().split("/", 1)[0]
 
 
-def level_covering(intervals: list[tuple[datetime, datetime]], share: float) -> int:
-    """Smallest N such that at most N intervals overlap for ``share`` of the time.
+def level_covering(intervals: list[tuple], share: float) -> float:
+    """Smallest load that is not exceeded for ``share`` of the time.
 
-    Time is measured from the first interval's start to the last one's end, so
-    a young fleet is not diluted by days before it existed.
+    Each interval is ``(start, end)`` or ``(start, end, weight)``. The weight is
+    the share of a slot the position takes (0.25 for a probation trade, 1.0 at
+    full size), so the answer is in slots. Time is measured from the first
+    interval's start to the last one's end, so a young fleet is not diluted by
+    days before it existed.
     """
-    if not intervals:
-        return 0
-    events: list[tuple[datetime, int]] = []
-    for start, end in intervals:
-        if end <= start:
+    events: list[tuple[datetime, float]] = []
+    for item in intervals:
+        start, end = item[0], item[1]
+        weight = float(item[2]) if len(item) > 2 else 1.0
+        if end <= start or weight <= 0:
             continue
-        events.append((start, 1))
-        events.append((end, -1))
+        events.append((start, weight))
+        events.append((end, -weight))
     if not events:
-        return 0
+        return 0.0
     events.sort(key=lambda e: (e[0], e[1]))
-    seconds: dict[int, float] = {}
-    level, last = 0, events[0][0]
+    seconds: dict[float, float] = {}
+    level, last = 0.0, events[0][0]
     for moment, step in events:
         if moment > last:
-            seconds[level] = seconds.get(level, 0.0) + (moment - last).total_seconds()
+            key = round(level, 6)
+            seconds[key] = seconds.get(key, 0.0) + (moment - last).total_seconds()
         level += step
         last = moment
     total = sum(seconds.values())
     if total <= 0:
-        return 0
+        return 0.0
     if share >= 1.0:
         return max(seconds)
     running = 0.0
@@ -135,21 +141,26 @@ def level_covering(intervals: list[tuple[datetime, datetime]], share: float) -> 
 
 def slot_plan(
     equity_usd: float,
-    intervals: list[tuple[datetime, datetime]],
+    intervals: list[tuple],
     *,
     coverage_pct: float,
     leverage: float,
-    size_pct: float,
+    smallest_size_pct: float,
 ) -> dict:
     """Slots the account runs with: what history asks for, capped by capital.
 
-    Capital sets the ceiling: a slot must be large enough that an order at
-    ``size_pct`` of it still clears the exchange minimum. History sets the ask:
-    the overlap level that covers ``coverage_pct`` of the time, plus one spare.
+    A slot is one full-size position. Live strategies trade at different sizes
+    at the same time (probation at 25% or 50%, graduated at 100%), and each
+    takes that share of a slot. Capital sets the ceiling: a slot must be large
+    enough that an order at the SMALLEST size in use still clears the exchange
+    minimum. History sets the ask: the load, in slots, that covers
+    ``coverage_pct`` of the time, plus one spare. Every figure comes from the
+    install's own balance, so a $100 account and a $10,000 account each get
+    their own answer.
     """
-    order_per_slot_dollar = max(leverage, 0.0) * max(size_pct, 0.0) / 100.0
+    order_per_slot_dollar = max(leverage, 0.0) * max(smallest_size_pct, 0.0) / 100.0
     capital_cap = int(equity_usd * order_per_slot_dollar // MIN_ORDER_USD) if equity_usd > 0 else 0
-    wanted = level_covering(intervals, min(max(coverage_pct, 0.0), 100.0) / 100.0) + 1
+    wanted = math.ceil(level_covering(intervals, min(max(coverage_pct, 0.0), 100.0) / 100.0) - 1e-9) + 1
     slots = max(min(wanted, capital_cap), 1)
     return {
         "slots": slots,
@@ -278,6 +289,40 @@ def cohort_ids(conn) -> set[str]:
     return ids
 
 
+_PROBATION_REDUCED_STATES = ("active", "paused", "demoting")
+
+
+def size_fractions(conn, cohort: set[str], start_size_pct: float) -> dict[str, float]:
+    """Share of a slot each strategy trades at.
+
+    Live at full size: 1.0. In live probation: its current probation size.
+    Ready but not live yet: the size it would start probation at.
+    """
+    start = min(max(start_size_pct / 100.0, 0.0), 1.0)
+    marks = ",".join("?" * len(LIVE_STAGES))
+    live = {
+        str(r[0])
+        for r in conn.execute(
+            f"SELECT id FROM strategies WHERE LOWER(COALESCE(stage, status, '')) IN ({marks})",
+            LIVE_STAGES,
+        ).fetchall()
+    }
+    out = {sid: (1.0 if sid in live else start) for sid in cohort}
+    try:
+        rows = conn.execute("SELECT strategy_id, state, size_pct FROM strategy_probation").fetchall()
+    except Exception:  # noqa: BLE001 - no table yet: nobody is in probation
+        rows = []
+    for r in rows:
+        sid = str(r[0])
+        if sid not in live or sid not in out or str(r[1] or "") not in _PROBATION_REDUCED_STATES:
+            continue
+        try:
+            out[sid] = min(max(float(r[2]) / 100.0, 0.0), 1.0)
+        except (TypeError, ValueError):
+            out[sid] = start
+    return out
+
+
 def _stop_of(signal_data: object) -> float | None:
     try:
         data = json.loads(signal_data) if isinstance(signal_data, str) else (signal_data or {})
@@ -340,7 +385,9 @@ def _load_state() -> dict:
     return state
 
 
-def _refresh_slots(conn, cohort: set[str], cfg: dict, state: dict, now: datetime) -> None:
+def _refresh_slots(
+    conn, cohort: set[str], sizes: dict[str, float], cfg: dict, state: dict, now: datetime
+) -> None:
     if state.get("slots") and time.time() - float(state.get("slots_refreshed_ts") or 0.0) < SLOT_REFRESH_SECONDS:
         return
     history = _paper_trades(conn, cohort, open_only=False, since=now - timedelta(days=HISTORY_DAYS))
@@ -349,14 +396,14 @@ def _refresh_slots(conn, cohort: set[str], cfg: dict, state: dict, now: datetime
         start = _parse_ts(t["opened_at"])
         if start is None:
             continue
-        intervals.append((start, _parse_ts(t["closed_at"]) or now))
+        intervals.append((start, _parse_ts(t["closed_at"]) or now, sizes.get(t["strategy_id"], 1.0)))
     equity = _equity(cfg)
     plan = slot_plan(
         equity,
         intervals,
         coverage_pct=cfg["live_netting_slot_coverage_pct"],
         leverage=cfg["live_netting_leverage"],
-        size_pct=cfg["live_netting_shadow_size_pct"],
+        smallest_size_pct=100.0 * min(sizes.values(), default=1.0),
     )
     state.update(plan)
     state["equity_usd"] = round(equity, 2)
@@ -381,10 +428,11 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
     with get_db() as conn:
         _ensure_schema(conn)
         cohort = cohort_ids(conn)
-        _refresh_slots(conn, cohort, cfg, state, now)
+        sizes = size_fractions(conn, cohort, cfg["live_netting_shadow_size_pct"])
+        _refresh_slots(conn, cohort, sizes, cfg, state, now)
         slots = int(state.get("slots") or 1)
         slot_usd = float(state.get("slot_usd") or 0.0)
-        order_usd = slot_usd * cfg["live_netting_leverage"] * cfg["live_netting_shadow_size_pct"] / 100.0
+        full_order_usd = slot_usd * cfg["live_netting_leverage"]
 
         paper_open = {t["trade_id"]: t for t in _paper_trades(conn, cohort, open_only=True)}
         rows = [dict(r) for r in conn.execute(
@@ -426,7 +474,10 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
             price = marks.get(trade["coin"])
             if price is None:
                 continue
-            if len(open_rows) >= slots:
+            size = sizes.get(trade["strategy_id"], 1.0)
+            order_usd = full_order_usd * size
+            in_use = sum(float(r.get("size_frac") or 1.0) for r in open_rows)
+            if in_use + size > slots + 1e-9:
                 status_, reason, units = "blocked", "slots_full", 0.0
                 blocked += 1
             elif order_usd + 1e-9 < MIN_ORDER_USD:
@@ -437,13 +488,13 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
                 opened += 1
             row = {
                 "trade_id": trade_id, "strategy_id": trade["strategy_id"], "coin": trade["coin"],
-                "side": trade["side"], "units": units, "entry_price": price,
+                "side": trade["side"], "units": units, "size_frac": size, "entry_price": price,
                 "stop_price": trade["stop_price"], "status": status_, "reason": reason,
             }
             conn.execute(
-                "INSERT INTO netting_shadow_rows (trade_id, strategy_id, coin, side, units, entry_price, "
-                "stop_price, status, reason, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (trade_id, row["strategy_id"], row["coin"], row["side"], units, price,
+                "INSERT INTO netting_shadow_rows (trade_id, strategy_id, coin, side, units, size_frac, entry_price, "
+                "stop_price, status, reason, opened_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (trade_id, row["strategy_id"], row["coin"], row["side"], units, size, price,
                  row["stop_price"], status_, reason, now.isoformat()),
             )
             if status_ == "open":
@@ -493,7 +544,8 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
     counters["fees_usd"] = float(counters.get("fees_usd", 0.0)) + sum(o["fee_usd"] for o in new_orders)
     state["held"] = held
     state["books"] = books
-    state["slots_in_use"] = len(open_rows)
+    state["slots_in_use"] = round(sum(float(r.get("size_frac") or 1.0) for r in open_rows), 4)
+    state["positions_open"] = len(open_rows)
     state["last_tick_at"] = now.isoformat()
     state.setdefault("started_at", now.isoformat())
     kv_set(STATE_KV_KEY, state)
@@ -539,6 +591,7 @@ def status(limit: int = 50) -> dict:
         "capital_bound": state.get("capital_bound"),
         "slot_usd": state.get("slot_usd"),
         "slots_in_use": state.get("slots_in_use", 0),
+        "positions_open": state.get("positions_open", 0),
         "counters": counters,
         "realised_pnl_usd": round(realised, 4),
         "net_after_fees_usd": round(realised - float(counters.get("fees_usd", 0.0)), 4),
