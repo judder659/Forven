@@ -299,6 +299,13 @@ def forven_db(tmp_path):
     except Exception:
         pass
 
+    # The daemon caches the active coin list (read off its event loop).
+    try:
+        import forven.daemon as _daemon_mod
+        _daemon_mod._reset_active_coins_cache()
+    except Exception:
+        pass
+
     # Drop the get_active() hydration cache: it is per-process and would
     # otherwise serve strategies hydrated from a PREVIOUS test's database.
     try:

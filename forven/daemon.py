@@ -36,7 +36,7 @@ except ImportError:  # pragma: no cover - non-Windows fallback
     msvcrt = None
 
 from forven.config import FORVEN_HOME, ensure_dirs, get_execution_mode
-from forven.db import get_db, get_open_trades, init_db, kv_get, kv_set_best_effort, log_activity
+from forven.db import get_db, init_db, kv_get, kv_set_best_effort, log_activity
 from forven.exchange.hyperliquid import (
     HyperLiquidFeed,
     _get_creds,
@@ -110,12 +110,29 @@ def _normalize_coin_symbol(value: object) -> str:
     return raw.strip()
 
 
-def _active_coins() -> list[str]:
-    """Return base coins plus assets from open trades and active strategies."""
+# The daemon loop asks for the active coins on every price tick and every feed
+# poll. Reading them means two database queries (open trades, and a scan of the
+# strategies table), and on a large install those took up to 35 s, run straight
+# on the loop: every step that was waiting on the loop timed out with it
+# (update_equity, get_account_value, liquidation_check; ~35 a day). The set
+# changes rarely, so loop callers read a cached copy and a background task
+# refreshes it in a worker thread.
+ACTIVE_COINS_REFRESH_SECONDS = 30.0
+_active_coins_lock = threading.Lock()
+_active_coins_cache: list[str] | None = None
+_active_coins_cached_at = 0.0
+
+
+def _load_active_coins() -> list[str]:
+    """Base coins plus assets from open trades and active strategies (database read)."""
     coins = set(_BASE_COINS)
     try:
-        for trade in get_open_trades():
-            asset = _normalize_coin_symbol(trade.get("asset") or trade.get("symbol"))
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT asset, symbol FROM trades WHERE status = 'OPEN'"
+            ).fetchall()
+        for row in rows:
+            asset = _normalize_coin_symbol(row["asset"] or row["symbol"])
             if asset:
                 coins.add(asset)
     except Exception:
@@ -124,7 +141,7 @@ def _active_coins() -> list[str]:
         with get_db() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol
+                SELECT DISTINCT symbol
                 FROM strategies
                 WHERE LOWER(COALESCE(stage, status, '')) LIKE 'paper%'
                    OR LOWER(COALESCE(stage, status, '')) LIKE 'live%'
@@ -141,6 +158,49 @@ def _active_coins() -> list[str]:
     except Exception:
         pass
     return sorted(coins)
+
+
+def _reset_active_coins_cache() -> None:
+    """Forget the cached coins (tests, fresh databases)."""
+    global _active_coins_cache, _active_coins_cached_at
+    with _active_coins_lock:
+        _active_coins_cache = None
+        _active_coins_cached_at = 0.0
+
+
+def _refresh_active_coins() -> list[str]:
+    """Re-read the active coins and store them. Call from a worker thread."""
+    global _active_coins_cache, _active_coins_cached_at
+    coins = _load_active_coins()
+    with _active_coins_lock:
+        _active_coins_cache = coins
+        _active_coins_cached_at = time.monotonic()
+    return list(coins)
+
+
+def _active_coins() -> list[str]:
+    """Return base coins plus assets from open trades and active strategies.
+
+    Served from the cache whenever there is one, even a stale one: the daemon's
+    refresher keeps it current, and a database read here would block the loop.
+    Only the very first call (no cache yet) reads the database inline.
+    """
+    with _active_coins_lock:
+        cached = _active_coins_cache
+    if cached is not None:
+        return list(cached)
+    return _refresh_active_coins()
+
+
+async def _active_coins_refresher() -> None:
+    """Keep the active-coin cache current from a worker thread."""
+    while not shutdown.is_set():
+        try:
+            await asyncio.to_thread(_refresh_active_coins)
+        except Exception:
+            log.debug("active coin refresh failed", exc_info=True)
+        await asyncio.sleep(ACTIVE_COINS_REFRESH_SECONDS)
+
 
 HEARTBEAT_INTERVAL = 300  # 5 minutes
 PRICE_FALLBACK_POLL_INTERVAL = 15  # seconds
@@ -2128,6 +2188,9 @@ async def async_market_loop(state: dict):
 
     _LOOP_STALL_WATCHDOG = LoopStallWatchdog("daemon")
     stall_watch_task = spawn(_LOOP_STALL_WATCHDOG.run(), name="daemon-loop-stall-watch")
+    # Fill the coin cache off the loop before anything on the loop asks for it.
+    await asyncio.to_thread(_refresh_active_coins)
+    active_coins_task = spawn(_active_coins_refresher(), name="daemon-active-coins")
 
     price_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
 
@@ -2271,6 +2334,7 @@ async def async_market_loop(state: dict):
     finally:
         _LOOP_STALL_WATCHDOG.stop()
         stall_watch_task.cancel()
+        active_coins_task.cancel()
         await _stop_market_workers()
         if liq_capture_task is not None:
             liq_capture_task.cancel()
