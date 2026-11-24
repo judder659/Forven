@@ -161,6 +161,12 @@ _LAST_MARK_WATCH = [0.0]
 NETTING_SHADOW_INTERVAL_SECONDS = 60.0
 NETTING_SHADOW_TIMEOUT_SECONDS = 20.0
 _LAST_NETTING_SHADOW = [0.0]
+# NETTING-1: the live netting engine's upkeep pass (books vs exchange per coin,
+# disaster stops). Two exchange reads per pass, and only while the engine is on
+# and has something to look after.
+LIVE_NETTING_INTERVAL_SECONDS = 20.0
+LIVE_NETTING_TIMEOUT_SECONDS = 30.0
+_LAST_LIVE_NETTING = [0.0]
 # KS-1: while the kill-switch is persisted-active, re-flatten any residual
 # position on this cadence (a missed/partial/failed first flatten, a restart
 # between state-persist and flatten, or a close timeout) instead of relying on
@@ -1769,6 +1775,15 @@ def _run_netting_shadow(prices: dict[str, float]) -> dict | None:
     return tick(prices)
 
 
+def _run_live_netting() -> dict | None:
+    """Thread-side live netting upkeep. Lazy import keeps daemon startup light."""
+    from forven import live_netting
+
+    if not live_netting.enabled():
+        return None
+    return live_netting.sweep()
+
+
 async def _run_tick(state: dict, prices: dict[str, float], source: str, last_reconcile: list[float]) -> None:
     """One daemon tick: publish prices FIRST (fresh), then enforce risk, reconcile periodically."""
     now = time.time()
@@ -1825,6 +1840,22 @@ async def _run_tick(state: dict, prices: dict[str, float], source: str, last_rec
                 log.info("Netting shadow: %s", shadow)
         except Exception as e:
             log.warning("Netting shadow tick failed: %s", e)
+
+    if now - _LAST_LIVE_NETTING[0] >= LIVE_NETTING_INTERVAL_SECONDS:
+        _LAST_LIVE_NETTING[0] = now
+        try:
+            netting = await _to_thread_with_timeout(
+                "daemon.live_netting",
+                LIVE_NETTING_TIMEOUT_SECONDS,
+                _run_live_netting,
+            )
+            if isinstance(netting, dict) and (
+                netting.get("mismatched") or netting.get("disaster_fired")
+                or any(v in ("placed", "removed", "failed") for v in (netting.get("stops") or {}).values())
+            ):
+                log.info("Live netting: %s", netting)
+        except Exception as e:
+            log.warning("Live netting upkeep failed: %s", e)
 
     risk_snapshot = await _run_risk_cycle()
 

@@ -1387,6 +1387,17 @@ _TERMINAL_STRATEGY_STAGES = {"archived", "rejected", "backtest_failed"}
 LIVE_COHORT_STAGES = ("live_graduated", "deployed")
 
 
+def _live_netting_on() -> bool:
+    """NETTING-1: whether the live netting engine owns the master wallet's orders."""
+    try:
+        from forven import live_netting
+
+        return bool(live_netting.enabled())
+    except Exception as exc:  # noqa: BLE001 - unreadable switch reads as off (legacy rules)
+        log.warning("NETTING-1: engine switch unreadable (%s); using the one-position-per-coin rules", exc)
+        return False
+
+
 def live_cohort_ids() -> list[str] | None:
     """Strategy ids currently eligible to open real-money positions.
 
@@ -1431,6 +1442,14 @@ def live_equity_slice(account_equity: float | None) -> tuple[float | None, dict]
         eq = None
     if eq is None or eq <= 0:
         return None, {**meta, "reason": "account equity unavailable"}
+
+    if _live_netting_on():
+        # NETTING-1: strategies share coins, so capital is divided into slots
+        # taken only while a strategy is in a trade, not into one fixed share
+        # per live strategy.
+        from forven import live_netting
+
+        return live_netting.slot_slice(eq)
 
     cohort = live_cohort_ids()
     if cohort is None:
@@ -1673,6 +1692,11 @@ def go_live_refusal(conn, strategy_id: str, candidate_weight: float | None = Non
     ``candidate_weight``: the share of normal size it will trade at (live
     probation's start size); full size when None.
     """
+    if _live_netting_on():
+        # NETTING-1: strategies share coins and draw on slots, so neither a
+        # coin/side clash nor the every-strategy-at-once margin case applies.
+        # Each order is still checked against the account budget when it is sent.
+        return None
     report = live_capacity_report(conn, candidate_id=strategy_id, candidate_weight=candidate_weight)
     reasons = []
     for c in report["conflicts"]:
@@ -2286,9 +2310,24 @@ def can_open(
             }
             max_concurrent_positions = _get_max_concurrent_positions(settings)
 
-        if max_concurrent_positions is not None and len(positions) >= max_concurrent_positions:
+        # NETTING-1: with the engine on, the exchange holds one position per COIN
+        # however many strategies trade it, so the cap counts coins, and an entry
+        # on a coin that is already held adds no position.
+        netting_on = (not is_paper_scope) and order_addr is None and _live_netting_on()
+        if netting_on:
+            _held_coins = {str(pos["asset"]).upper() for pos in positions.values()}
+            _at_cap = (
+                max_concurrent_positions is not None
+                and asset not in _held_coins
+                and len(_held_coins) >= max_concurrent_positions
+            )
+            _held_count = len(_held_coins)
+        else:
+            _at_cap = max_concurrent_positions is not None and len(positions) >= max_concurrent_positions
+            _held_count = len(positions)
+        if _at_cap:
             return False, 0.0, (
-                f"Max concurrent positions reached: {len(positions)}/{max_concurrent_positions}. "
+                f"Max concurrent positions reached: {_held_count}/{max_concurrent_positions}. "
                 "Close an existing position before opening a new one."
             )
 
@@ -2347,9 +2386,20 @@ def can_open(
             group = asset
 
         # Rule 2: No duplicate positions on same asset
+        if netting_on:
+            from forven import live_netting
+
+            _coin_blocked = live_netting.coin_block_reason(asset)
+            if _coin_blocked:
+                return False, 0.0, f"Live entry paused: {_coin_blocked}"
+            _slot_ok, _slot_why = live_netting.slot_admission(strategy, _live_aggregate_equity())
+            if not _slot_ok:
+                return False, 0.0, f"Live entry skipped: {_slot_why}"
         for trade_id, pos in positions.items():
             position_strategy_id = _position_strategy_id(pos)
             if pos["asset"] == asset and position_strategy_id != strategy:
+                if netting_on:
+                    continue  # another strategy's row on this coin: the engine nets them
                 return False, 0.0, (
                     f"Asset conflict: {asset} already held by {position_strategy_id or pos['strategy']} "
                     f"({pos['direction']}). One position per asset at a time."
@@ -2756,6 +2806,20 @@ def _cancel_reduce_only_orders_for_asset(
         else None
     )
 
+    # NETTING-1: the engine's disaster stop is the coin's only resting protection.
+    # A "cancel this trade's leftovers" sweep must not take it; the engine alone
+    # replaces or removes it (it can still be cancelled by naming its id).
+    protected_oids: set[str] = set()
+    if normalized_only is None and not vault_address and _live_netting_on():
+        try:
+            from forven import live_netting
+
+            protected_oids = {
+                _normalize_recovery_order_id(o) for o in live_netting.disaster_stop_oids(normalized_asset)
+            }
+        except Exception:  # noqa: BLE001 - unknown: cancel nothing rather than the stop
+            return [], list(open_orders or [])
+
     cancelled: list[dict] = []
     remaining: list[dict] = []
     for order in list(open_orders or []):
@@ -2772,6 +2836,9 @@ def _cancel_reduce_only_orders_for_asset(
             continue
         if normalized_only is not None and normalized_oid not in normalized_only:
             # Belongs to a different trade on this asset — leave it intact.
+            remaining.append(order)
+            continue
+        if normalized_oid in protected_oids:
             remaining.append(order)
             continue
         try:
@@ -3728,6 +3795,18 @@ def reconcile_exchange_positions(
         }
 
     scope_address = _norm_addr(account_address)
+
+    if scope_address is None and _live_netting_on():
+        # NETTING-1: on a shared position a trade has no exchange position of its
+        # own to be matched to, so the per-trade matcher below (ghost closes,
+        # orphan adoption, per-trade stop repair) must not run. The engine checks
+        # the net position per coin instead and never trades to correct it.
+        from forven import live_netting
+
+        try:
+            return live_netting.reconcile(snapshot, testnet=testnet)
+        except Exception as e:
+            return {"error": f"Netting reconcile failed: {e}"}
 
     normalized_positions = list(snapshot.get("positions") or [])
     open_orders = list(snapshot.get("open_orders") or [])
@@ -5749,6 +5828,21 @@ def close_all_positions() -> list[dict]:
             ),
             {"pending_results": pending_results},
         )
+
+    # NETTING-1: rows that offset each other exactly had no exchange position to
+    # flatten. With trading halted, close them in the books too.
+    if _live_netting_on():
+        try:
+            from forven import live_netting
+
+            _offset_closed = live_netting.close_offset_rows_after_flatten()
+            if _offset_closed:
+                log_activity(
+                    "critical", "risk",
+                    f"Kill-switch closed {len(_offset_closed)} offsetting live trade(s) in the books.",
+                )
+        except Exception as _offset_exc:
+            log.error("Kill-switch could not close offsetting netted trades: %s", _offset_exc)
 
     closed_count = len(closed_assets)
     if pending_results:
