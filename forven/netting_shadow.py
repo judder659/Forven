@@ -50,8 +50,10 @@ DEFAULTS = {
     # the size it would start probation at. Live strategies use their real size.
     "live_netting_shadow_size_pct": 25.0,
     "live_netting_leverage": 2.0,
-    # Used only when the daemon has no account equity snapshot.
-    "live_netting_shadow_equity_usd": 1000.0,
+    # Optional stand-in balance for an install with no live account to read.
+    # 0 means none: without a real balance the shadow has nothing to size from
+    # and stays idle rather than assume a figure.
+    "live_netting_shadow_equity_usd": 0.0,
 }
 MIN_ORDER_USD = 10.0
 TAKER_FEE_FRAC = 0.00045
@@ -261,15 +263,17 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _equity(cfg: dict) -> float:
+def _equity(cfg: dict) -> float | None:
+    """The install's own live balance, or None when there is none to read."""
     try:
         daemon_state = kv_get("daemon_state", {})
         value = float((daemon_state or {}).get("account_equity") or 0.0)
         if math.isfinite(value) and value > 0:
             return value
-    except Exception:  # noqa: BLE001 - fall back to the configured figure
+    except Exception:  # noqa: BLE001 - fall through to the optional stand-in
         pass
-    return float(cfg["live_netting_shadow_equity_usd"])
+    stand_in = float(cfg["live_netting_shadow_equity_usd"])
+    return stand_in if stand_in > 0 else None
 
 
 def cohort_ids(conn) -> set[str]:
@@ -397,7 +401,7 @@ def _refresh_slots(
         if start is None:
             continue
         intervals.append((start, _parse_ts(t["closed_at"]) or now, sizes.get(t["strategy_id"], 1.0)))
-    equity = _equity(cfg)
+    equity = _equity(cfg) or 0.0
     plan = slot_plan(
         equity,
         intervals,
@@ -420,6 +424,13 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
     if not cfg["live_netting_shadow_enabled"]:
         return None
     now = now or _now()
+    if _equity(cfg) is None:
+        # No live balance on this install: nothing to size from, so record nothing.
+        state = _load_state()
+        state["idle_reason"] = "no_live_balance"
+        state["last_tick_at"] = now.isoformat()
+        kv_set(STATE_KV_KEY, state)
+        return {"opened": 0, "closed": 0, "blocked": 0, "orders": 0}
     marks = {coin_of(k): float(v) for k, v in (prices or {}).items() if v and float(v) > 0}
     state = _load_state()
     opened = closed = blocked = 0
@@ -542,6 +553,7 @@ def tick(prices: dict[str, float], *, now: datetime | None = None) -> dict | Non
     counters["entries_blocked"] = int(counters.get("entries_blocked", 0)) + blocked
     counters["orders"] = int(counters.get("orders", 0)) + len(new_orders)
     counters["fees_usd"] = float(counters.get("fees_usd", 0.0)) + sum(o["fee_usd"] for o in new_orders)
+    state.pop("idle_reason", None)
     state["held"] = held
     state["books"] = books
     state["slots_in_use"] = round(sum(float(r.get("size_frac") or 1.0) for r in open_rows), 4)
@@ -581,6 +593,7 @@ def status(limit: int = 50) -> dict:
         "enabled": bool(cfg["live_netting_shadow_enabled"]),
         "sends_orders": False,
         "settings": {k: v for k, v in cfg.items() if k != "live_netting_shadow_enabled"},
+        "idle_reason": state.get("idle_reason"),
         "started_at": state.get("started_at"),
         "last_tick_at": state.get("last_tick_at"),
         "equity_usd": state.get("equity_usd"),

@@ -221,6 +221,20 @@ def test_full_size_and_probation_strategies_share_the_book(book):
     assert (state["positions_open"], state["slots_in_use"]) == (3, pytest.approx(1.75))
 
 
+def test_without_a_live_balance_the_shadow_stays_idle(book):
+    saved = kv_get(shadow.SETTINGS_KV_KEY, {})
+    kv_set(shadow.SETTINGS_KV_KEY, {"live_netting_shadow_enabled": True})
+    _paper("NS-1", "NS-A", "long", 194.0)
+    assert shadow.tick({"SOL": 200.0}) == {"opened": 0, "closed": 0, "blocked": 0, "orders": 0}
+    state = shadow.status()
+    assert (state["idle_reason"], state["started_at"], state["recent_rows"]) == ("no_live_balance", None, [])
+    # A real balance arriving later starts it, sized from that balance.
+    kv_set("daemon_state", {"account_equity": 400.0})
+    assert shadow.tick({"SOL": 200.0})["opened"] == 1
+    assert shadow.status()["equity_usd"] == 400.0
+    kv_set(shadow.SETTINGS_KV_KEY, saved)
+
+
 def test_no_price_means_wait_not_guess(book):
     _paper("NS-1", "NS-A", "long", 194.0)
     assert shadow.tick({"BTC": 90_000.0}) == {"opened": 0, "closed": 0, "blocked": 0, "orders": 0}
