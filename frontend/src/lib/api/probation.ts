@@ -125,6 +125,9 @@ export interface ProbationOverviewRow {
 	live_return_pct: number;
 	triggers: ProbationTrigger[];
 	next_step: ProbationNextStep | null;
+	/** ready: waiting on Graduate to full size. failed: recommended off live. */
+	verdict?: 'ready' | 'failed' | 'on_track';
+	verdict_reason?: string | null;
 }
 
 export interface ProbationReadyRow {

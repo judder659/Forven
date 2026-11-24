@@ -629,3 +629,35 @@ def test_paper_edge_ignores_other_coins_and_non_replay_trades(env):
         _priced_trade("S1", kernel=False, entry=100.0, exit_=105.0)  # not the replay's own
     edge = next(c for c in probation.entry_check("S1")["checks"] if c["key"] == "edge_covers_costs")
     assert edge["ok"] is False
+
+
+def _overview_row(sid="S1"):
+    return next(r for r in probation.overview()["strategies"] if r["strategy_id"] == sid)
+
+
+def test_overview_marks_a_strategy_ready_for_full_size(env, monkeypatch):
+    monkeypatch.setattr("forven.policy.strategy_breadth", lambda sid: {"status": "done", "summary": {"verdict": "general"}})
+    _in_probation(env, trades=10)
+    row = _overview_row()
+    assert row["verdict"] == "ready"
+
+
+def test_overview_keeps_a_young_probation_on_track(env):
+    _in_probation(env, trades=2)
+    row = _overview_row()
+    assert row["verdict"] == "on_track" and row["verdict_reason"] is None
+
+
+def test_overview_marks_triggers_and_losing_finishes_as_failed(env, monkeypatch):
+    _in_probation(env, trades=6, pnl=-3.0)
+    row = _overview_row()
+    assert row["verdict"] == "failed" and row["triggers"]
+    assert row["verdict_reason"].startswith("Left its backtest's range")
+
+
+def test_overview_marks_a_finished_losing_record_as_failed(env, monkeypatch):
+    monkeypatch.setattr(probation, "live_record", lambda sid, rec, cfg=None: {
+        "live_trades": 10, "live_return_pct": -2.5, "triggers": []})
+    _in_probation(env, trades=0)
+    row = _overview_row()
+    assert row["verdict"] == "failed" and "-2.50%" in row["verdict_reason"]

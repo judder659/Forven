@@ -996,6 +996,37 @@ def status(strategy_id: str, cfg: dict | None = None) -> dict[str, Any]:
     return out
 
 
+def _verdict(rec: dict, record: dict, cfg: dict, k: dict) -> dict[str, Any]:
+    """What a probation row asks of the operator, for the desk to colour it.
+
+    ``ready``: every graduation check passes, so it waits on Graduate to full size.
+    ``failed``: it left the backtest's range, is being demoted, or finished its
+    trades at a loss; the recommendation is to take it off live.
+    ``on_track``: nothing to do yet.
+    """
+    triggers = record.get("triggers") or []
+    trades = int(record.get("live_trades") or 0)
+    need = int(k["graduate_trades"])
+    if rec["state"] == rules.STATE_DEMOTING:
+        return {"verdict": "failed", "verdict_reason": rec.get("status_reason") or "Being demoted to paper"}
+    if triggers:
+        return {"verdict": "failed",
+                "verdict_reason": "Left its backtest's range: " + "; ".join(str(t.get("label")) for t in triggers)}
+    if trades >= need and float(record.get("live_return_pct") or 0.0) < 0:
+        return {"verdict": "failed",
+                "verdict_reason": f"Finished {trades} live trades at {float(record['live_return_pct']):+.2f}%"}
+    if trades >= need and rec["state"] == rules.STATE_ACTIVE and not record.get("error"):
+        try:
+            report = graduation_check(rec["strategy_id"], rec, cfg, record)
+        except Exception as exc:  # noqa: BLE001 - one unreadable check must not hide the row
+            return {"verdict": "on_track", "verdict_reason": f"Graduation check unreadable: {exc}"}
+        if report["eligible"]:
+            return {"verdict": "ready", "verdict_reason": "Ready for full size: every graduation check passes"}
+        return {"verdict": "on_track",
+                "verdict_reason": "; ".join(f"{c['label']}: {c['detail']}" for c in report["failing"])}
+    return {"verdict": "on_track", "verdict_reason": None}
+
+
 def overview(cfg: dict | None = None) -> dict[str, Any]:
     """Every strategy in probation (with its live record) and the ready list."""
     cfg = cfg if cfg is not None else config()
@@ -1023,6 +1054,7 @@ def overview(cfg: dict | None = None) -> dict[str, Any]:
             "live_return_pct": record.get("live_return_pct", 0.0),
             "triggers": record.get("triggers", []),
             "next_step": rules.next_step(int(record.get("live_trades") or 0), k),
+            **_verdict(rec, record, cfg, k),
         })
     return {
         "strategies": rows,
