@@ -6884,6 +6884,12 @@ def _persist_completed_backtest_run(
     except Exception:
         pass
     try:
+        from forven import probation as _probation
+
+        _probation.invalidate_reference_cache(strategy_id)
+    except Exception:
+        pass
+    try:
         chart_context = _build_backtest_chart_context_payload(
             result_id=result_id,
             asset=asset,

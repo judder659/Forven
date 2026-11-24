@@ -45,7 +45,7 @@ READY_KV_KEY = "forven:probation:ready"
 # Bump when entry_check's checks or their sizing change, so a ready list written
 # by older code is recomputed instead of shown (after #246 a pre-restart list
 # still sized every strategy at full size and read "no room live").
-READY_FORMAT = 2
+READY_FORMAT = 3
 # A list older than this is recomputed on read (the watchdog writes it hourly).
 READY_MAX_AGE_SECONDS = 2 * 3600
 # Held-back tests the hourly watchdog may start per run for strategies that pass
@@ -346,7 +346,16 @@ def open_live_positions(strategy_id: str) -> int:
 # trades on disk, and how long a choice is reused (the live desk asks often).
 REFERENCE_SCAN_LIMIT = 60
 REFERENCE_CACHE_SECONDS = 3600.0
+REFERENCE_MISS_CACHE_SECONDS = 15.0
 _reference_cache: dict[str, tuple[float, list[float], dict]] = {}
+
+
+def invalidate_reference_cache(strategy_id: str | None = None) -> None:
+    """Drop cached backtest reference returns (all strategies when ``strategy_id`` is None)."""
+    if strategy_id is None:
+        _reference_cache.clear()
+    else:
+        _reference_cache.pop(strategy_id, None)
 
 
 def _reference_candidates(strategy_id: str) -> list:
@@ -403,8 +412,10 @@ def backtest_returns(strategy_id: str, cfg: dict) -> tuple[list[float], dict]:
     """
     now = time.time()
     hit = _reference_cache.get(strategy_id)
-    if hit and now - hit[0] < REFERENCE_CACHE_SECONDS:
-        return list(hit[1]), dict(hit[2])
+    if hit:
+        ttl = REFERENCE_CACHE_SECONDS if len(hit[1]) >= rules.MIN_BACKTEST_TRADES else REFERENCE_MISS_CACHE_SECONDS
+        if now - hit[0] < ttl:
+            return list(hit[1]), dict(hit[2])
     loader = _mod("forven.gauntlet.deflated_sharpe")
     try:
         candidates = _reference_candidates(strategy_id)
@@ -510,7 +521,7 @@ def live_record(strategy_id: str, rec: dict | None, cfg: dict | None = None) -> 
         "backtest_source": bt_info,
         # No backtest trades to compare with: the drawdown, streak and band
         # limits cannot fire. Shown on the desk so it is never silent.
-        "limits_unmeasured": len(backtest) < 5,
+        "limits_unmeasured": len(backtest) < rules.MIN_BACKTEST_TRADES,
         "sequential_state": sequential,
         "cost": cost,
         "mismatched_trades": mismatched,
@@ -639,6 +650,32 @@ def entry_check(
         checks.append(_check("engine_fresh", "Results from the current engine", bool(fresh), str(fresh_detail)))
     except Exception as exc:  # noqa: BLE001
         checks.append(_check("engine_fresh", "Results from the current engine", False, f"unverifiable: {exc}"))
+
+    try:
+        bt_returns, bt_info = backtest_returns(strategy_id, cfg)
+        bt_count = len(bt_returns)
+        min_bt = rules.MIN_BACKTEST_TRADES
+        bt_ok = bt_count >= min_bt
+        if bt_ok:
+            bt_detail = f"{bt_count} backtest trades on disk for drawdown, streak and band limits"
+        elif bt_count > 0:
+            bt_detail = (
+                f"only {bt_count} backtest trade(s) on disk (need at least {min_bt} to check probation limits); "
+                "re-run its backtest on the strategy page"
+            )
+        else:
+            bt_detail = (
+                "backtest trades file is missing on disk, so probation drawdown, losing-streak and band limits "
+                "can't be checked; re-run its backtest on the strategy page"
+            )
+        checks.append(_check(
+            "backtest_trades", "Backtest trades for limits", bt_ok, bt_detail, bypassable=False,
+        ))
+    except Exception as exc:  # noqa: BLE001 — fail closed before real money
+        checks.append(_check(
+            "backtest_trades", "Backtest trades for limits", False,
+            f"backtest trades unavailable: {exc}", bypassable=False,
+        ))
 
     try:
         with _db().get_db() as conn:
@@ -945,11 +982,20 @@ def graduation_check(strategy_id: str, rec: dict, cfg: dict | None = None, recor
     k = rules.settings(cfg)
     record = record if record is not None else live_record(strategy_id, rec, cfg)
     need = int(k["graduate_trades"])
+    unmeasured = bool(record.get("limits_unmeasured"))
+    if unmeasured:
+        range_ok = False
+        range_detail = (
+            "backtest trades are missing, so drawdown, losing-streak and band limits can't be checked — "
+            "re-run its backtest first"
+        )
+    else:
+        range_ok = not record["triggers"]
+        range_detail = "; ".join(t["label"] for t in record["triggers"]) or "no demotion trigger hit"
     checks = [
         _check("live_trades", "Live trades", record["live_trades"] >= need, f"{record['live_trades']} of {need} live trades"),
         _check("live_result", "Live result", record["live_return_pct"] >= 0, f"live total {record['live_return_pct']:+.2f}%"),
-        _check("no_triggers", "Inside the backtest's range", not record["triggers"],
-               "; ".join(t["label"] for t in record["triggers"]) or "no demotion trigger hit"),
+        _check("no_triggers", "Inside the backtest's range", range_ok, range_detail, bypassable=not unmeasured),
     ]
     live_evidence = _mod("forven.live_evidence")
     if live_evidence.settings(cfg)["live_require_breadth"]:
@@ -975,6 +1021,12 @@ def graduate(
     if operator and str(confirm or "").strip().upper() != phrase:
         raise ProbationError(f"Type {phrase} to confirm full size", needs_confirm=phrase)
     report = graduation_check(strategy_id, rec, cfg)
+    hard = [c for c in report["failing"] if not c["bypassable"]]
+    if hard:
+        raise ProbationError(
+            "Cannot graduate to full size: " + "; ".join(f"{c['label']}: {c['detail']}" for c in hard),
+            checks=report["checks"],
+        )
     if report["failing"] and not (operator and bypass):
         raise ProbationError(
             "Not ready for full size: " + "; ".join(f"{c['label']}: {c['detail']}" for c in report["failing"]),

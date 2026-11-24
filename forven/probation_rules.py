@@ -92,6 +92,7 @@ AUTOMATION_DEFAULTS: dict[str, bool] = {
 }
 
 CONFIRM_PHRASE = "PROBATION"
+MIN_BACKTEST_TRADES = 5
 
 # Record states. active/paused/demoting are "in probation": the strategy trades
 # live at probation size (paused and demoting take no new entries).
@@ -220,7 +221,7 @@ def band_floor(backtest: Sequence[float], n: int, percentile: float, *, draws: i
     the bad ones bunch up; a live sum below it is outside the expected band.
     Deterministic (fixed seed) so the same evidence always gives the same answer.
     """
-    if n <= 0 or len(backtest) < 5:
+    if n <= 0 or len(backtest) < MIN_BACKTEST_TRADES:
         return None
     rng = random.Random(seed + n)
     pool = list(backtest)
@@ -247,7 +248,7 @@ def demotion_reasons(
     hits: list[dict[str, Any]] = []
     live = [float(r) for r in live]
     n = len(live)
-    if n and len(backtest) >= 5:
+    if n and len(backtest) >= MIN_BACKTEST_TRADES:
         bt_dd = max_drawdown(backtest)
         live_dd = max_drawdown(live)
         limit = float(knobs["demote_drawdown_multiple"]) * bt_dd
