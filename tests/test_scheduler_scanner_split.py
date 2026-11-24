@@ -382,3 +382,46 @@ def test_scanner_timeout_follows_the_scan_interval():
     # The stale-lock window and hard timeout sit past the inner limit.
     scan_job = {**job("300000"), "payload": json.dumps(payload)}
     assert scheduler._job_running_stale_seconds(scan_job) == 330
+
+
+def _bv_job_times():
+    from forven.db import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT last_run_at, next_run_at FROM scheduler_jobs WHERE id = 'forven-data-bv-backfill'"
+        ).fetchone()
+    return row["last_run_at"], row["next_run_at"]
+
+
+def test_bv_backfill_first_run_is_soon_after_seeding(forven_db):
+    from datetime import datetime, timedelta, timezone
+    seed_forven_jobs()
+    _, next_run = _bv_job_times()
+    next_dt = datetime.fromisoformat(next_run)
+    assert next_dt <= datetime.now(timezone.utc) + timedelta(minutes=11)
+
+
+def test_reconcile_brings_forward_a_never_run_bv_backfill(forven_db):
+    from datetime import datetime, timedelta, timezone
+    from forven.db import get_db
+    seed_forven_jobs()
+    far = (datetime.now(timezone.utc) + timedelta(days=29)).isoformat()
+    with get_db() as conn:
+        conn.execute("UPDATE scheduler_jobs SET next_run_at = ? WHERE id = 'forven-data-bv-backfill'", (far,))
+    reconcile_forven_jobs()
+    _, next_run = _bv_job_times()
+    assert datetime.fromisoformat(next_run) <= datetime.now(timezone.utc) + timedelta(minutes=11)
+
+
+def test_reconcile_leaves_a_bv_backfill_that_already_ran(forven_db):
+    from datetime import datetime, timedelta, timezone
+    from forven.db import get_db
+    seed_forven_jobs()
+    far = (datetime.now(timezone.utc) + timedelta(days=29)).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE scheduler_jobs SET next_run_at = ?, last_run_at = ? WHERE id = 'forven-data-bv-backfill'",
+            (far, datetime.now(timezone.utc).isoformat()),
+        )
+    reconcile_forven_jobs()
+    assert _bv_job_times()[1] == far

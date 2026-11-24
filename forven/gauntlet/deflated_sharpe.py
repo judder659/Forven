@@ -822,10 +822,19 @@ def load_backtest_trade_returns(strategy_id: str, pipeline_config: dict | None =
     default) and the in-sample artifact exists, else the OOS trades. Returns
     ``([], {"reason": ...})`` when no per-trade series is available.
     """
-    rob = (pipeline_config or {}).get("robustness_thresholds", {}) or {}
     bt = _latest_backtest_row(strategy_id)
     if not bt:
         return [], {"reason": "no_backtest_result"}
+    return trade_returns_for_row(bt, pipeline_config)
+
+
+def trade_returns_for_row(bt, pipeline_config: dict | None = None) -> tuple[list[float], dict]:
+    """Per-trade returns of one backtest_results row (result_id, config_json, metrics_json).
+
+    ``([], {"reason": "no_trades_in_artifact", ...})`` when its trades file is
+    missing or empty.
+    """
+    rob = (pipeline_config or {}).get("robustness_thresholds", {}) or {}
     from forven.api_core import get_backtest_result
 
     detail = get_backtest_result(bt["result_id"], remote_skip=True)

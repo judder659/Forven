@@ -18,6 +18,16 @@
 	$: auto = overview?.automation;
 
 	const href = (id: string) => `/lab/strategy/${encodeURIComponent(id)}`;
+
+	$: readyCount = rows.filter((r) => r.verdict === 'ready').length;
+	$: failedCount = rows.filter((r) => r.verdict === 'failed').length;
+
+	function rowTone(verdict: string | null | undefined): string {
+		if (verdict === 'ready') return 'border border-emerald-500/70 bg-emerald-500/20 hover:bg-emerald-500/30';
+		if (verdict === 'failed') return 'border border-red-500/70 bg-red-500/20 hover:bg-red-500/30';
+		if (verdict === 'unmeasured') return 'border border-amber-500/70 hover:bg-amber-400/10';
+		return 'border border-transparent hover:bg-amber-400/10';
+	}
 </script>
 
 {#if overview && (rows.length || ready.length)}
@@ -27,10 +37,18 @@
 				<div class="flex flex-wrap items-center gap-2 text-[12px]">
 					<ProbationBadge sizePct={null} />
 					<span class="font-semibold text-amber-100">{rows.length} live strateg{rows.length === 1 ? 'y' : 'ies'} on probation (real money, reduced size)</span>
-					<span class="text-sc-ink3">· {rows.length} of {overview.max_strategies} slots · demotion {auto?.auto_demote ? 'automatic' : 'by hand'}</span>
+					<span class="text-sc-ink3">· {rows.length} of {overview.max_strategies} allowed on probation · demotion {auto?.auto_demote ? 'automatic' : 'by hand'}</span>
+					{#if readyCount}<span class="rounded border border-emerald-500/70 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">{readyCount} READY FOR FULL SIZE</span>{/if}
+					{#if failedCount}<span class="rounded border border-red-500/70 bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-200">{failedCount} FAILED</span>{/if}
 				</div>
 				{#each rows as row (row.strategy_id)}
-					<a href={href(row.strategy_id)} class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded px-1 py-0.5 text-[12px] hover:bg-amber-400/10" data-testid="desk-probation-row">
+					<a
+						href={href(row.strategy_id)}
+						class={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded px-1 py-0.5 text-[12px] ${rowTone(row.verdict)}`}
+						title={row.verdict_detail ?? ''}
+						data-testid="desk-probation-row"
+						data-verdict={row.verdict ?? ''}
+					>
 						<span class="flex min-w-0 items-center gap-2">
 							<ProbationBadge state={row.state} sizePct={row.size_pct} compact />
 							<span class="font-plex-mono text-sc-ink">{row.display_id}</span>
@@ -39,6 +57,10 @@
 						<span class="flex items-center gap-3 font-plex-mono text-[11px]">
 							<span class="text-sc-ink2">{row.live_trades}/{graduateAt} trades</span>
 							<span class={row.live_return_pct < 0 ? 'text-red-300' : 'text-sc-ink'}>{row.live_return_pct > 0 ? '+' : ''}{row.live_return_pct.toFixed(2)}%</span>
+							{#if row.verdict === 'ready'}<span class="rounded bg-emerald-500/25 px-1.5 text-[10.5px] font-semibold text-emerald-200">Ready for full size</span>
+							{:else if row.verdict === 'failed'}<span class="rounded bg-red-500/25 px-1.5 text-[10.5px] font-semibold text-red-200">Failed: back to paper recommended</span>
+							{:else if row.verdict === 'unmeasured'}<span class="rounded bg-amber-500/25 px-1.5 text-[10.5px] font-semibold text-amber-200">Limits can't be checked</span>
+							{:else if row.verdict === 'step'}<span class="rounded bg-sky-500/20 px-1.5 text-[10.5px] font-semibold text-sky-200">Next size earned</span>{/if}
 							{#if row.triggers.length}<span class="text-red-300" title={row.triggers.map((t) => t.label).join(', ')}>⚠ {row.triggers.length}</span>{/if}
 						</span>
 					</a>

@@ -32,6 +32,7 @@ import importlib
 import json
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -341,13 +342,104 @@ def open_live_positions(strategy_id: str) -> int:
     return int(row["n"] or 0) if row else 0
 
 
+# How many of a strategy's newest backtests are tried when the pinned one has no
+# trades on disk, and how long a choice is reused (the live desk asks often).
+REFERENCE_SCAN_LIMIT = 60
+REFERENCE_CACHE_SECONDS = 3600.0
+_reference_cache: dict[str, tuple[float, list[float], dict]] = {}
+
+
+def _reference_candidates(strategy_id: str) -> list:
+    """The backtests a probation can be measured against, best first.
+
+    The pinned backtest (the run that put the strategy in paper and live) comes
+    first. The rest are the newest full backtests, but only ones run with the
+    strategy's current params, so a sweep or an old variant never sets its limits.
+    """
+    with _db().get_db() as conn:
+        strat = conn.execute("SELECT * FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        rows = conn.execute(
+            """SELECT result_id, config_json, metrics_json, start_date, end_date, created_at FROM backtest_results
+               WHERE strategy_id = ?
+                 AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) = 'backtest'
+                 AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+               ORDER BY datetime(created_at) DESC LIMIT ?""",
+            (strategy_id, REFERENCE_SCAN_LIMIT),
+        ).fetchall()
+        pinned_id = str(dict(strat).get("pinned_backtest_id") or "").strip() if strat else ""
+        pinned = None
+        if pinned_id:
+            pinned = conn.execute(
+                """SELECT result_id, config_json, metrics_json, start_date, end_date, created_at FROM backtest_results
+                   WHERE result_id = ? AND strategy_id = ?
+                     AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')""",
+                (pinned_id, strategy_id),
+            ).fetchone()
+    current = _json(strat["params"] if strat else None, {})
+
+    def same_params(row) -> bool:
+        params = _json(row["config_json"], {}).get("params") if row["config_json"] else None
+        if not isinstance(params, dict) or not isinstance(current, dict) or not current:
+            return True  # nothing recorded to compare: accept
+        return all(params.get(key) == value for key, value in current.items() if key in params)
+
+    out = [pinned] if pinned is not None else []
+    out += [row for row in rows if row["result_id"] != pinned_id and same_params(row)]
+    return out
+
+
+def _pinned_backtest_id(strategy_id: str) -> str:
+    row = _strategy_row(strategy_id)
+    return str(dict(row).get("pinned_backtest_id") or "").strip() if row is not None else ""
+
+
 def backtest_returns(strategy_id: str, cfg: dict) -> tuple[list[float], dict]:
+    """The backtest per-trade returns a probation is measured against.
+
+    The pinned backtest when its trades are on disk; otherwise, of the newest
+    backtests run with the strategy's current params, the one with the most
+    trades (the full window, not a short re-check). A row whose trades file is
+    gone is skipped instead of leaving the strategy with no limits at all.
+    """
+    now = time.time()
+    hit = _reference_cache.get(strategy_id)
+    if hit and now - hit[0] < REFERENCE_CACHE_SECONDS:
+        return list(hit[1]), dict(hit[2])
+    loader = _mod("forven.gauntlet.deflated_sharpe")
     try:
-        returns, info = _mod("forven.gauntlet.deflated_sharpe").load_backtest_trade_returns(strategy_id, cfg)
+        candidates = _reference_candidates(strategy_id)
     except Exception as exc:  # noqa: BLE001 — no backtest series means no backtest comparison
         log.warning("Backtest trade returns unavailable for %s: %s", strategy_id, exc)
         return [], {"reason": f"error: {exc}"}
-    return rules.normalise_backtest_returns(returns), info
+    pinned_id = _pinned_backtest_id(strategy_id)
+    best: tuple[list[float], dict] | None = None
+    missing = 0
+    for row in candidates:
+        try:
+            returns, info = loader.trade_returns_for_row(row, cfg)
+        except Exception as exc:  # noqa: BLE001 — try the next backtest
+            log.debug("probation: backtest %s unreadable for %s: %s", row["result_id"], strategy_id, exc)
+            returns = []
+        if not returns:
+            missing += 1
+            continue
+        if pinned_id and str(row["result_id"]) == pinned_id:
+            best = (returns, {**info, "pinned": True})
+            break  # the pinned run is the reference whenever it is readable
+        if best is None or len(returns) > len(best[0]):
+            best = (returns, {**info, "pinned": False})
+    if best is None:
+        info = {
+            "reason": "no_backtest_trades" if candidates else "no_backtest_result",
+            "checked": len(candidates),
+            "unmeasured": True,
+        }
+        _reference_cache[strategy_id] = (now, [], info)
+        return [], info
+    returns = rules.normalise_backtest_returns(best[0])
+    info = {**best[1], "skipped_missing": missing}
+    _reference_cache[strategy_id] = (now, returns, info)
+    return list(returns), dict(info)
 
 
 def _cost_stats(strategy_id: str, trades: list[dict]) -> dict[str, Any]:
@@ -416,6 +508,9 @@ def live_record(strategy_id: str, rec: dict | None, cfg: dict | None = None) -> 
         "losing_streak_limit": (rules.longest_losing_streak(backtest) + int(k["demote_streak_extra"])) if backtest else None,
         "backtest_trades": len(backtest),
         "backtest_source": bt_info,
+        # No backtest trades to compare with: the drawdown, streak and band
+        # limits cannot fire. Shown on the desk so it is never silent.
+        "limits_unmeasured": len(backtest) < 5,
         "sequential_state": sequential,
         "cost": cost,
         "mismatched_trades": mismatched,
@@ -996,6 +1091,47 @@ def status(strategy_id: str, cfg: dict | None = None) -> dict[str, Any]:
     return out
 
 
+def _verdict(rec: dict, record: dict, cfg: dict, k: dict) -> dict[str, Any]:
+    """What a probation row asks of the operator, for the live desk's colours.
+
+    ``failed``: a demotion trigger is hit, or it finished its probation trades
+    at a loss, so taking it back to paper is recommended (automatic demotion
+    acts on a trigger at the next hourly check when on).
+    ``ready``: every graduation check passes and it waits for GO LIVE.
+    ``step``: it has earned the next size step and automatic steps are off.
+    ``unmeasured``: no backtest trades to compare with, so its limits are off.
+    """
+    triggers = record.get("triggers") or []
+    if record.get("error"):
+        return {"verdict": None, "verdict_detail": None}
+    if triggers or rec.get("state") == rules.STATE_DEMOTING:
+        detail = "; ".join(str(t.get("label") or t.get("key")) for t in triggers) or "being taken back to paper"
+        return {"verdict": "failed", "verdict_detail": detail}
+    if rec.get("state") != rules.STATE_ACTIVE:
+        return {"verdict": None, "verdict_detail": None}
+    trades = int(record.get("live_trades") or 0)
+    if record.get("limits_unmeasured"):
+        return {"verdict": "unmeasured", "verdict_detail": (
+            "Its backtest trades are missing, so its drawdown, losing-streak and band limits can't be checked. "
+            "Re-run its backtest on the strategy page to restore them."
+        )}
+    if trades >= int(k["graduate_trades"]):
+        try:
+            report = graduation_check(rec["strategy_id"], rec, cfg, record)
+        except Exception:  # noqa: BLE001 - a colour must never break the overview
+            return {"verdict": None, "verdict_detail": None}
+        if report["eligible"]:
+            return {"verdict": "ready", "verdict_detail": "Ready for full size: graduate it on its page (type GO LIVE)"}
+        if any(c["key"] == "live_result" for c in report["failing"]):
+            return {"verdict": "failed",
+                    "verdict_detail": f"Finished its {trades} probation trades at a loss ({float(record.get('live_return_pct') or 0):+.2f}%)"}
+        return {"verdict": None, "verdict_detail": "; ".join(f"{c['label']}: {c['detail']}" for c in report["failing"])}
+    ladder = rules.ladder_size_pct(trades, k)
+    if not get_automation()["auto_entry"] and not rec.get("size_locked") and ladder < 100.0 and ladder > float(rec.get("size_pct") or 0):
+        return {"verdict": "step", "verdict_detail": f"Earned {ladder:g}% size: raise it on its page"}
+    return {"verdict": None, "verdict_detail": None}
+
+
 def overview(cfg: dict | None = None) -> dict[str, Any]:
     """Every strategy in probation (with its live record) and the ready list."""
     cfg = cfg if cfg is not None else config()
@@ -1023,6 +1159,7 @@ def overview(cfg: dict | None = None) -> dict[str, Any]:
             "live_return_pct": record.get("live_return_pct", 0.0),
             "triggers": record.get("triggers", []),
             "next_step": rules.next_step(int(record.get("live_trades") or 0), k),
+            **_verdict(rec, record, cfg, k),
         })
     return {
         "strategies": rows,

@@ -131,11 +131,11 @@ export function buildAttention(input: {
 			const slice = budget?.capital_slice?.slice_usd;
 			items.push({
 				id: 'ceilings',
-				severity: 'caution',
+				severity: 'info',
 				strategyId: missing[0],
 				tab: 'details',
 				title: `No go-live ceiling on ${missing.length === total ? `any of the ${total}` : `${missing.length} of the ${total}`} live strategies`,
-				body: `Only the ${fmtUsd(slice)} capital slice and the account limits bound an order's size. Set a ceiling per strategy in Details.`,
+				body: `Optional. A ceiling is the most one of a strategy's orders may be, in dollars. Without one, an order is sized from one slot (${fmtUsd(slice)}) and still limited by the account's risk limits. Set one per strategy in Details if you want a hard cap.`,
 			});
 		}
 		const groups = new Map<string, { coin: string; sides: string[]; ids: Set<string> }>();

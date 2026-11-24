@@ -629,3 +629,105 @@ def test_paper_edge_ignores_other_coins_and_non_replay_trades(env):
         _priced_trade("S1", kernel=False, entry=100.0, exit_=105.0)  # not the replay's own
     edge = next(c for c in probation.entry_check("S1")["checks"] if c["key"] == "edge_covers_costs")
     assert edge["ok"] is False
+
+
+def test_overview_marks_what_each_probation_row_asks_of_the_operator(monkeypatch):
+    from forven import probation, probation_rules as rules
+
+    k = rules.settings(probation.config())
+    monkeypatch.setattr(probation, "get_automation", lambda: {"auto_entry": False, "auto_graduate": False, "auto_demote": True})
+    rec = {"strategy_id": "S1", "state": rules.STATE_ACTIVE, "size_pct": 25.0, "size_locked": False}
+
+    trigger = {"key": "drawdown", "label": "Drawdown past the backtest's worst", "detail": ""}
+    failed = probation._verdict(rec, {"live_trades": 3, "triggers": [trigger]}, {}, k)
+    assert failed["verdict"] == "failed" and "Drawdown" in failed["verdict_detail"]
+
+    monkeypatch.setattr(probation, "graduation_check", lambda *a, **kw: {"eligible": True, "checks": [], "failing": []})
+    ready = probation._verdict(rec, {"live_trades": int(k["graduate_trades"]), "triggers": []}, {}, k)
+    assert ready["verdict"] == "ready"
+
+    losing = {"key": "live_result", "label": "Live result", "ok": False, "detail": "-3%"}
+    monkeypatch.setattr(probation, "graduation_check", lambda *a, **kw: {"eligible": False, "checks": [losing], "failing": [losing]})
+    done_at_a_loss = probation._verdict(rec, {"live_trades": int(k["graduate_trades"]), "live_return_pct": -3.0, "triggers": []}, {}, k)
+    assert done_at_a_loss["verdict"] == "failed" and "at a loss" in done_at_a_loss["verdict_detail"]
+
+    step = probation._verdict(rec, {"live_trades": int(k["step_trades"]), "triggers": []}, {}, k)
+    assert step["verdict"] == "step"
+
+    assert probation._verdict(rec, {"live_trades": 0, "triggers": []}, {}, k)["verdict"] is None
+
+
+def _backtest_row(sid, rid, *, hours_ago, params=None, deleted=False):
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, config_json, created_at, deleted_at) "
+            "VALUES (?, ?, 'backtest', ?, ?, ?)",
+            (rid, sid, json.dumps({"params": params} if params is not None else {}),
+             (NOW - timedelta(hours=hours_ago)).isoformat(), NOW.isoformat() if deleted else None),
+        )
+
+
+def test_probation_limits_skip_a_backtest_whose_trades_are_gone(forven_db, monkeypatch):
+    import forven.gauntlet.deflated_sharpe as ds
+
+    _strategy("S1", stage="live_graduated")
+    _backtest_row("S1", "newest-empty", hours_ago=1)
+    _backtest_row("S1", "short", hours_ago=2)
+    _backtest_row("S1", "full", hours_ago=3)
+    _backtest_row("S1", "trashed", hours_ago=0.5, deleted=True)
+    on_disk = {"short": [0.01] * 12, "full": [0.01, -0.02] * 30, "trashed": [0.5] * 99}
+    monkeypatch.setattr(ds, "trade_returns_for_row", lambda row, cfg=None: (
+        list(on_disk.get(row["result_id"], [])), {"result_id": row["result_id"]}))
+    probation._reference_cache.clear()
+
+    returns, info = probation.backtest_returns("S1", {})
+    assert info["result_id"] == "full" and len(returns) == 60  # most trades, not the newest
+    assert info["skipped_missing"] == 1 and not info.get("unmeasured")
+
+
+def test_the_pinned_backtest_is_the_reference_when_it_is_readable(forven_db, monkeypatch):
+    import forven.gauntlet.deflated_sharpe as ds
+
+    _strategy("S1", stage="live_graduated")
+    _backtest_row("S1", "pinned", hours_ago=10)
+    _backtest_row("S1", "bigger", hours_ago=1)
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET pinned_backtest_id = 'pinned' WHERE id = 'S1'")
+    on_disk = {"pinned": [0.01] * 20, "bigger": [0.01] * 80}
+    monkeypatch.setattr(ds, "trade_returns_for_row", lambda row, cfg=None: (
+        list(on_disk.get(row["result_id"], [])), {"result_id": row["result_id"]}))
+    probation._reference_cache.clear()
+
+    returns, info = probation.backtest_returns("S1", {})
+    assert info["result_id"] == "pinned" and info["pinned"] is True and len(returns) == 20
+
+
+def test_a_run_with_other_params_never_sets_the_limits(forven_db, monkeypatch):
+    import forven.gauntlet.deflated_sharpe as ds
+
+    _strategy("S1", stage="live_graduated")
+    with get_db() as conn:
+        conn.execute("UPDATE strategies SET params = ? WHERE id = 'S1'", (json.dumps({"rsi": 14}),))
+    _backtest_row("S1", "sweep", hours_ago=1, params={"rsi": 7})
+    _backtest_row("S1", "mine", hours_ago=2, params={"rsi": 14})
+    on_disk = {"sweep": [0.01] * 90, "mine": [0.01] * 30}
+    monkeypatch.setattr(ds, "trade_returns_for_row", lambda row, cfg=None: (
+        list(on_disk.get(row["result_id"], [])), {"result_id": row["result_id"]}))
+    probation._reference_cache.clear()
+
+    assert probation.backtest_returns("S1", {})[1]["result_id"] == "mine"
+
+
+def test_no_backtest_trades_anywhere_is_shown_not_silent(forven_db, monkeypatch):
+    import forven.gauntlet.deflated_sharpe as ds
+
+    _strategy("S1", stage="live_graduated")
+    _backtest_row("S1", "gone", hours_ago=1)
+    monkeypatch.setattr(ds, "trade_returns_for_row", lambda row, cfg=None: ([], {"reason": "no_trades_in_artifact"}))
+    probation._reference_cache.clear()
+
+    returns, info = probation.backtest_returns("S1", {})
+    assert returns == [] and info["unmeasured"] is True and info["reason"] == "no_backtest_trades"
+    rec = {"strategy_id": "S1", "state": rules.STATE_ACTIVE, "size_pct": 25.0, "size_locked": False}
+    verdict = probation._verdict(rec, {"live_trades": 2, "triggers": [], "limits_unmeasured": True}, {}, K)
+    assert verdict["verdict"] == "unmeasured" and "Re-run its backtest" in verdict["verdict_detail"]

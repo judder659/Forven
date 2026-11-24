@@ -125,6 +125,10 @@ export interface ProbationOverviewRow {
 	live_return_pct: number;
 	triggers: ProbationTrigger[];
 	next_step: ProbationNextStep | null;
+	/** failed: demotion recommended; ready: waits for GO LIVE; step: earned the next size by hand;
+	 * unmeasured: no backtest trades to compare with, so its loss limits are off. */
+	verdict?: 'failed' | 'ready' | 'step' | 'unmeasured' | null;
+	verdict_detail?: string | null;
 }
 
 export interface ProbationReadyRow {
