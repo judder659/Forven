@@ -154,21 +154,13 @@
 			{/if}
 		</p>
 		{#if status.books_on}
-			<div class="space-y-1 text-[11px] text-yellow-500">
-				<p>
-					Off because "Separate long and short accounts" is on. Hyperliquid holds one position per coin per account,
-					so that setting sends longs to one sub-account and shorts to another. Each still allows only one live
-					strategy per coin, and your money is split between them. This engine does the same job on your main wallet
-					without splitting it: long and short strategies share a coin and the exchange holds their sum.
-				</p>
-				<p>
-					To switch: with no live position open, move the USDC from both sub-accounts to your main wallet on
-					Hyperliquid, then turn off
-					<a class="underline hover:text-yellow-400" href="/settings#hyperliquid/risk.live_books_enabled"
-						>Separate long and short accounts</a
-					>. This engine then turns itself on within about 10 minutes.
-				</p>
-			</div>
+			<p class="text-[11px] text-yellow-500">
+				This install uses separate long and short accounts, so shared coins stays off. To switch: with no live
+				position open, move the USDC from both sub-accounts back to your main wallet on Hyperliquid (Sub-Accounts
+				page, Transfer), then turn off Settings › Hyperliquid › "Separate long and short accounts". Shared coins turns
+				on by itself within a minute. A long and a short on the same coin net on one account, so the separate accounts
+				are no longer needed.
+			</p>
 		{/if}
 
 		{#if asking && status.enabled}
