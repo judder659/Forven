@@ -365,6 +365,51 @@ def test_ready_list_and_automatic_entry(env):
     assert probation.get_record("S1")["entered_by"] == "probation"
 
 
+def test_watchdog_starts_the_held_back_test_once_everything_else_passes(env, monkeypatch):
+    """The one-shot held-back test used to run only when an operator pressed
+    Start, while the strategy read "waiting for the held-back test" and never
+    reached Needs you. The watchdog now spends the shot once nothing else
+    stands in the way, a few per run; reading the list never spends one."""
+    import forven.policy as policy
+
+    holdouts = {"S1": "missing", "S2": "missing", "S3": "missing", "S4": "pass"}
+    submitted = []
+
+    def fake_gate(sid, submit=False, stage="paper"):
+        if submit and holdouts[sid] == "missing":
+            submitted.append(sid)
+            holdouts[sid] = "running"
+        if holdouts[sid] == "pass":
+            return None
+        return ("Held-back test pending", "holdout_pending")
+
+    monkeypatch.setattr(policy, "holdout_gate_reason", fake_gate)
+    monkeypatch.setattr(probation, "_holdout_missing", lambda sid: holdouts[sid] == "missing")
+    monkeypatch.setattr(probation, "HOLDOUT_SUBMITS_PER_TICK", 1)
+    monkeypatch.setattr("forven.paper_door.holdout_at_paper", lambda cfg: False)  # the live hop runs it
+    for sid in ("S1", "S2", "S3", "S4"):
+        _strategy(sid)
+    for sid in ("S1", "S2", "S4"):
+        for _ in range(3):
+            _trade(sid)
+    # S3 has no matching paper trades yet: its shot is not spent.
+
+    probation.ready_cache()
+    assert submitted == []
+
+    out = probation.tick()
+    assert submitted == ["S1"]  # one per run
+    assert out["ready"] == ["S4"]
+    probation.tick()
+    assert submitted == ["S1", "S2"]
+    probation.tick()
+    assert submitted == ["S1", "S2"]  # S3 still waits on paper; S4 already passed
+
+    report = probation.entry_check("S3")
+    assert [c["key"] for c in report["failing"]] == ["paper_confirmation", "held_back"]
+    assert report["holdout_submitted"] is False
+
+
 def test_a_ready_list_from_older_code_is_recomputed_on_read(env, monkeypatch):
     """After an upgrade the hourly list can still hold the old code's verdicts
     (pre-#246 it sized every strategy at full size: "no room live")."""
