@@ -251,6 +251,121 @@ def test_probation_evidence_uses_the_settings_it_is_given(monkeypatch):
     assert evidence["need_days"] == 14
 
 
+def test_explain_pipeline_fleet_does_not_open_connections_per_strategy(forven_db, monkeypatch):
+    import forven.db as db_mod
+    from forven import probation
+
+    # Keep probation ready_cache warm so we measure explain_pipeline's own DB work.
+    monkeypatch.setattr(
+        pipeline_explain,
+        "_probation_ready_cache",
+        lambda: {
+            sid: {"strategy_id": sid, "eligible": False, "failing": [], "confirmation": {"matched": 0}}
+            for sid in ("S1", "S2", "S3", "S4", "S5", "S6")
+        },
+    )
+    monkeypatch.setattr(
+        pipeline_explain,
+        "_probation_knobs",
+        lambda: {"confirm_trades": 3, "slow_confirm_trades": 1, "slow_confirm_days": 21},
+    )
+    monkeypatch.setattr(probation, "knobs", lambda: {"confirm_trades": 3, "slow_confirm_trades": 1, "slow_confirm_days": 21})
+
+    opened = {"count": 0}
+    real_connect = db_mod._connect_db
+
+    def counting_connect(*args, **kwargs):
+        opened["count"] += 1
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(db_mod, "_connect_db", counting_connect)
+
+    def connections_for_one_call() -> int:
+        opened["count"] = 0
+        res = pipeline_explain.explain_pipeline(stage="paper", limit=100)
+        assert res["ok"] is True
+        return opened["count"]
+
+    _paper_strategy("S1")
+    connections_for_one_call()  # pay any one-time setup
+    with_one_strategy = connections_for_one_call()
+
+    for sid in ("S2", "S3", "S4", "S5", "S6"):
+        _paper_strategy(sid)
+
+    assert len(pipeline_explain.explain_pipeline(stage="paper", limit=100)["strategies"]) == 6
+    assert connections_for_one_call() == with_one_strategy
+
+
+def test_explain_pipeline_fleet_prefetch_matches_single_strategy(forven_db):
+    _paper_strategy("S1")
+    _paper_strategy("S2")
+    stage_ts = (NOW - timedelta(days=30)).isoformat()
+    older_ts = (NOW - timedelta(days=40)).isoformat()
+    newer_ts = (NOW - timedelta(days=5)).isoformat()
+
+    with get_db() as conn:
+        # Genuine + failed + deleted backtest_results
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, created_at, metrics_json, config_json) "
+            "VALUES ('r_good', 'S1', 'backtest', ?, '{\"sharpe_ratio\": 1.2}', '{}')",
+            (older_ts,),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, created_at, metrics_json, config_json) "
+            "VALUES ('r_err', 'S1', 'backtest', ?, '{\"status\": \"error\", \"error\": \"boom\"}', '{}')",
+            (newer_ts,),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, created_at, metrics_json, config_json, deleted_at) "
+            "VALUES ('r_del', 'S1', 'optimization', ?, '{}', '{}', ?)",
+            (newer_ts, newer_ts),
+        )
+        conn.execute(
+            "INSERT INTO backtest_results (result_id, strategy_id, result_type, created_at, metrics_json, config_json) "
+            "VALUES ('r_opt', 'S2', 'optimization', ?, '{}', '{}')",
+            (newer_ts,),
+        )
+        # Pending + resolved approvals
+        conn.execute(
+            "INSERT INTO approvals (target_type, target_id, approval_type, requested_status, reason, status, created_at, updated_at) "
+            "VALUES ('strategy', 'S1', 'strategy_promotion', 'live_graduated', 'promote S1', 'pending_approval', ?, ?)",
+            (newer_ts, newer_ts),
+        )
+        conn.execute(
+            "INSERT INTO approvals (target_type, target_id, approval_type, requested_status, reason, status, created_at, updated_at) "
+            "VALUES ('strategy', 'S2', 'strategy_promotion', 'live_graduated', 'old', 'approved', ?, ?)",
+            (newer_ts, newer_ts),
+        )
+        # Gate rejections before and after stage_changed_at
+        conn.execute(
+            "INSERT INTO gate_rejections (strategy_id, gate, reason_code, reason_text, created_at) "
+            "VALUES ('S1', 'paper', 'insufficient', 'too few trades', ?)",
+            (older_ts,),
+        )
+        conn.execute(
+            "INSERT INTO gate_rejections (strategy_id, gate, reason_code, reason_text, created_at) "
+            "VALUES ('S1', 'paper', 'paper_losing', 'below breakeven', ?)",
+            (newer_ts,),
+        )
+
+    _trade("t1", strategy_id="S1", strategy="S1", hours_ago=48)
+    _trade("t2", strategy_id=None, strategy="S2", hours_ago=24)
+    _trade("t3", strategy_id="S2", strategy="S2", hours_ago=900)  # before stage_changed_at
+
+    selected = [
+        ({"id": "S1", "stage_changed_at": stage_ts}, "paper"),
+        ({"id": "S2", "stage_changed_at": stage_ts}, "paper"),
+    ]
+    prefetched = pipeline_explain._fleet_prefetch(selected)
+
+    for sid in ("S1", "S2"):
+        assert prefetched["latest_results"].get(sid, {}) == pipeline_explain._latest_result_times(sid)
+        assert prefetched["last_paper_trade"].get(sid) == pipeline_explain._last_paper_trade_at(sid, stage_ts)
+        assert prefetched["pending_approvals"].get(sid) == pipeline_explain._pending_approval(sid)
+        assert prefetched["rejections"].get(sid) == pipeline_explain._last_rejection(sid, stage_ts)
+
+
 # --- heartbeat and response encoding ---------------------------------------------
 
 

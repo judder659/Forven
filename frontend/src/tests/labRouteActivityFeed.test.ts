@@ -303,4 +303,30 @@ describe('/lab — the Forge', () => {
 		expect(row?.textContent).toContain('profit_factor 0.00 < 1.05');
 		expect(row?.textContent).toContain('Quick screen');
 	});
+
+	it('retries instead of showing Not assessed when the gate explainer fails on load', async () => {
+		vi.useFakeTimers();
+		try {
+			const good = await lifecycleMocks.explainPipeline();
+			lifecycleMocks.explainPipeline.mockReset();
+			lifecycleMocks.explainPipeline
+				.mockRejectedValueOnce(new Error('The operation was aborted due to timeout'))
+				.mockResolvedValueOnce(good);
+
+			app = mount(LabPage, { target });
+			await flush();
+
+			const row = target.querySelector('tr[data-strategy-id="S07681"]');
+			expect(row?.textContent).toContain('Retrying gates…');
+			expect(row?.textContent).not.toContain('Not assessed');
+
+			await vi.advanceTimersByTimeAsync(5_000);
+			await flush();
+
+			expect(lifecycleMocks.explainPipeline).toHaveBeenCalledTimes(2);
+			expect(row?.textContent).toContain('Gathering evidence');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });

@@ -530,22 +530,47 @@
 		}
 	}
 
-	// The explainer dry-runs every gate for every active strategy (~5–15s on a busy
-	// backend), so it refreshes on pipeline events with a long debounce, never on a
-	// short poll, and it never blocks the table.
+	// The explainer dry-runs every gate for every active strategy, so it refreshes
+	// on pipeline events with a long debounce, never on a short poll, and it never
+	// blocks the table. If the first fetch fails (e.g. while the backend restarts),
+	// retry on a short backoff instead of sitting on "Not assessed" for 2 minutes.
 	let explainInFlight: Promise<void> | null = null;
+	let explainRetryTimer: ReturnType<typeof setTimeout> | null = null;
+	let explainRetryAttempts = 0;
+
+	function clearExplainRetry() {
+		if (explainRetryTimer) {
+			clearTimeout(explainRetryTimer);
+			explainRetryTimer = null;
+		}
+	}
+
+	function scheduleExplainRetry() {
+		if (explainRetryTimer || explain !== null) return;
+		explainRetryAttempts += 1;
+		const delayMs = Math.min(15_000, 5_000 * explainRetryAttempts);
+		explainRetryTimer = setTimeout(() => {
+			explainRetryTimer = null;
+			if (explain === null) void loadExplain();
+		}, delayMs);
+	}
 
 	function loadExplain(): Promise<void> {
 		// One run at a time: Refresh clicks, mutations and pipeline events share it.
 		if (explainInFlight) return explainInFlight;
+		clearExplainRetry();
 		explainInFlight = (async () => {
 			try {
 				explain = await explainPipeline({ limit: 1000 });
 				explainError = null;
+				explainRetryAttempts = 0;
+				explainLoaded = true;
 			} catch (e) {
 				explainError = e instanceof Error ? e.message : 'The gate explainer is unavailable';
+				if (explain === null) {
+					scheduleExplainRetry();
+				}
 			} finally {
-				explainLoaded = true;
 				explainInFlight = null;
 			}
 		})();
@@ -1212,6 +1237,7 @@
 			clearInterval(clockTimer);
 			clockTimer = null;
 		}
+		clearExplainRetry();
 		if (highlightTimer) {
 			clearTimeout(highlightTimer);
 			highlightTimer = null;
@@ -1638,7 +1664,7 @@
 										<div class="font-plex-mono text-[10.5px] text-sc-ink4" title={`Created ${shortDateTime(row.created_at)}`}>{shortDate(row.created_at)}</div>
 									</td>
 									<td class="border-b border-sc-line px-2 py-2 align-top">
-										<StatusCell {entry} loading={!explainLoaded} forward={fwd} {stage} />
+										<StatusCell {entry} loading={!explainLoaded && !explainError} error={!explain ? explainError : null} forward={fwd} {stage} />
 									</td>
 									<td class="border-b border-sc-line px-2 py-2 align-top">
 										<ForwardCell record={fwd} {stage} loading={!forwardLoaded} />
