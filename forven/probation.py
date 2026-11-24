@@ -489,15 +489,43 @@ def entry_check(
     except Exception as exc:  # noqa: BLE001 — fail closed before real money
         checks.append(_check("paper_breakeven", "Paper at breakeven or better", False, f"paper result unavailable: {exc}"))
 
-    coverage = _mod("forven.paper_pool").cost_coverage(avg_trade)
+    paper_pool = _mod("forven.paper_pool")
+    coverage = paper_pool.cost_coverage(avg_trade)
     want = float(k["min_cost_coverage"])
-    if coverage is None:
-        checks.append(_check("edge_covers_costs", "Edge covers costs", False, "the backtest's average trade is not measured"))
-    else:
+    paper_edge = _paper_cost_coverage(
+        strategy_id, since, _home_coin(policy, strategy_id, row["symbol"]),
+        float(getattr(paper_pool, "DEFAULT_ROUND_TRIP_COST", 0.0013)),
+    )
+    min_paper = int(k["paper_edge_min_trades"])
+    paper_ok = bool(
+        min_paper and paper_edge["trades"] >= min_paper
+        and paper_edge["coverage"] is not None and paper_edge["coverage"] >= want
+    )
+    if coverage is not None and coverage >= want:
         checks.append(_check(
-            "edge_covers_costs", "Edge covers costs", coverage >= want,
+            "edge_covers_costs", "Edge covers costs", True,
             f"average trade covers {_floor_tenth(coverage):.1f}x the round-trip cost (need {want:g}x)",
         ))
+    elif paper_ok:
+        checks.append(_check(
+            "edge_covers_costs", "Edge covers costs", True,
+            f"{paper_edge['trades']} matching paper trades on {paper_edge['coin']} average "
+            f"{_floor_tenth(paper_edge['coverage']):.1f}x the round-trip cost (need {want:g}x); "
+            + ("the backtest's average trade is not measured" if coverage is None
+               else f"the backtest's covers {_floor_tenth(coverage):.1f}x"),
+        ))
+    else:
+        if coverage is None:
+            detail = "the backtest's average trade is not measured"
+        else:
+            detail = f"average trade covers {_floor_tenth(coverage):.1f}x the round-trip cost (need {want:g}x)"
+        if min_paper and paper_edge["trades"]:
+            paper_cov = paper_edge["coverage"]
+            detail += (
+                f"; paper: {paper_edge['trades']} of {min_paper} matching trades on {paper_edge['coin']}"
+                + (f" averaging {_floor_tenth(paper_cov):.1f}x" if paper_cov is not None else "")
+            )
+        checks.append(_check("edge_covers_costs", "Edge covers costs", False, detail))
 
     try:
         exec_state = _mod("forven.strategies.execution_check").execution_check(strategy_id)
@@ -593,6 +621,59 @@ def entry_check(
         "holdout_submitted": holdout_submitted,
         "paper_return_pct": paper_return,
     }
+
+
+def _home_coin(policy: Any, strategy_id: str, symbol: object) -> str:
+    """The coin probation trades: the container's first coin, else the symbol's base."""
+    try:
+        coins = policy.strategy_container_coins(strategy_id, symbol)
+    except Exception:  # noqa: BLE001
+        coins = None
+    if coins:
+        return str(coins[0]).upper()
+    return str(symbol or "").split("/")[0].split("-")[0].upper()
+
+
+def _paper_cost_coverage(strategy_id: str, since: str | None, coin: str, round_trip_cost: float) -> dict[str, Any]:
+    """Real paper fills on the home coin: average gross move per trade, in round-trip costs.
+
+    Only the backtest replay's own trades (as paper_confirmation counts them) on
+    the coin probation would trade, priced at the actual paper fills. The move is
+    unlevered and before fees, the same basis cost_coverage puts the backtest on.
+    """
+    out: dict[str, Any] = {"trades": 0, "coverage": None, "coin": coin}
+    if not coin or round_trip_cost <= 0:
+        return out
+    params: list[object] = [strategy_id, coin]
+    where = ""
+    if since:
+        where = " AND datetime(closed_at) >= datetime(?)"
+        params.append(since)
+    with _db().get_db() as conn:
+        rows = conn.execute(
+            "SELECT direction, COALESCE(fill_entry_price, entry_price) AS entry, "
+            "COALESCE(fill_exit_price, exit_price) AS exit, signal_data FROM trades "
+            "WHERE COALESCE(NULLIF(strategy_id, ''), strategy) = ? AND status = 'CLOSED' "
+            "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%' AND UPPER(COALESCE(asset, '')) = ?" + where,
+            tuple(params),
+        ).fetchall()
+    moves: list[float] = []
+    for row in rows:
+        sd = _json(row["signal_data"], {})
+        if not (sd.get("kernel_managed") and sd.get("pnl_is_equity_fraction") and not sd.get("close_incomplete")):
+            continue
+        try:
+            entry, exit_ = float(row["entry"]), float(row["exit"])
+        except (TypeError, ValueError):
+            continue
+        if entry <= 0 or exit_ <= 0:
+            continue
+        sign = -1.0 if str(row["direction"] or "").lower() == "short" else 1.0
+        moves.append(sign * (exit_ / entry - 1.0))
+    out["trades"] = len(moves)
+    if moves:
+        out["coverage"] = (sum(moves) / len(moves)) / round_trip_cost
+    return out
 
 
 def _floor_tenth(value: float) -> float:

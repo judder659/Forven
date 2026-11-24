@@ -262,6 +262,24 @@ def test_family_comes_from_the_design(forven_db):
     assert family and family != "other"
 
 
+def test_family_is_the_type_not_the_name_or_params(forven_db):
+    """An EMA trend filter in params or name put 250 unrelated strategies in one
+    "ema" budget, and every unmatched type shared one "other" budget."""
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, runtime_type, symbol, timeframe, params, status, stage, created_at) "
+            "VALUES ('S-A', 'ADA ema filtered reclaim', 'imported__dropzone_reclaim_abc', "
+            "'imported__dropzone_reclaim_abc', 'ADA/USDT', '4h', '{\"ema_len\": 50}', 'paper', 'paper', '2026-09-26')"
+        )
+        conn.execute(
+            "INSERT INTO strategies (id, name, type, symbol, timeframe, params, status, stage, created_at) "
+            "VALUES ('S-B', 'ema cross', 'ema_cross', 'BTC/USDT', '4h', '{}', 'paper', 'paper', '2026-09-26')"
+        )
+        rows = {r["id"]: r for r in conn.execute("SELECT * FROM strategies WHERE id IN ('S-A', 'S-B')")}
+    assert engine._holdout_family(rows["S-A"]) == "type:imported__dropzone_reclaim_abc"
+    assert engine._holdout_family(rows["S-B"]) == "ema"
+
+
 def test_strategies_older_than_the_holdout_are_exempt(forven_db, holdout_on):
     _insert_strategy("S-OLD", created_at="2026-08-01T00:00:00+00:00")
     assert engine.holdout_state("S-OLD")["state"] == "exempt"

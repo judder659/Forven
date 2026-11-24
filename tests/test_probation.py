@@ -593,3 +593,39 @@ def test_cost_coverage_never_rounds_up_to_the_bar():
     assert probation._floor_tenth(1.96) == 1.9
     assert probation._floor_tenth(2.0) == 2.0
     assert probation._floor_tenth(2.04) == 2.0
+
+
+def _priced_trade(sid, *, asset="BTC", direction="long", entry=100.0, exit_=101.0, kernel=True):
+    _trade(sid, kernel=kernel)
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE trades SET asset = ?, direction = ?, entry_price = ?, exit_price = ?, "
+            "fill_entry_price = ?, fill_exit_price = ? WHERE rowid = (SELECT MAX(rowid) FROM trades)",
+            (asset, direction, entry, exit_, entry, exit_),
+        )
+
+
+def test_real_paper_fills_on_the_home_coin_can_prove_the_edge(env):
+    """A thin backtest edge passes when 10+ matching paper trades on the coin
+    probation would trade average at least the same multiple of costs."""
+    env["pace"] = (6.0, 0.0001)  # backtest: (0.0001 + 0.0013) / 0.0013 = 1.08x
+    _strategy("S1")
+    for _ in range(9):
+        _priced_trade("S1", entry=100.0, exit_=100.5)  # +0.5% = 3.8x costs
+    report = probation.entry_check("S1")
+    edge = next(c for c in report["checks"] if c["key"] == "edge_covers_costs")
+    assert edge["ok"] is False and "paper: 9 of 10 matching trades on BTC" in edge["detail"]
+
+    _priced_trade("S1", direction="short", entry=100.0, exit_=99.5)
+    edge = next(c for c in probation.entry_check("S1")["checks"] if c["key"] == "edge_covers_costs")
+    assert edge["ok"] is True and "10 matching paper trades on BTC average 3.8x" in edge["detail"]
+
+
+def test_paper_edge_ignores_other_coins_and_non_replay_trades(env):
+    env["pace"] = (6.0, 0.0001)
+    _strategy("S1")
+    for _ in range(10):
+        _priced_trade("S1", asset="ETH", entry=100.0, exit_=105.0)  # not the home coin
+        _priced_trade("S1", kernel=False, entry=100.0, exit_=105.0)  # not the replay's own
+    edge = next(c for c in probation.entry_check("S1")["checks"] if c["key"] == "edge_covers_costs")
+    assert edge["ok"] is False
