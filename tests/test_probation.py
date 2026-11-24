@@ -646,6 +646,11 @@ def test_overview_marks_what_each_probation_row_asks_of_the_operator(monkeypatch
     ready = probation._verdict(rec, {"live_trades": int(k["graduate_trades"]), "triggers": []}, {}, k)
     assert ready["verdict"] == "ready"
 
+    losing = {"key": "live_result", "label": "Live result", "ok": False, "detail": "-3%"}
+    monkeypatch.setattr(probation, "graduation_check", lambda *a, **kw: {"eligible": False, "checks": [losing], "failing": [losing]})
+    done_at_a_loss = probation._verdict(rec, {"live_trades": int(k["graduate_trades"]), "live_return_pct": -3.0, "triggers": []}, {}, k)
+    assert done_at_a_loss["verdict"] == "failed" and "at a loss" in done_at_a_loss["verdict_detail"]
+
     step = probation._verdict(rec, {"live_trades": int(k["step_trades"]), "triggers": []}, {}, k)
     assert step["verdict"] == "step"
 

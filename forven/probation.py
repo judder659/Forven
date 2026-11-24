@@ -999,8 +999,9 @@ def status(strategy_id: str, cfg: dict | None = None) -> dict[str, Any]:
 def _verdict(rec: dict, record: dict, cfg: dict, k: dict) -> dict[str, Any]:
     """What a probation row asks of the operator, for the live desk's colours.
 
-    ``failed``: a demotion trigger is hit, so taking it back to paper is
-    recommended (automatic demotion does it at the next hourly check when on).
+    ``failed``: a demotion trigger is hit, or it finished its probation trades
+    at a loss, so taking it back to paper is recommended (automatic demotion
+    acts on a trigger at the next hourly check when on).
     ``ready``: every graduation check passes and it waits for GO LIVE.
     ``step``: it has earned the next size step and automatic steps are off.
     """
@@ -1020,6 +1021,9 @@ def _verdict(rec: dict, record: dict, cfg: dict, k: dict) -> dict[str, Any]:
             return {"verdict": None, "verdict_detail": None}
         if report["eligible"]:
             return {"verdict": "ready", "verdict_detail": "Ready for full size: graduate it on its page (type GO LIVE)"}
+        if any(c["key"] == "live_result" for c in report["failing"]):
+            return {"verdict": "failed",
+                    "verdict_detail": f"Finished its {trades} probation trades at a loss ({float(record.get('live_return_pct') or 0):+.2f}%)"}
         return {"verdict": None, "verdict_detail": "; ".join(f"{c['label']}: {c['detail']}" for c in report["failing"])}
     ladder = rules.ladder_size_pct(trades, k)
     if not get_automation()["auto_entry"] and not rec.get("size_locked") and ladder < 100.0 and ladder > float(rec.get("size_pct") or 0):
