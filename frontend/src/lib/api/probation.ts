@@ -125,6 +125,9 @@ export interface ProbationOverviewRow {
 	live_return_pct: number;
 	triggers: ProbationTrigger[];
 	next_step: ProbationNextStep | null;
+	/** failed: demotion recommended; ready: waits for GO LIVE; step: earned the next size by hand. */
+	verdict?: 'failed' | 'ready' | 'step' | null;
+	verdict_detail?: string | null;
 }
 
 export interface ProbationReadyRow {

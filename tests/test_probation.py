@@ -629,3 +629,24 @@ def test_paper_edge_ignores_other_coins_and_non_replay_trades(env):
         _priced_trade("S1", kernel=False, entry=100.0, exit_=105.0)  # not the replay's own
     edge = next(c for c in probation.entry_check("S1")["checks"] if c["key"] == "edge_covers_costs")
     assert edge["ok"] is False
+
+
+def test_overview_marks_what_each_probation_row_asks_of_the_operator(monkeypatch):
+    from forven import probation, probation_rules as rules
+
+    k = rules.settings(probation.config())
+    monkeypatch.setattr(probation, "get_automation", lambda: {"auto_entry": False, "auto_graduate": False, "auto_demote": True})
+    rec = {"strategy_id": "S1", "state": rules.STATE_ACTIVE, "size_pct": 25.0, "size_locked": False}
+
+    trigger = {"key": "drawdown", "label": "Drawdown past the backtest's worst", "detail": ""}
+    failed = probation._verdict(rec, {"live_trades": 3, "triggers": [trigger]}, {}, k)
+    assert failed["verdict"] == "failed" and "Drawdown" in failed["verdict_detail"]
+
+    monkeypatch.setattr(probation, "graduation_check", lambda *a, **kw: {"eligible": True, "checks": [], "failing": []})
+    ready = probation._verdict(rec, {"live_trades": int(k["graduate_trades"]), "triggers": []}, {}, k)
+    assert ready["verdict"] == "ready"
+
+    step = probation._verdict(rec, {"live_trades": int(k["step_trades"]), "triggers": []}, {}, k)
+    assert step["verdict"] == "step"
+
+    assert probation._verdict(rec, {"live_trades": 0, "triggers": []}, {}, k)["verdict"] is None

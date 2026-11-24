@@ -996,6 +996,37 @@ def status(strategy_id: str, cfg: dict | None = None) -> dict[str, Any]:
     return out
 
 
+def _verdict(rec: dict, record: dict, cfg: dict, k: dict) -> dict[str, Any]:
+    """What a probation row asks of the operator, for the live desk's colours.
+
+    ``failed``: a demotion trigger is hit, so taking it back to paper is
+    recommended (automatic demotion does it at the next hourly check when on).
+    ``ready``: every graduation check passes and it waits for GO LIVE.
+    ``step``: it has earned the next size step and automatic steps are off.
+    """
+    triggers = record.get("triggers") or []
+    if record.get("error"):
+        return {"verdict": None, "verdict_detail": None}
+    if triggers or rec.get("state") == rules.STATE_DEMOTING:
+        detail = "; ".join(str(t.get("label") or t.get("key")) for t in triggers) or "being taken back to paper"
+        return {"verdict": "failed", "verdict_detail": detail}
+    if rec.get("state") != rules.STATE_ACTIVE:
+        return {"verdict": None, "verdict_detail": None}
+    trades = int(record.get("live_trades") or 0)
+    if trades >= int(k["graduate_trades"]):
+        try:
+            report = graduation_check(rec["strategy_id"], rec, cfg, record)
+        except Exception:  # noqa: BLE001 - a colour must never break the overview
+            return {"verdict": None, "verdict_detail": None}
+        if report["eligible"]:
+            return {"verdict": "ready", "verdict_detail": "Ready for full size: graduate it on its page (type GO LIVE)"}
+        return {"verdict": None, "verdict_detail": "; ".join(f"{c['label']}: {c['detail']}" for c in report["failing"])}
+    ladder = rules.ladder_size_pct(trades, k)
+    if not get_automation()["auto_entry"] and not rec.get("size_locked") and ladder < 100.0 and ladder > float(rec.get("size_pct") or 0):
+        return {"verdict": "step", "verdict_detail": f"Earned {ladder:g}% size: raise it on its page"}
+    return {"verdict": None, "verdict_detail": None}
+
+
 def overview(cfg: dict | None = None) -> dict[str, Any]:
     """Every strategy in probation (with its live record) and the ready list."""
     cfg = cfg if cfg is not None else config()
@@ -1023,6 +1054,7 @@ def overview(cfg: dict | None = None) -> dict[str, Any]:
             "live_return_pct": record.get("live_return_pct", 0.0),
             "triggers": record.get("triggers", []),
             "next_step": rules.next_step(int(record.get("live_trades") or 0), k),
+            **_verdict(rec, record, cfg, k),
         })
     return {
         "strategies": rows,
