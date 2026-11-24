@@ -51,6 +51,11 @@ RECENT_FILLS_LIMIT = 10
 _NOT_BLOCKS = NOT_BLOCKS
 # Text of the exchange guard's refusal when FORVEN_ALLOW_MAINNET is unset.
 _MAINNET_UNARMED_REFUSAL = "%FORVEN_ALLOW_MAINNET is not set%"
+# The risk guard's refusal of an entry signal for a coin the strategy itself
+# already holds. The strategy is in the trade it asked for, so the refusal is
+# not a blocked entry: counting it kept strategies marked "blocked" for a week
+# after every multi-bar entry signal.
+_OWN_POSITION_REFUSAL = "%already has an open % position%"
 _SCANNER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # Refusals where the scanner could not get candles to evaluate the strategy at
@@ -269,7 +274,9 @@ def _refusals(
     scan history, and the fleet scorecard asks for every strategy on every load.
     """
     placeholders = ",".join("?" for _ in NOT_BLOCKS)
-    params: tuple[Any, ...] = (strategy_id, since.strftime(_SCANNER_TS_FORMAT), *NOT_BLOCKS)
+    params: tuple[Any, ...] = (
+        strategy_id, since.strftime(_SCANNER_TS_FORMAT), *NOT_BLOCKS, _OWN_POSITION_REFUSAL,
+    )
     stale_guard = ""
     if mainnet_armed:
         stale_guard = "AND COALESCE(block_reason, '') NOT LIKE ?"
@@ -280,6 +287,7 @@ def _refusals(
         WHERE strategy_id = ? AND ts >= ?
           AND signal_type IN ('entry', 'exit') AND matched = 1 AND executed = 0
           AND COALESCE(block_reason, '') NOT IN ({placeholders})
+          AND COALESCE(block_reason, '') NOT LIKE ?
           {stale_guard}
         ORDER BY ts DESC
         """,

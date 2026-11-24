@@ -124,3 +124,64 @@ def test_watchdog_flags_only_over_budget_strategies_with_enough_trades(forven_db
     assert summary["groups_checked"] == 3
     # Nightly state is persisted for later inspection.
     assert (kv_get("execution_quality_watchdog_state") or {}).get("flagged_count") == 1
+
+
+def _open_exec_quality_rows():
+    from forven.db import get_db
+
+    with get_db() as conn:
+        return [
+            dict(row) for row in conn.execute(
+                "SELECT title, dedupe_key FROM notifications WHERE event_type='execution_quality' "
+                "AND status NOT IN ('acknowledged', 'suppressed') ORDER BY id"
+            ).fetchall()
+        ]
+
+
+def test_watchdog_raises_once_and_clears_when_the_cause_is_gone(forven_db, monkeypatch):
+    """It used to re-raise every flagged strategy each morning (90+ paper rows a
+    day on one install) and never cleared them. Paper now gets one summary that
+    is only replaced when new strategies cross the line; a live strategy is
+    raised once and cleared when it is back under budget."""
+    from forven.db import get_db
+    from forven.monitoring import run_execution_quality_watchdog
+
+    monkeypatch.setattr("forven.bot.send_sync", lambda *a, **k: True)
+    for _ in range(5):
+        _mk_closed_skewed_trade("p-1", "BTC", 25.0, 15.0)
+        _mk_closed_skewed_trade("p-2", "ETH", 30.0, 15.0)
+        _mk_closed_skewed_trade("l-1", "SOL", 25.0, 15.0, execution_type="live")
+
+    run_execution_quality_watchdog(lookback_days=30, min_trades=5)
+    rows = _open_exec_quality_rows()
+    assert [r["dedupe_key"] for r in rows] == ["exec_quality:l-1:live", "exec_quality:paper:summary"]
+    assert "2 strategies" in rows[1]["title"]
+
+    # Same picture the next day: nothing new is raised.
+    run_execution_quality_watchdog(lookback_days=30, min_trades=5)
+    assert _open_exec_quality_rows() == rows
+
+    # A third paper strategy crosses the line: the summary is replaced, not added to.
+    for _ in range(5):
+        _mk_closed_skewed_trade("p-3", "XRP", 25.0, 15.0)
+    run_execution_quality_watchdog(lookback_days=30, min_trades=5)
+    rows = _open_exec_quality_rows()
+    assert [r["dedupe_key"] for r in rows] == ["exec_quality:l-1:live", "exec_quality:paper:summary"]
+    assert "3 strategies" in rows[1]["title"]
+
+    # Every strategy back under budget: both clear by themselves.
+    with get_db() as conn:
+        conn.execute("UPDATE trades SET entry_slippage_bps = 1, exit_slippage_bps = 1")
+    run_execution_quality_watchdog(lookback_days=30, min_trades=5)
+    assert _open_exec_quality_rows() == []
+
+
+def test_watchdog_clears_per_strategy_paper_rows_from_older_code(forven_db, monkeypatch):
+    from forven.notifications import emit_notification
+    from forven.monitoring import run_execution_quality_watchdog
+
+    monkeypatch.setattr("forven.bot.send_sync", lambda *a, **k: True)
+    emit_notification("execution_quality", severity="warning", source="watchdog",
+                      title="Execution skew over cost budget: old (paper)", dedupe_key="exec_quality:old:paper")
+    run_execution_quality_watchdog(lookback_days=30, min_trades=5)
+    assert _open_exec_quality_rows() == []

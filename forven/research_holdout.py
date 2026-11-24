@@ -216,8 +216,7 @@ def gate_message(state: Mapping[str, Any], *, stage: str = "paper") -> tuple[str
         return "Held-back test pending — the one-shot test is running; its verdict decides", "holdout_pending"
     hop = "live" if stage == "live" else "paper"
     return (
-        f"Held-back test pending — every other {hop} check passes; the one-shot test "
-        "runs on the next promotion attempt",
+        f"Held-back test pending — the one-shot test runs once every other {hop} check passes",
         "holdout_pending",
     )
 

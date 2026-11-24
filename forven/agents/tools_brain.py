@@ -2,6 +2,7 @@
 
 import difflib
 import json
+import logging
 
 from forven import brain_memory as _brain_memory
 from forven.db import get_db
@@ -9,6 +10,8 @@ from forven.agents.context import _current_agent_id_var, _current_task_display_i
 from forven.agents.tool_definitions import BRAIN_AGENT_IDS
 from forven.agents.tool_registry import register_tool
 from forven.roster import normalize_agent_id as _normalize_agent_id
+
+log = logging.getLogger("forven.agents.tools_brain")
 
 
 def _suggest_known_families(stype: str, *, n: int = 3) -> list[str]:
@@ -556,7 +559,11 @@ def _tool_recall_similar_situation(params: dict) -> str:
         "queued as a `skill_update_proposal` approval — the operator reviews and "
         "approves before the SKILL.md is re-written. Use this when Brain has "
         "synthesized new insight from outcome closure or recall and wants to "
-        "persist it; do NOT bypass via direct file writes."
+        "persist it; do NOT bypass via direct file writes. Only for lessons about "
+        "THAT skill's own trading idea: name the skill the lesson is about, never a "
+        "catch-all skill. System or tool defects go to request_fix; working notes go "
+        "to your workspace notes. A skill holds one open proposal: proposing again "
+        "while one waits adds your bullets to it instead of filing another."
     ),
     input_schema={
         "type": "object",
@@ -656,6 +663,43 @@ def _tool_propose_skill_update(params: dict) -> str:
         return json.dumps({"ok": False, "error": "no_changes_proposed"})
 
     actor = str(_current_agent_id_var.get() or "brain") or "brain"
+
+    # One open proposal per skill. The Brain proposes after most reviews, so
+    # without this a skill gathered a fresh approval every hour or two, each
+    # expiring after three days unread (700+ on one install, 2 ever approved).
+    # A new proposal folds the waiting one into itself and replaces it, so the
+    # operator reads one up-to-date proposal per skill.
+    superseded: list[int] = []
+    try:
+        from forven.db import list_approvals, update_approval
+
+        waiting = list_approvals(
+            status="pending_approval",
+            approval_type="skill_update_proposal",
+            target_id=skill_name,
+            limit=50,
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed lookup files a fresh proposal
+        log.debug("open skill proposals unavailable for %s: %s", skill_name, exc)
+        waiting = []
+    for old in reversed(waiting):  # oldest first, so bullets keep their order
+        old_payload = old.get("payload") if isinstance(old.get("payload"), dict) else {}
+        add_what_works = list(old_payload.get("add_what_works") or []) + add_what_works
+        add_what_doesnt_work = list(old_payload.get("add_what_doesnt_work") or []) + add_what_doesnt_work
+        if isinstance(old_payload.get("metadata_updates"), dict):
+            metadata_updates = {**old_payload["metadata_updates"], **metadata_updates}
+        if proposed_description is None and old_payload.get("proposed_description"):
+            proposed_description = str(old_payload["proposed_description"])
+        for x in old_payload.get("evidence_decisions") or []:
+            try:
+                evidence_decisions.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        superseded.append(int(old["id"]))
+    add_what_works = _dedupe_bullets(add_what_works)[-_MAX_PROPOSAL_BULLETS:]
+    add_what_doesnt_work = _dedupe_bullets(add_what_doesnt_work)[-_MAX_PROPOSAL_BULLETS:]
+    evidence_decisions = list(dict.fromkeys(evidence_decisions))
+
     approval_reason = f"Skill update proposed for {skill_name}: {rationale[:240]}"
     payload = {
         "skill_name": skill_name,
@@ -684,9 +728,37 @@ def _tool_propose_skill_update(params: dict) -> str:
     except Exception as exc:  # noqa: BLE001
         return json.dumps({"ok": False, "error": "approval_create_failed", "detail": str(exc)})
 
+    for old_id in superseded:
+        try:
+            update_approval(
+                old_id,
+                status="expired",
+                reason=f"Superseded by skill proposal #{int(approval_id)}, which carries its changes",
+                expected_current_status="pending_approval",
+            )
+        except Exception as exc:  # noqa: BLE001 — decided meanwhile, or gone: leave it
+            log.debug("could not supersede skill proposal #%s: %s", old_id, exc)
+
     return json.dumps({
         "ok": True,
         "approval_id": int(approval_id),
         "skill_name": skill_name,
         "current_version": skill.version,
+        "superseded": superseded,
     })
+
+
+_MAX_PROPOSAL_BULLETS = 20
+
+
+def _dedupe_bullets(bullets: list[str]) -> list[str]:
+    """Drop repeated bullets (case and spacing ignored), keeping the latest copy's position."""
+    seen: set[str] = set()
+    kept: list[str] = []
+    for bullet in reversed([str(b).strip() for b in bullets if str(b).strip()]):
+        key = " ".join(bullet.lower().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(bullet)
+    return list(reversed(kept))

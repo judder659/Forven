@@ -137,6 +137,8 @@ export interface Expectation {
 }
 
 const MONTH_MS = 30.44 * 86_400_000;
+/** Below ten trades, only a run this unlikely by chance is raised on the desk. */
+const SMALL_SAMPLE_FLAG_P = 0.01;
 
 /**
  * Compare forward results with the out-of-sample backtest. Small samples never
@@ -210,14 +212,20 @@ export function expectation(input: {
 		};
 	}
 	if (small) {
+		// Under ten trades a short losing run is normal, so the desk only raises
+		// one that chance explains less than 1% of the time. The strategy's own
+		// pill still says how it is tracking.
+		const farBehind = pWins < SMALL_SAMPLE_FLAG_P;
 		return {
 			...base,
 			expectedWins,
 			pWins,
-			headline: pWins < 0.1 ? 'unlucky so far, too early to judge' : 'behind the backtest, too early to judge',
+			headline: farBehind
+				? 'far behind the backtest on few trades'
+				: pWins < 0.1 ? 'unlucky so far, too early to judge' : 'behind the backtest, too early to judge',
 			verdict: `Too early to judge: ${n} closed trades. ${wins} win${wins === 1 ? '' : 's'} where the backtest predicts about ${expectedWins.toFixed(1)}. A run this poor or worse happens about ${fmtPct(pWins * 100, 0, false)} of the time by chance.${slowText}`,
 			pill: slow ? { tone: 'caution', text: 'Trading less than expected' } : { tone: pWins < 0.1 ? 'caution' : 'idle', text: 'Too early to judge' },
-			flag: pWins < 0.1 ? 'info' : null,
+			flag: farBehind ? 'info' : null,
 			odds: pWins,
 			oddsText,
 		};

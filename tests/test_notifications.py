@@ -666,7 +666,27 @@ def test_sql_and_python_actionable_filters_agree(monkeypatch):
     python_ids = [item["id"] for item in filter_actionable_notifications(everything)]
     sql_ids = [item["id"] for item in list_notifications(limit=50, actionable=True)]
     assert sql_ids == python_ids
-    assert len(sql_ids) == 4
+    assert len(sql_ids) == 3  # health_warning, trade_failed, risk_critical (bug_report never counts)
+
+
+def test_agent_bug_reports_stay_out_of_the_inbox_and_old_issues_age_out(monkeypatch):
+    """Agents file dozens of unverified [BUG] reports a day at fail/critical; they
+    belong in the Log, not in what needs the operator. An issue nobody acted on
+    for a week leaves the inbox, as it already left the badge."""
+    from forven.notifications import get_actionable_notification_summary
+
+    init_db()
+    monkeypatch.setattr("forven.bot.send_sync", lambda *args, **kwargs: True)
+    emit_notification("bug_report", severity="critical", source="brain", title="[BUG] something")
+    real = emit_notification("health_critical", severity="critical", source="health_monitor", title="CRITICAL: x")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO notifications (event_type, severity, source, title, status, delivery_mode, metadata, created_at) "
+            "VALUES ('system_degraded', 'warn', 'daemon', 'old issue', 'stored', 'app_only', '{}', '2020-01-01T00:00:00+00:00')"
+        )
+    assert [int(n["id"]) for n in list_notifications(limit=50, actionable=True)] == [int(real["id"])]
+    assert get_actionable_notification_summary()["notification_ids"] == [int(real["id"])]
+    assert len(list_notifications(limit=50)) == 3  # all still in the Log
 
 
 def test_paper_trades_use_their_own_discord_switch(monkeypatch):

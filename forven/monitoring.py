@@ -739,6 +739,107 @@ def run_slippage_monitor(
 
 # ── Execution-quality watchdog: realized fill skew vs the modeled cost budget ──
 
+
+def _notify_execution_quality(
+    flagged: list[dict], previous_flagged: set[tuple[str, str]], lookback_days: int
+) -> None:
+    """Tell the operator once when a strategy goes over budget; clear it when it recovers.
+
+    The watchdog runs daily, and it used to raise every flagged strategy again
+    each morning (90+ paper rows a day, never cleared). Now a live strategy is
+    raised once when it first goes over budget and its row clears when it is back
+    under. Paper skew comes from the shared scan, not from one strategy, so paper
+    gets a single summary that is replaced when new strategies cross the line
+    and cleared once none do.
+    """
+    try:
+        from forven.notifications import acknowledge_open_by_dedupe_key, emit_notification
+    except Exception as exc:  # noqa: BLE001
+        log.warning("execution-quality notifications unavailable: %s", exc)
+        return
+
+    current = {(f["strategy_id"], f["bucket"]) for f in flagged}
+    try:
+        recovered = [f"exec_quality:{sid}:live" for sid, bucket in previous_flagged - current if bucket == "live"]
+        if recovered:
+            acknowledge_open_by_dedupe_key(keys=recovered, event_type="execution_quality")
+        # Per-strategy paper rows came from older code; the summary replaces them.
+        acknowledge_open_by_dedupe_key(like="exec_quality:%:paper", event_type="execution_quality")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("execution-quality clear failed: %s", exc)
+
+    for stat in flagged:
+        if stat["bucket"] != "live" or (stat["strategy_id"], "live") in previous_flagged:
+            continue
+        sid = stat["strategy_id"]
+        skew = stat["mean_round_trip_skew_bps"]
+        lag = stat["mean_lag_bps"]
+        budget = stat["budget_round_trip_bps"]
+        try:
+            emit_notification(
+                "execution_quality",
+                severity="warning",
+                source="watchdog",
+                title=f"Execution skew over cost budget: {sid} (live)",
+                summary=(
+                    f"Mean round-trip fill skew {skew:.1f} bps exceeds the modeled cost budget "
+                    f"{budget:.1f} bps over {stat['trades']} live trades in the last {lookback_days}d "
+                    f"(lag {lag:.1f} bps + venue slippage {skew - lag:.1f} bps)."
+                ),
+                body=(
+                    f"{sid} (live): realized fills are drifting from backtest assumptions by more "
+                    f"than the entire modeled round-trip cost budget (2 x (fee {stat['fee_bps']:.1f} + "
+                    f"slippage {stat['slippage_bps']:.1f}) = {budget:.1f} bps). This skew is on TOP of "
+                    f"modeled costs, so live results for this strategy no longer predict its backtest. "
+                    f"Decomposition: decision lag {lag:.1f} bps, venue slippage {skew - lag:.1f} bps. "
+                    "This clears by itself once the skew is back under budget."
+                ),
+                metadata=stat,
+                dedupe_key=f"exec_quality:{sid}:live",
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("execution-quality notification failed for %s: %s", sid, exc)
+
+    paper = sorted(
+        (f for f in flagged if f["bucket"] == "paper"),
+        key=lambda f: f["mean_round_trip_skew_bps"],
+        reverse=True,
+    )
+    summary_key = "exec_quality:paper:summary"
+    new_paper = [f for f in paper if (f["strategy_id"], "paper") not in previous_flagged]
+    try:
+        if not paper:
+            acknowledge_open_by_dedupe_key(keys=[summary_key], event_type="execution_quality")
+            return
+        if not new_paper:
+            return
+        acknowledge_open_by_dedupe_key(keys=[summary_key], event_type="execution_quality")
+        worst = ", ".join(f"{f['strategy_id']} {f['mean_round_trip_skew_bps']:.0f}" for f in paper[:5])
+        mean_lag = mean(f["mean_lag_bps"] for f in paper)
+        emit_notification(
+            "execution_quality",
+            severity="warning",
+            source="watchdog",
+            title=f"Paper fills drift past the cost budget on {len(paper)} strategies",
+            summary=(
+                f"{len(new_paper)} newly over budget. Mean decision lag {mean_lag:.0f} bps. "
+                f"Worst round trips (bps): {worst}."
+            ),
+            body=(
+                "Paper fills at the price when the execution scan reaches each strategy, so a long "
+                "scan adds decision lag to every fill. On these strategies the mean round-trip gap to "
+                f"the backtest's expected price, over the last {lookback_days}d, is larger than the whole "
+                "modeled cost budget, so their paper results understate or overstate the backtest. "
+                "Most of it is lag (scan time), not venue slippage. Probation does not use this check. "
+                "This notice is replaced when more strategies cross the line and clears once none do."
+            ),
+            metadata={"flagged": [f["strategy_id"] for f in paper], "new": [f["strategy_id"] for f in new_paper]},
+            dedupe_key=summary_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("execution-quality paper summary failed: %s", exc)
+
+
 def run_execution_quality_watchdog(lookback_days: int = 30, min_trades: int = 5) -> dict:
     """Nightly expected-vs-actual execution check.
 
@@ -760,6 +861,12 @@ def run_execution_quality_watchdog(lookback_days: int = 30, min_trades: int = 5)
 
     cutoff = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).isoformat()
     ran_at = _now_iso()
+    previous = kv_get("execution_quality_watchdog_state") or {}
+    previous_flagged = {
+        (str(item.get("strategy_id")), str(item.get("bucket")))
+        for item in (previous.get("flagged") or [] if isinstance(previous, dict) else [])
+        if isinstance(item, dict)
+    }
 
     groups: dict[tuple[str, str], list[dict]] = {}
     params_by_sid: dict[str, dict] = {}
@@ -812,35 +919,13 @@ def run_execution_quality_watchdog(lookback_days: int = 30, min_trades: int = 5)
             "budget_round_trip_bps": round(budget_bps, 4),
             "over_budget": bool(n >= min_trades and mean_skew > budget_bps),
         }
+        stat["fee_bps"] = fee_bps
+        stat["slippage_bps"] = slip_bps
         checked.append(stat)
-        if not stat["over_budget"]:
-            continue
-        flagged.append(stat)
-        try:
-            from forven.notifications import emit_notification
+        if stat["over_budget"]:
+            flagged.append(stat)
 
-            emit_notification(
-                "execution_quality",
-                severity="warning",
-                source="watchdog",
-                title=f"Execution skew over cost budget: {sid} ({bucket})",
-                summary=(
-                    f"Mean round-trip fill skew {mean_skew:.1f} bps exceeds the modeled cost budget "
-                    f"{budget_bps:.1f} bps over {n} {bucket} trades in the last {lookback_days}d "
-                    f"(lag {mean_lag:.1f} bps + venue slippage {mean_skew - mean_lag:.1f} bps)."
-                ),
-                body=(
-                    f"{sid} ({bucket}): realized fills are drifting from backtest assumptions by more "
-                    f"than the entire modeled round-trip cost budget (2 x (fee {fee_bps:.1f} + slippage "
-                    f"{slip_bps:.1f}) = {budget_bps:.1f} bps). This skew is on TOP of modeled costs, so "
-                    f"paper/live results for this strategy no longer predict its backtest. Decomposition: "
-                    f"decision lag {mean_lag:.1f} bps, venue slippage {mean_skew - mean_lag:.1f} bps."
-                ),
-                metadata=stat,
-                dedupe_key=f"exec_quality:{sid}:{bucket}",
-            )
-        except Exception as exc:
-            log.warning("execution-quality notification failed for %s: %s", sid, exc)
+    _notify_execution_quality(flagged, previous_flagged, lookback_days)
 
     summary = {
         "ran_at": ran_at,

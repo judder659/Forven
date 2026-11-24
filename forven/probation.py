@@ -47,6 +47,10 @@ READY_KV_KEY = "forven:probation:ready"
 READY_FORMAT = 2
 # A list older than this is recomputed on read (the watchdog writes it hourly).
 READY_MAX_AGE_SECONDS = 2 * 3600
+# Held-back tests the hourly watchdog may start per run for strategies that pass
+# every other probation check. Each is a walk-forward on the robustness queue,
+# so a large backlog is worked through over a few hours instead of all at once.
+HOLDOUT_SUBMITS_PER_TICK = 6
 SKIPS_KV_PREFIX = "forven:probation:skips:"
 ACTOR = "probation"
 _MAX_SKIPS_KEPT = 20
@@ -426,7 +430,13 @@ def _check(key: str, label: str, ok: bool | None, detail: str, *, bypassable: bo
     return {"key": key, "label": label, "ok": ok, "detail": detail, "bypassable": bypassable}
 
 
-def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bool = False) -> dict[str, Any]:
+def entry_check(
+    strategy_id: str,
+    cfg: dict | None = None,
+    *,
+    submit_holdout: bool = False,
+    submit_holdout_when_clear: bool = False,
+) -> dict[str, Any]:
     """Can this paper strategy start probation? Every check, passing or not.
 
     ``ok`` is True (met), False (not met) or None (pending, e.g. a held-back
@@ -506,17 +516,6 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
     except Exception as exc:  # noqa: BLE001
         checks.append(_check("engine_fresh", "Results from the current engine", False, f"unverifiable: {exc}"))
 
-    if not _mod("forven.paper_door").holdout_at_paper(cfg):
-        try:
-            holdout = policy.holdout_gate_reason(strategy_id, submit=submit_holdout, stage="live")
-        except Exception as exc:  # noqa: BLE001
-            holdout = (f"held-back test unavailable: {exc}", "error")
-        if holdout is None:
-            checks.append(_check("held_back", "Held-back test", True, "passed or not required"))
-        else:
-            pending = "pending" in str(holdout[1] or "")
-            checks.append(_check("held_back", "Held-back test", None if pending else False, str(holdout[0])))
-
     try:
         with _db().get_db() as conn:
             refusal = _mod("forven.exchange.risk").go_live_refusal(
@@ -548,6 +547,29 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
             "capacity", "Room in probation", in_now < cap, f"{in_now} of {cap} strategies in probation",
         ))
 
+    # The held-back test is a one-shot, so it runs last: only once every other
+    # check passes is the shot worth spending. ``submit_holdout`` (an operator
+    # start) spends it regardless; ``submit_holdout_when_clear`` (the hourly
+    # watchdog) spends it only when nothing else stands in the way, so a
+    # strategy that is otherwise ready gets its verdict without anyone having
+    # to press Start first.
+    holdout_submitted = False
+    if not _mod("forven.paper_door").holdout_at_paper(cfg):
+        others_clear = all(c["ok"] is True for c in checks)
+        submit = bool(submit_holdout)
+        if not submit and submit_holdout_when_clear and others_clear:
+            submit = _holdout_missing(strategy_id)
+        holdout_submitted = submit
+        try:
+            holdout = policy.holdout_gate_reason(strategy_id, submit=submit, stage="live")
+        except Exception as exc:  # noqa: BLE001
+            holdout = (f"held-back test unavailable: {exc}", "error")
+        if holdout is None:
+            checks.append(_check("held_back", "Held-back test", True, "passed or not required"))
+        else:
+            pending = "pending" in str(holdout[1] or "")
+            checks.append(_check("held_back", "Held-back test", None if pending else False, str(holdout[0])))
+
     coins = policy.strategy_container_coins(strategy_id, row["symbol"]) if stage.startswith("paper") else None
     notes = []
     if coins and len(coins) > 1:
@@ -567,7 +589,17 @@ def entry_check(strategy_id: str, cfg: dict | None = None, *, submit_holdout: bo
         "need_trades": int(k["slow_confirm_trades"] if slow else k["confirm_trades"]),
         "need_days": int(k["slow_confirm_days"]) if slow else 0,
         "notes": notes,
+        "holdout_submitted": holdout_submitted,
     }
+
+
+def _holdout_missing(strategy_id: str) -> bool:
+    """True when this strategy has never had its held-back test (the shot is unspent)."""
+    try:
+        return _mod("forven.robustness.engine").holdout_state(strategy_id).get("state") == "missing"
+    except Exception as exc:  # noqa: BLE001 — unknown state: leave the shot for an operator start
+        log.debug("Held-back test state unavailable for %s: %s", strategy_id, exc)
+        return False
 
 
 def _notify(strategy_id: str, title: str, summary: str, *, severity: str = "info", kind: str) -> None:
@@ -1069,8 +1101,13 @@ def _tick_one(sid: str, rec: dict, cfg: dict, k: dict, auto: dict, out: dict) ->
         out["stepped"].append(sid)
 
 
-def _ready_entries(cfg: dict) -> list[dict[str, Any]]:
-    """Entry checks of every paper strategy, as the ready list stores them."""
+def _ready_entries(cfg: dict, *, holdout_submits: int = 0) -> list[dict[str, Any]]:
+    """Entry checks of every paper strategy, as the ready list stores them.
+
+    ``holdout_submits`` is how many held-back tests this pass may start for
+    strategies that pass every other check (the watchdog's budget; a read-side
+    recompute passes 0 and never starts one).
+    """
     with _db().get_db() as conn:
         rows = conn.execute(
             "SELECT id, display_id, name, symbol, timeframe FROM strategies "
@@ -1081,10 +1118,13 @@ def _ready_entries(cfg: dict) -> list[dict[str, Any]]:
     for row in rows:
         sid = str(row["id"])
         try:
-            report = entry_check(sid, cfg)
+            report = entry_check(sid, cfg, submit_holdout_when_clear=holdout_submits > 0)
         except Exception as exc:  # noqa: BLE001
             log.debug("Probation entry check failed for %s: %s", sid, exc)
             continue
+        if report.get("holdout_submitted"):
+            holdout_submits -= 1
+            log.info("Probation: started the held-back test for %s (every other check passes)", sid)
         entries.append({
             "strategy_id": sid,
             "display_id": row["display_id"] or sid,
@@ -1124,7 +1164,7 @@ def _refresh_ready(cfg: dict, k: dict, auto: dict, out: dict) -> None:
     else:  # a list from before the notified set: who was eligible then was told
         notified = {str(s["strategy_id"]) for s in previous.get("strategies") or [] if s.get("eligible")}
     ready: list[dict[str, Any]] = []
-    for entry in _ready_entries(cfg):
+    for entry in _ready_entries(cfg, holdout_submits=HOLDOUT_SUBMITS_PER_TICK):
         sid = entry["strategy_id"]
         if entry["eligible"] and auto["auto_entry"]:
             try:

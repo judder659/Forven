@@ -381,7 +381,7 @@ def test_a_real_gate_evaluation_submits_the_missing_test(forven_db, monkeypatch,
         lambda sid, source="system": calls.append(sid) or {"result_id": "R-SUB", "status": "running"},
     )
     message, code = engine.holdout_gate_reason("S-SUB")  # dry: reports, never submits
-    assert code == "holdout_pending" and "next promotion attempt" in message and calls == []
+    assert code == "holdout_pending" and "once every other" in message and calls == []
 
     message, code = engine.holdout_gate_reason("S-SUB", submit=True)
     assert code == "holdout_pending" and "running" in message and calls == ["S-SUB"]
