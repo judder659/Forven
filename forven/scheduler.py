@@ -765,6 +765,30 @@ def migrate_probation_watchdog() -> bool:
 # Binance Vision backfill never ran on a new install (or after any reseed)
 # until a month later, and backtests needing OI / long-short / taker history
 # from before the live collectors started saw empty columns and made no trades.
+BV_BACKFILL_JOB_ID = "forven-data-bv-backfill"
+BV_BACKFILL_DONE_KV_KEY = "forven:data:bv_backfill_done_at"
+BV_BACKFILL_REST_DAYS = 30
+BV_BACKFILL_BUDGET_SECONDS = 20 * 60.0
+BV_BACKFILL_INTERVAL_MS = "3600000"
+_BV_BACKFILL_LEGACY_INTERVAL_MS = "2592000000"
+
+
+def migrate_bv_backfill_cadence() -> bool:
+    """Move the Binance Vision backfill from its old 30-day interval (one run
+    that always hit the 30-minute timeout) to hourly resumable runs, and run it
+    soon. Idempotent: only rewrites a row still on the legacy interval."""
+    soon = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    with get_db() as conn:
+        cur = conn.execute(
+            "UPDATE scheduler_jobs SET schedule_expr = ?, next_run_at = ? WHERE id = ? AND schedule_expr = ?",
+            (BV_BACKFILL_INTERVAL_MS, soon, BV_BACKFILL_JOB_ID, _BV_BACKFILL_LEGACY_INTERVAL_MS),
+        )
+        changed = bool(cur.rowcount)
+    if changed:
+        log.info("Binance Vision backfill now runs hourly until done; next run %s", soon)
+    return changed
+
+
 _FIRST_RUN_SOON_JOB_IDS: dict[str, float] = {
     "forven-data-bv-backfill": 10 * 60.0,
 }
@@ -2057,12 +2081,33 @@ async def run_job(job: dict) -> tuple[str, str | None]:
         if kind == "data_manager_backfill":
             from forven.data_manager import data_manager
 
+            # The full download (years of daily OI / long-short / taker files
+            # for every symbol) takes hours, far past the job timeout. Each run
+            # works for a time budget, stops between symbols, and the next
+            # hourly run resumes (days already on disk are skipped). Once a
+            # run gets through every symbol the job rests for 30 days.
+            done_at = _parse_iso_datetime(str(kv_get(BV_BACKFILL_DONE_KV_KEY, "") or ""))
+            if done_at is not None and datetime.now(timezone.utc) - done_at < timedelta(days=BV_BACKFILL_REST_DAYS):
+                return "ok", None
+            budget = float(payload.get("budget_seconds") or BV_BACKFILL_BUDGET_SECONDS)
+            stop = threading.Event()
+
             # Run fast monthly archives (funding + basis) across all symbols
             # FIRST so slow daily OI/metrics downloads (~10 min/symbol) can
-            # never starve multi-year funding history on a 30-minute timeout.
+            # never starve multi-year funding history.
             def _staged_bulk_backfill() -> dict:
-                fast = data_manager.backfill(streams=("funding", "basis")) or {}
-                slow = data_manager.backfill(streams=("ohlcv", "oi")) or {}
+                timer = threading.Timer(budget, stop.set)
+                timer.daemon = True
+                timer.start()
+                try:
+                    fast = data_manager.backfill(streams=("funding", "basis"), cancel_event=stop) or {}
+                    slow = (
+                        data_manager.backfill(streams=("ohlcv", "oi"), cancel_event=stop) or {}
+                        if not stop.is_set()
+                        else {"cancelled": True}
+                    )
+                finally:
+                    timer.cancel()
                 merged: dict = {}
                 for sym in set(fast) | set(slow):
                     f_val = fast.get(sym)
@@ -2084,6 +2129,12 @@ async def run_job(job: dict) -> tuple[str, str | None]:
                 for key, value in streams.items()
                 if key.endswith("_error") and value
             ]
+            finished = not (result or {}).get("cancelled")
+            if finished:
+                kv_set(BV_BACKFILL_DONE_KV_KEY, datetime.now(timezone.utc).isoformat())
+                log.info("Binance Vision backfill finished for every symbol")
+            else:
+                log.info("Binance Vision backfill paused after its time budget; the next run resumes")
             if errors:
                 return "error", "; ".join(errors)[:2000]
             return "ok", None
@@ -3400,12 +3451,14 @@ def seed_forven_jobs():
         payload={"kind": "phantom_sweep", "limit": 5},
     )
 
-    # 15. DataManager Binance Vision backfill — once-on-boot (long interval so it won't re-run automatically)
+    # 15. DataManager Binance Vision backfill — deep history, resumable hourly runs
     add_job(
         job_id="forven-data-bv-backfill",
         name="Binance Vision Bulk Backfill",
         schedule_type="interval",
-        schedule_expr="2592000000",  # 30 days — effectively once, daemon thread handles startup
+        # Hourly: each run downloads for a time budget and the next resumes;
+        # once every symbol is done the job rests for BV_BACKFILL_REST_DAYS.
+        schedule_expr=BV_BACKFILL_INTERVAL_MS,
         command="data-bv-backfill",
         timezone_str="UTC",
         payload={"kind": "data_manager_backfill"},
@@ -3611,6 +3664,7 @@ def reconcile_forven_jobs() -> dict[str, int]:
 
     # Bring forward the first Binance Vision backfill on installs where it
     # was scheduled a month out and never ran.
+    migrate_bv_backfill_cadence()
     migrate_first_run_soon_jobs()
 
     return {"removed": removed, "added": added}
