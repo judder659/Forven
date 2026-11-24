@@ -460,6 +460,58 @@ def test_the_sweep_retires_a_losing_paper_strategy_and_leaves_live_alone(forven_
     assert retired == [("LOSER", "losing")]
 
 
+def test_ten_losing_trades_already_retire():
+    verdict = paper_pool.retirement_reason([-0.01] * 8 + [0.002] * 2, knobs=_KNOBS, days_idle=1.0, has_open_trade=False)
+    assert verdict and verdict[0] == "losing"
+
+
+def test_the_sweep_retires_a_failed_held_back_test(forven_db, monkeypatch):
+    """A failed one-shot held-back test can never pass the live gate with these
+    parameters, so the strategy leaves paper instead of waiting for the operator."""
+    cfg = _config(paper_pool={"retire_on_sequential_fail": False})
+    with get_db() as conn:
+        _insert_paper_strategy(conn, "FAILED", days=20)
+        _insert_paper_strategy(conn, "PASSED", days=20)
+    states = {"FAILED": {"state": "fail", "reasons": ["lost money on the held-back period (-4.2%)"]},
+              "PASSED": {"state": "pass"}}
+    monkeypatch.setattr("forven.robustness.engine.holdout_state", lambda sid, settings=None: states[sid])
+    retired: list[tuple] = []
+    monkeypatch.setattr(
+        evolution, "_retire_paper_strategy", lambda sid, code, detail: retired.append((sid, code, detail)) or "archived"
+    )
+    evolution.paper_retire_sweep(cfg)
+    assert retired == [("FAILED", "holdout_fail", "held-back test failed: lost money on the held-back period (-4.2%)")]
+
+    retired.clear()
+    evolution.paper_retire_sweep(_config(paper_pool={"retire_on_sequential_fail": False, "retire_on_holdout_fail": False}))
+    assert retired == []
+
+
+def test_the_sweep_retires_an_edge_too_thin_in_backtest_and_paper(forven_db, monkeypatch):
+    cfg = _config(paper_pool={"retire_on_sequential_fail": False, "retire_on_holdout_fail": False})
+    with get_db() as conn:
+        _insert_paper_strategy(conn, "THIN", days=20)
+    monkeypatch.setattr("forven.policy._backtest_pace", lambda metrics: (6.0, 0.0001))  # 1.08x
+    monkeypatch.setattr("forven.policy.strategy_container_coins", lambda sid, symbol=None: ["ETH"])
+    paper = {"trades": 19, "coverage": 1.2, "coin": "ETH"}
+    monkeypatch.setattr("forven.probation._paper_cost_coverage", lambda sid, since, coin, cost: dict(paper))
+    retired: list[tuple] = []
+    monkeypatch.setattr(
+        evolution, "_retire_paper_strategy", lambda sid, code, detail: retired.append((sid, code)) or "archived"
+    )
+    evolution.paper_retire_sweep(cfg)
+    assert retired == []  # 19 of 20 trades: not yet
+
+    paper["trades"] = 20
+    evolution.paper_retire_sweep(cfg)
+    assert retired == [("THIN", "edge_below_costs")]
+
+    retired.clear()
+    paper["coverage"] = 2.5  # real fills clear the bar: it stays
+    evolution.paper_retire_sweep(cfg)
+    assert retired == []
+
+
 def test_retirement_archives_with_a_status_reason(forven_db):
     with get_db() as conn:
         _insert_paper_strategy(conn, "LOSER", days=20)

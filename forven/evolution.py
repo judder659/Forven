@@ -2799,6 +2799,8 @@ def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> 
                 sequential_reason=seq_reason,
                 expected_gap_days=expected_gap,
             )
+            if verdict is None:
+                verdict = _paper_verdict_beyond_forward(strategy_id, since, knobs, config)
         except Exception as exc:  # noqa: BLE001 — one unreadable strategy never stops the sweep
             log.warning("Paper retirement check failed for %s: %s", strategy_id, exc)
             continue
@@ -2810,6 +2812,54 @@ def paper_retire_sweep(config: dict | None = None, *, dry_run: bool = False) -> 
             entry["result"] = _retire_paper_strategy(strategy_id, code, detail)
         out.append(entry)
     return out
+
+
+def _paper_verdict_beyond_forward(
+    strategy_id: str, since: str | None, knobs: dict, config: dict
+) -> tuple[str, str] | None:
+    """Retirements that need more than the forward P&L: a failed held-back test,
+    or an edge that covers costs neither in the backtest nor in real paper fills.
+
+    Both are checks the strategy must pass before live and cannot pass again with
+    its current parameters, so keeping it in paper only asks the operator about it.
+    """
+    if knobs.get("retire_on_holdout_fail"):
+        from forven.robustness.engine import holdout_state
+
+        state = holdout_state(strategy_id)
+        if state.get("state") == "fail":
+            reasons = "; ".join(str(r) for r in state.get("reasons") or []) or "no edge on the held-back period"
+            return "holdout_fail", f"held-back test failed: {reasons}"
+    min_edge_trades = int(knobs.get("retire_edge_min_trades") or 0)
+    if min_edge_trades:
+        from forven import probation, probation_rules
+        from forven.paper_pool import DEFAULT_ROUND_TRIP_COST, cost_coverage
+        from forven.policy import _backtest_pace
+
+        with get_db() as conn:
+            row = conn.execute("SELECT symbol, metrics FROM strategies WHERE id = ?", (strategy_id,)).fetchone()
+        if row is None:
+            return None
+        try:
+            metrics = json.loads(row["metrics"]) if isinstance(row["metrics"], str) else (row["metrics"] or {})
+        except (TypeError, ValueError):
+            metrics = {}
+        _pace, avg_trade = _backtest_pace(metrics if isinstance(metrics, dict) else {})
+        want = float(probation_rules.settings(config)["min_cost_coverage"])
+        backtest_cov = cost_coverage(avg_trade)
+        if backtest_cov is not None and backtest_cov >= want:
+            return None
+        from forven import policy
+
+        coin = probation._home_coin(policy, strategy_id, row["symbol"])
+        paper = probation._paper_cost_coverage(strategy_id, since, coin, DEFAULT_ROUND_TRIP_COST)
+        if paper["trades"] >= min_edge_trades and paper["coverage"] is not None and paper["coverage"] < want:
+            backtest_txt = "unmeasured" if backtest_cov is None else f"{probation._floor_tenth(backtest_cov):.1f}x"
+            return "edge_below_costs", (
+                f"edge under {want:g}x the round-trip cost in the backtest ({backtest_txt}) and in "
+                f"{paper['trades']} paper trades on {coin} ({probation._floor_tenth(paper['coverage']):.1f}x)"
+            )
+    return None
 
 
 def _retire_paper_strategy(strategy_id: str, code: str, detail: str) -> str:

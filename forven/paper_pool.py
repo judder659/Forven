@@ -52,11 +52,21 @@ DEFAULTS: dict[str, Any] = {
     "max_per_market": 0,
     "max_per_family": 0,
     "retire_enabled": True,
-    "retire_min_trades": 15,
+    # Losing: at least this many forward trades with a negative mean and a t-stat
+    # below retire_max_t_stat (15 until 2026-11-24; ten trades at t < -1 is
+    # already a clear loser, and waiting longer kept hundreds in paper).
+    "retire_min_trades": 10,
     "retire_max_t_stat": -1.0,
     "retire_max_drawdown_pct": 0.15,
     "retire_idle_days": 60,
     "retire_on_sequential_fail": True,
+    # A failed one-shot held-back test: the strategy can never pass the live
+    # gate with these parameters, so it leaves paper.
+    "retire_on_holdout_fail": True,
+    # The edge can't cover costs on either basis: the backtest's average trade is
+    # under the probation bar AND at least this many matching paper trades on the
+    # home coin average under it too (0 = off).
+    "retire_edge_min_trades": 20,
     # Auto-ports: when a paper strategy's breadth test finds coins where the
     # frozen rule works, the same rule is submitted on up to this many of them as
     # single-coin siblings, each through the normal pipeline (0 = off).
@@ -137,6 +147,10 @@ def settings(config: Mapping[str, Any] | None) -> dict[str, Any]:
         "retire_idle_days": max(0, _int(block.get("retire_idle_days"), DEFAULTS["retire_idle_days"])),
         "retire_on_sequential_fail": bool(
             block.get("retire_on_sequential_fail", DEFAULTS["retire_on_sequential_fail"])
+        ),
+        "retire_on_holdout_fail": bool(block.get("retire_on_holdout_fail", DEFAULTS["retire_on_holdout_fail"])),
+        "retire_edge_min_trades": max(
+            0, _int(block.get("retire_edge_min_trades"), DEFAULTS["retire_edge_min_trades"])
         ),
         "auto_port_max": max(0, min(15, _int(block.get("auto_port_max"), DEFAULTS["auto_port_max"]))),
     }
