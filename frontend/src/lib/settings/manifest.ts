@@ -126,7 +126,7 @@ export const SETTINGS_SUBSECTIONS: SettingsSubsection[] = [
   { id: 'hl-wallets', area: 'hyperliquid', label: 'Wallets & sub-accounts', description: 'Your master wallet, named sub-accounts for bots, balances and transfers.' },
   { id: 'hl-credentials', area: 'hyperliquid', label: 'Credentials & network', description: 'Forven trades on Hyperliquid. Your wallet, the API wallet that signs orders, and which network orders go to.' },
   { id: 'hl-margin', area: 'hyperliquid', label: 'Margin mode', description: 'Isolated or cross margin for live positions.' },
-  { id: 'hl-direction-books', area: 'hyperliquid', label: 'Long and short accounts', description: 'Send live longs and shorts to separate sub-accounts so both sides of one coin can be open at once. Named wallets for bots are managed in Wallets & sub-accounts above.' },
+  { id: 'hl-direction-books', area: 'hyperliquid', label: 'Long and short accounts', description: 'Most installs should leave this off. With it off, live trading runs on your main wallet and the shared-coin engine (Risk page) lets long and short strategies trade the same coin. Sub-accounts are the older way to hold both sides of a coin. Named wallets for bots are managed in Wallets & sub-accounts above.' },
 
   // Strategy pipeline, in the order a strategy meets each step.
   { id: 'lab-pipeline-preset', area: 'lab', label: 'Stance preset', description: 'Pick a stance to set every gate below in one move, then fine-tune single fields (which switches the stance to Custom).' },
@@ -358,7 +358,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     backendSection: 'risk',
     backendPath: 'live_books_enabled',
     description:
-      'Route LIVE longs and shorts to separate Hyperliquid sub-accounts so a long and a short on the same asset can coexist (one account nets them). Requires the book addresses below. Paper is unaffected.',
+      'Off (recommended): live trading uses your main wallet, and the shared-coin engine lets any number of live strategies, long or short, trade the same coin (the exchange holds their sum). On: live longs go to one Hyperliquid sub-account and shorts to another, the shared-coin engine stays off, each account allows one live strategy per coin, and your money is split between the two. Hyperliquid only allows sub-accounts after $100k of trading volume. Requires the addresses below. Paper is unaffected.',
     usedBy: ['forven.exchange.books', 'forven.scanner', 'forven.exchange.risk'],
     order: 1,
     realMoney: true,

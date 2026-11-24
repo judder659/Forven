@@ -243,7 +243,7 @@ def test_it_stays_off_while_direction_books_are_on(ex, monkeypatch):
     kv_set(netting.SETTINGS_KV_KEY, {})
     netting._invalidate_enabled()
     monkeypatch.setattr(books, "books_enabled", lambda settings=None: True)
-    with pytest.raises(ValueError, match="Direction books"):
+    with pytest.raises(ValueError, match="direction books"):
         netting.set_enabled(True)
     kv_set(netting.SETTINGS_KV_KEY, {"live_netting_enabled": True})
     netting._invalidate_enabled()
