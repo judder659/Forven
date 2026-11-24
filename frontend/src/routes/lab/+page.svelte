@@ -2,7 +2,8 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { getProbationBadges, type ProbationBadges } from '$lib/api/probation';
+	import { PROBATION_CONFIRM_PHRASE, getProbationBadges, startProbation, type ProbationBadges } from '$lib/api/probation';
+	import TypedConfirmDialog from '$lib/components/probation/TypedConfirmDialog.svelte';
 	import ProbationBadge from '$lib/components/probation/ProbationBadge.svelte';
 	import {
 		getForvenStrategiesQuery,
@@ -746,11 +747,47 @@
 		}
 	}
 
+	// Bulk probation start: one typed PROBATION for the batch. Each strategy goes
+	// through the same entry checks as its own page; a refusal is listed, the
+	// rest still start.
+	let probationBatch: string[] | null = null;
+	let probationBusy = false;
+	let probationError: string | null = null;
+
+	async function startProbationBatch(phrase: string) {
+		const ids = probationBatch ?? [];
+		if (!ids.length || probationBusy) return;
+		probationBusy = true;
+		probationError = null;
+		error = null;
+		actionMsg = null;
+		try {
+			const { succeeded, failed, errors } = await runSequential(ids, (id) => startProbation(id, { confirm: phrase }));
+			actionMsg = `Started probation for ${succeeded} strateg${succeeded === 1 ? 'y' : 'ies'}.`;
+			if (failed > 0) {
+				actionMsg += ` ${failed} did not start.`;
+				error = summarizeReasons(errors);
+			}
+			probationBatch = null;
+			await afterMutation();
+			clearSelection();
+		} catch (e) {
+			probationError = e instanceof Error ? e.message : 'Could not start probation';
+		} finally {
+			probationBusy = false;
+		}
+	}
+
 	async function moveBatchToStage(stage: string, selectEl: HTMLSelectElement) {
 		if (!stage) return;
 		selectEl.value = ''; // Reset select
 		const ids = rowsInView.map((row) => row.id).filter((id) => selectedIds.has(id));
 		if (ids.length === 0) return;
+		if (stage === 'probation') {
+			probationError = null;
+			probationBatch = ids;
+			return;
+		}
 
 		if (!confirm(`Move ${ids.length} containers to ${stage}?`)) return;
 
@@ -1447,6 +1484,7 @@
 								<option value="researching">Quick screen</option>
 								<option value="backtesting">Gauntlet</option>
 								<option value="paper_trading">Paper</option>
+								<option value="probation">Start probation (live, reduced size)</option>
 								<option value="deployed">Live</option>
 								<option value="rejected">Rejected</option>
 							</select>
@@ -1827,3 +1865,16 @@
 		}
 	}
 </style>
+
+{#if probationBatch}
+	<TypedConfirmDialog
+		title={`Start live probation for ${probationBatch.length} strateg${probationBatch.length === 1 ? 'y' : 'ies'}?`}
+		phrase={PROBATION_CONFIRM_PHRASE}
+		confirmLabel="Start probation"
+		message={`Each one will trade live with real money at reduced size (25% to start), stepping up as live trades confirm its backtest, and is demoted to paper if live results fall outside what its backtest predicted. Each goes through the same checks as on its own page; any that fail a check are listed and not started.`}
+		busy={probationBusy}
+		errorMessage={probationError}
+		on:cancel={() => { if (!probationBusy) probationBatch = null; }}
+		on:confirm={(event) => startProbationBatch(event.detail.phrase)}
+	/>
+{/if}
