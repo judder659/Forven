@@ -131,6 +131,19 @@ OPENCLAW_AUTH = OPENCLAW_HOME / "agents" / "main" / "agent" / "auth-profiles.jso
 OPENCLAW_WORKSPACE = OPENCLAW_HOME / "workspace"
 
 
+def repo_results_dir() -> Path:
+    """The checkout's ``data/results`` folder, where backtest artifacts are saved.
+
+    ``FORVEN_REPO_RESULTS_DIR`` replaces it. The test suite sets that to a temp
+    folder: the factory reset empties this folder, and on 2026-11-17 a test run
+    inside a live checkout deleted every saved backtest trade list there.
+    """
+    override = str(os.environ.get("FORVEN_REPO_RESULTS_DIR") or "").strip()
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parent.parent / "data" / "results"
+
+
 def ensure_dirs():
     """Create all required directories."""
     FORVEN_HOME.mkdir(parents=True, exist_ok=True)

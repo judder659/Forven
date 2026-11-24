@@ -254,7 +254,13 @@ def _isolate_forven_home(tmp_path):
     orig_workspace = getattr(cfg, "WORKSPACE_DIR", None)
     orig_db_ref = db_mod.FORVEN_DB
 
-    with patch.dict(os.environ, {"FORVEN_HOME": str(home)}):
+    # The checkout's data/results is real data (saved backtest trade lists).
+    # Point it at the temp home too, so no test can write to or empty it.
+    repo_results = home / "repo-data-results"
+    with patch.dict(
+        os.environ,
+        {"FORVEN_HOME": str(home), "FORVEN_REPO_RESULTS_DIR": str(repo_results)},
+    ):
         cfg.FORVEN_HOME = home
         cfg.FORVEN_DB = db_path
         cfg.FORVEN_LAB_DB = lab_db_path
