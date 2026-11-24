@@ -554,16 +554,17 @@ def close_open_paper_trades_for_strategy(
     strategy_id: str,
     *,
     close_reason: str = "terminal_stage_close",
+    close_price_source: str = "terminal_auto_close",
     note: str | None = None,
 ) -> dict:
     """ARCH-1: flatten a strategy's open PAPER positions at the current mark.
 
-    A strategy in a terminal stage (archived/rejected/…) is no longer loaded by
-    the scanner, so its exit signals and time-stops never run again — an open
-    position it leaves behind is exposure with its management amputated (the
-    S03517/E0088 orphan). Called from brain.transition_stage right after a
-    terminal transition commits, and from the pipeline-hygiene sweep as the
-    backstop for closes that failed (venue read down) or predate the hook.
+    Called from brain.transition_stage right after a strategy leaves the paper
+    lane — either to a terminal stage (archived/rejected/…, where exit signals
+    and time-stops never run again) or on promotion into live_graduated (so
+    carried-over paper rows never sit open beside or block live execution) —
+    and from the pipeline-hygiene sweep as the backstop for terminal closes
+    that failed (venue read down) or predate the hook.
 
     PAPER only — live positions must block the transition itself (real-money
     closes are never fired as a lifecycle side effect). A trade with no fresh
@@ -609,7 +610,7 @@ def close_open_paper_trades_for_strategy(
             signal_exit_price=mark,
             exit_price=mark,
             close_reason=close_reason,
-            close_price_source="terminal_auto_close",
+            close_price_source=close_price_source,
             closed_at=get_now().isoformat(),
             extra_signal_data={
                 "source": "lifecycle",

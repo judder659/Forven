@@ -785,3 +785,73 @@ def test_probation_cap_migration_lifts_persisted_default_ten_to_unlimited(forven
     summary = apply_probation_cap_migration(kv_get, kv_set)
     assert summary["max_strategies"] == [10, 0]
     assert kv_get("forven:pipeline_thresholds")["probation"]["max_strategies"] == 0
+
+
+def test_missing_backtest_trades_blocks_probation_entry_and_ready_list(env, monkeypatch):
+    import forven.policy as policy
+
+    _strategy("S1")
+    for _ in range(3):
+        _trade("S1")
+    holdout_calls = []
+    monkeypatch.setattr("forven.paper_door.holdout_at_paper", lambda cfg=None: False)
+    monkeypatch.setattr(probation, "_holdout_missing", lambda sid: True)
+    monkeypatch.setattr(policy, "holdout_gate_reason", lambda sid, submit=False, stage="paper": (holdout_calls.append(submit), None)[1])
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([], {"reason": "no_backtest_trades", "unmeasured": True}))
+
+    report = probation.entry_check("S1", submit_holdout_when_clear=True)
+    assert not report["eligible"]
+    assert [c["key"] for c in report["failing"]] == ["backtest_trades"]
+    assert report["failing"][0]["bypassable"] is False
+    # Never burn a one-shot holdout test before backtest trades exist on disk.
+    assert holdout_calls == [False]
+
+    # Even operator bypass cannot start real-money probation without limits.
+    with pytest.raises(probation.ProbationError) as exc:
+        probation.start("S1", actor="api", confirm="PROBATION", bypass=True)
+    assert "Backtest trades for limits" in str(exc.value)
+
+    # Fewer than MIN_BACKTEST_TRADES also blocks.
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([0.01] * (rules.MIN_BACKTEST_TRADES - 1), {}))
+    thin = probation.entry_check("S1")
+    assert not thin["eligible"]
+    assert [c["key"] for c in thin["failing"]] == ["backtest_trades"]
+
+
+def test_missing_backtest_trades_blocks_graduation_even_with_bypass(env, monkeypatch):
+    monkeypatch.setattr("forven.policy.strategy_breadth", lambda sid: {"status": "done", "summary": {"verdict": "general"}})
+    _in_probation(env, "S1", trades=10, pnl=2.0)
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([], {"reason": "no_backtest_trades", "unmeasured": True}))
+
+    rec = probation.get_record("S1")
+    report = probation.graduation_check("S1", rec)
+    assert not report["eligible"]
+    assert [c["key"] for c in report["failing"]] == ["no_triggers"]
+    assert report["failing"][0]["bypassable"] is False
+
+    with pytest.raises(probation.ProbationError) as exc:
+        probation.graduate("S1", actor="api", confirm="GO LIVE", bypass=True)
+    assert "Inside the backtest's range" in str(exc.value)
+
+
+def test_reference_miss_cache_expires_quickly_after_backtest_is_restored(forven_db, monkeypatch):
+    import forven.gauntlet.deflated_sharpe as ds
+
+    _strategy("S1", stage="live_graduated")
+    _backtest_row("S1", "bt1", hours_ago=1)
+    on_disk: dict[str, list[float]] = {}
+    monkeypatch.setattr(ds, "trade_returns_for_row", lambda row, cfg=None: (
+        list(on_disk.get(row["result_id"], [])), {"result_id": row["result_id"]}))
+    probation.invalidate_reference_cache()
+
+    clock = [1000.0]
+    monkeypatch.setattr(probation.time, "time", lambda: clock[0])
+
+    rets, info = probation.backtest_returns("S1", {})
+    assert rets == [] and info["unmeasured"] is True
+
+    # Restore the trades file on disk; after the short miss TTL it is picked up without a restart.
+    on_disk["bt1"] = [0.01, -0.005] * 5
+    clock[0] += probation.REFERENCE_MISS_CACHE_SECONDS + 1.0
+    rets2, info2 = probation.backtest_returns("S1", {})
+    assert len(rets2) == 10 and not info2.get("unmeasured")

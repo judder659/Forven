@@ -2649,33 +2649,45 @@ def _transition_stage_impl(
     # its own connections and fetches a venue price — both would self-deadlock or
     # stall the held WAL writer lock). Best-effort: a close skipped on a venue-read
     # hiccup is retried by the pipeline-hygiene sweep backstop.
-    if normalized_target in _TERMINAL_TASK_STAGES:
+    if normalized_target in _TERMINAL_TASK_STAGES or (
+        normalized_target == "live_graduated" and _normalize_stage(current_stage) != "live_graduated"
+    ):
+        _is_promotion = normalized_target == "live_graduated"
+        _paper_close_reason = "stage_promotion_close" if _is_promotion else "terminal_stage_close"
+        _paper_close_source = "stage_promotion_close" if _is_promotion else "terminal_auto_close"
+        _paper_close_verb = "promoted" if _is_promotion else "transitioned"
         try:
             from forven.trade_state import close_open_paper_trades_for_strategy
 
             closure = close_open_paper_trades_for_strategy(
                 strategy_id,
-                close_reason="terminal_stage_close",
+                close_reason=_paper_close_reason,
+                close_price_source=_paper_close_source,
                 note=(
-                    f"Auto-closed: strategy transitioned {current_stage} -> "
+                    f"Auto-closed: strategy {_paper_close_verb} {current_stage} -> "
                     f"{normalized_target} ({actor})"
                 ),
             )
             if closure.get("closed"):
                 log.info(
-                    "Closed %d open paper position(s) for terminal strategy %s: %s",
-                    len(closure["closed"]), strategy_id, ", ".join(closure["closed"]),
+                    "Closed %d open paper position(s) for %s strategy %s: %s",
+                    len(closure["closed"]),
+                    "promoted" if _is_promotion else "terminal",
+                    strategy_id,
+                    ", ".join(closure["closed"]),
                 )
             if closure.get("skipped"):
                 log.warning(
-                    "Could not close %d open paper position(s) for terminal strategy %s "
-                    "(hygiene sweep will retry): %s",
-                    len(closure["skipped"]), strategy_id, ", ".join(closure["skipped"]),
+                    "Could not close %d open paper position(s) for %s strategy %s: %s",
+                    len(closure["skipped"]),
+                    "promoted" if _is_promotion else "terminal",
+                    strategy_id,
+                    ", ".join(closure["skipped"]),
                 )
         except Exception:
             log.warning(
-                "Terminal paper-position close failed for %s (hygiene sweep will retry)",
-                strategy_id, exc_info=True,
+                "Paper-position close failed on %s -> %s for %s",
+                current_stage, normalized_target, strategy_id, exc_info=True,
             )
 
     # Live go-live equity baseline: stamp the REAL Hyperliquid account equity at the

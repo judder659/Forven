@@ -78,6 +78,7 @@ _PROBATION_CHECKS = {
     "paper_breakeven": ("merit", "paper_losing", ("wait", "Paper is below breakeven — it waits until paper recovers")),
     "edge_covers_costs": ("merit", "edge_below_costs", ("review_strategy", "The backtest's average trade is too thin for costs")),
     "execution_verified": ("evidence", "execution_unverified", ("run_validation_suite", "Execution settings need fresh validation before live trading")),
+    "backtest_trades": ("evidence", "missing_backtest_trades", ("run_backtest", "Re-run its backtest so probation drawdown, streak, and band limits can be measured")),
 }
 
 _LIVE_STANDING_NOTE = (
