@@ -4,6 +4,7 @@ import {
 	asRecord,
 	fetchApi,
 	isNotFoundError,
+	LONG_TIMEOUT_MS,
 } from './core';
 import { getForvenStrategiesQuery, promoteForvenStrategy } from './forven';
 import { normalizeStrategyPayload } from './strategies';
@@ -849,7 +850,7 @@ export async function explainPipeline(opts?: { stage?: string; limit?: number })
 	if (opts?.stage) p.set('stage', opts.stage);
 	if (opts?.limit !== undefined) p.set('limit', String(opts.limit));
 	const query = p.toString();
-	return fetchApi(`/lifecycle/pipeline/explain${query ? `?${query}` : ''}`);
+	return fetchApi(`/lifecycle/pipeline/explain${query ? `?${query}` : ''}`, { timeoutMs: LONG_TIMEOUT_MS });
 }
 
 export async function explainStrategy(strategyId: string): Promise<{ ok: boolean; generated_at?: string; strategy?: PipelineExplainStrategy; error?: string }> {

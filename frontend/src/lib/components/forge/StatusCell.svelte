@@ -6,6 +6,8 @@
 	export let entry: PipelineExplainStrategy | null = null;
 	/** True while the gate explainer has not answered yet. */
 	export let loading = false;
+	/** Non-null when the gate explainer failed before landing its first payload (e.g. during a restart). */
+	export let error: string | null = null;
 	/** Live strategies read their state from the live fleet. */
 	export let forward: ForwardRecord | null = null;
 	export let stage = '';
@@ -20,6 +22,13 @@
 	<div class="grid gap-1" aria-busy="true">
 		<span class="h-3 w-24 animate-pulse rounded bg-sc-raise/70"></span>
 		<span class="h-2.5 w-36 animate-pulse rounded bg-sc-raise/50"></span>
+	</div>
+{:else if !entry && error}
+	<div class="grid min-w-0 gap-0.5" title={error}>
+		<span class="inline-flex items-center gap-1.5 text-[12px] font-medium text-sc-ink3">
+			<span class="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sc-ink3" aria-hidden="true"></span>
+			Retrying gates…
+		</span>
 	</div>
 {:else}
 	<div class="grid min-w-0 gap-0.5" title={meta.help}>

@@ -334,6 +334,206 @@ def _last_paper_trade_at(strategy_id: str, since: str | None) -> str | None:
     return row["last_at"] if row and row["last_at"] else None
 
 
+def _sqlite_dt_str(value: object) -> str | None:
+    """UTC ``YYYY-MM-DD HH:MM:SS`` matching SQLite's ``datetime(...)`` output."""
+    ts = _parse_ts(value)
+    if ts is None:
+        return None
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _chunks(items: list[str], size: int = 400):
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+def _fleet_latest_result_times(conn: sqlite3.Connection, strategy_ids: list[str]) -> dict[str, dict[str, dict]]:
+    """Bulk version of ``_latest_result_times`` for the fleet explainer."""
+    from forven.policy import is_nonresult_validation_row
+
+    out: dict[str, dict[str, dict]] = {}
+    if not strategy_ids:
+        return out
+    for batch in _chunks(strategy_ids, 400):
+        marks = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""SELECT strategy_id, result_id, created_at,
+                       LOWER(TRIM(COALESCE(result_type, 'backtest'))) AS rtype,
+                       CASE WHEN json_valid(COALESCE(metrics_json, ''))
+                            THEN LOWER(TRIM(COALESCE(json_extract(metrics_json, '$.status'), '')))
+                            ELSE '' END AS m_status,
+                       CASE WHEN json_valid(COALESCE(metrics_json, ''))
+                            THEN TRIM(COALESCE(json_extract(metrics_json, '$.error'), ''))
+                            ELSE '' END AS m_error,
+                       CASE WHEN json_valid(COALESCE(config_json, ''))
+                            THEN LOWER(TRIM(COALESCE(json_extract(config_json, '$.status'), '')))
+                            ELSE '' END AS c_status,
+                       CASE WHEN json_valid(COALESCE(config_json, ''))
+                            THEN TRIM(COALESCE(json_extract(config_json, '$.error'), ''))
+                            ELSE '' END AS c_error
+                FROM backtest_results
+                WHERE strategy_id IN ({marks})
+                  AND LOWER(TRIM(COALESCE(result_type, 'backtest'))) IN ('backtest', 'optimization')
+                  AND (deleted_at IS NULL OR TRIM(COALESCE(deleted_at, '')) = '')
+                ORDER BY strategy_id, datetime(created_at) DESC""",
+            tuple(batch),
+        ).fetchall()
+        for row in rows:
+            sid = str(row["strategy_id"] or "")
+            rtype = str(row["rtype"] or "")
+            bucket = out.setdefault(sid, {})
+            if rtype in bucket:
+                continue
+            if is_nonresult_validation_row(
+                {"status": row["m_status"], "error": row["m_error"]},
+                {"status": row["c_status"], "error": row["c_error"]},
+            ):
+                continue
+            bucket[rtype] = {"result_id": row["result_id"], "at": row["created_at"]}
+    return out
+
+
+def _fleet_last_paper_trade_at(
+    conn: sqlite3.Connection, since_by_id: dict[str, str | None]
+) -> dict[str, str | None]:
+    """Bulk version of ``_last_paper_trade_at`` for the fleet explainer."""
+    from forven.policy import _PARITY_PNL_FILTER
+
+    out: dict[str, str | None] = {}
+    if not since_by_id:
+        return out
+    norm_since: dict[str, str | None] = {}
+    invalid_since: set[str] = set()
+    for sid, raw_since in since_by_id.items():
+        if not raw_since:
+            norm_since[sid] = None
+        else:
+            parsed = _sqlite_dt_str(raw_since)
+            if parsed is None:
+                invalid_since.add(sid)
+            else:
+                norm_since[sid] = parsed
+    query_ids = [sid for sid in since_by_id if sid not in invalid_since]
+    for batch in _chunks(query_ids, 400):
+        marks = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            "SELECT strategy_id, strategy, datetime(closed_at) AS closed_norm FROM trades "
+            f"WHERE (strategy_id IN ({marks}) OR (strategy_id IS NULL AND strategy IN ({marks}))) "
+            "AND +status = 'CLOSED' "
+            "AND LOWER(COALESCE(execution_type, '')) LIKE 'paper%' "
+            "AND pnl_pct IS NOT NULL" + _PARITY_PNL_FILTER + " AND closed_at IS NOT NULL",
+            tuple(batch) + tuple(batch),
+        ).fetchall()
+        for row in rows:
+            sid = str(row["strategy_id"] if row["strategy_id"] is not None else (row["strategy"] or ""))
+            if sid not in norm_since:
+                continue
+            closed_norm = row["closed_norm"]
+            if not closed_norm:
+                continue
+            floor = norm_since[sid]
+            if floor is not None and closed_norm < floor:
+                continue
+            prev = out.get(sid)
+            if prev is None or closed_norm > prev:
+                out[sid] = closed_norm
+    return out
+
+
+def _fleet_pending_approvals(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Bulk version of ``_pending_approval``: one indexed read for all strategies."""
+    rows = conn.execute(
+        """SELECT target_id, id, approval_type, requested_status, reason, created_at
+           FROM approvals
+           WHERE target_type = 'strategy' AND status = 'pending_approval'
+           ORDER BY datetime(created_at) DESC"""
+    ).fetchall()
+    out: dict[str, dict] = {}
+    for row in rows:
+        sid = str(row["target_id"] or "")
+        if not sid or sid in out:
+            continue
+        out[sid] = {
+            "id": row["id"],
+            "approval_type": row["approval_type"],
+            "requested_status": row["requested_status"],
+            "reason": row["reason"],
+            "at": row["created_at"],
+        }
+    return out
+
+
+def _fleet_rejections(
+    conn: sqlite3.Connection, since_by_id: dict[str, str | None]
+) -> dict[str, tuple[dict | None, int]]:
+    """Bulk version of ``_last_rejection`` for the fleet explainer."""
+    out: dict[str, tuple[dict | None, int]] = {}
+    if not since_by_id:
+        return out
+    norm_since: dict[str, str | None] = {}
+    invalid_since: set[str] = set()
+    for sid, raw_since in since_by_id.items():
+        if not raw_since:
+            norm_since[sid] = None
+        else:
+            parsed = _sqlite_dt_str(raw_since)
+            if parsed is None:
+                invalid_since.add(sid)
+            else:
+                norm_since[sid] = parsed
+    latest: dict[str, dict] = {}
+    counts: dict[str, int] = {}
+    for batch in _chunks(list(since_by_id), 400):
+        marks = ",".join("?" for _ in batch)
+        rows = conn.execute(
+            f"""SELECT strategy_id, gate, reason_code, reason_text, created_at,
+                       datetime(created_at) AS created_norm
+                FROM gate_rejections
+                WHERE strategy_id IN ({marks})
+                ORDER BY strategy_id, datetime(created_at) DESC""",
+            tuple(batch),
+        ).fetchall()
+        for row in rows:
+            sid = str(row["strategy_id"] or "")
+            if sid not in latest:
+                latest[sid] = {
+                    "gate": row["gate"],
+                    "reason_code": row["reason_code"],
+                    "reason_text": row["reason_text"],
+                    "at": row["created_at"],
+                }
+            if sid in invalid_since:
+                continue
+            floor = norm_since.get(sid)
+            created_norm = row["created_norm"]
+            if floor is not None and created_norm and created_norm >= floor:
+                counts[sid] = counts.get(sid, 0) + 1
+    for sid in since_by_id:
+        out[sid] = (latest.get(sid), counts.get(sid, 0))
+    return out
+
+
+def _fleet_prefetch(selected: list[tuple[dict, str]]) -> dict[str, Any]:
+    """Read all per-strategy fleet metadata in a few bulk queries on one connection."""
+    all_ids = [str(row.get("id") or "").strip() for row, _ in selected]
+    since_by_id = {
+        str(row.get("id") or "").strip(): (str(row.get("stage_changed_at") or "").strip() or None)
+        for row, _ in selected
+    }
+    paper_since = {
+        str(row.get("id") or "").strip(): (str(row.get("stage_changed_at") or "").strip() or None)
+        for row, stage in selected
+        if stage == "paper"
+    }
+    with get_db() as conn:
+        return {
+            "latest_results": _fleet_latest_result_times(conn, all_ids),
+            "last_paper_trade": _fleet_last_paper_trade_at(conn, paper_since),
+            "pending_approvals": _fleet_pending_approvals(conn),
+            "rejections": _fleet_rejections(conn, since_by_id),
+        }
+
+
 def _readiness_blockers(steps: list[dict], source: str, seen_reasons: set[str]) -> list[dict]:
     """Failed/warning readiness steps as blockers (dedup on reason text)."""
     blockers: list[dict] = []
@@ -570,10 +770,13 @@ def _explain_row(
     now: datetime,
     probation_ready: dict | None = None,
     probation_knobs: dict | None = None,
+    prefetched: dict[str, Any] | None = None,
 ) -> dict:
     """``probation_ready``: the watchdog's cached probation checks by strategy id
     (fleet view); None computes them now (single-strategy view).
-    ``probation_knobs``: the probation settings when the caller already read them."""
+    ``probation_knobs``: the probation settings when the caller already read them.
+    ``prefetched``: bulk-loaded fleet metadata so the fleet view does not open
+    per-strategy SQLite connections."""
     from forven.policy import (
         check_promotion_readiness,
         evaluate_promotion,
@@ -596,7 +799,10 @@ def _explain_row(
     in_flight = False
 
     evidence: dict[str, Any] = {}
-    latest = _latest_result_times(strategy_id)
+    if prefetched is not None:
+        latest = prefetched["latest_results"].get(strategy_id, {})
+    else:
+        latest = _latest_result_times(strategy_id)
     if "backtest" in latest:
         evidence["last_backtest_at"] = latest["backtest"]["at"]
         evidence["last_backtest_age_days"] = _age_days(latest["backtest"]["at"], now)
@@ -679,7 +885,10 @@ def _explain_row(
                 seen_reasons.add(reason)
                 blockers.append(_blocker(reason, code, kind, "probation_gate", action, check=check.get("key")))
             evidence["probation"] = _probation_entry_evidence(report, probation_knobs)
-        last_trade_at = _last_paper_trade_at(strategy_id, stage_changed_at)
+        if prefetched is not None:
+            last_trade_at = prefetched["last_paper_trade"].get(strategy_id)
+        else:
+            last_trade_at = _last_paper_trade_at(strategy_id, stage_changed_at)
         if last_trade_at:
             evidence["paper"] = {
                 "last_trade_at": last_trade_at,
@@ -712,8 +921,14 @@ def _explain_row(
             gate_reason = workflow_blocker["reason"]
             in_flight = workflow_blocker["workflow_status"] == "running"
 
-    pending_approval = _pending_approval(strategy_id)
-    last_rejection, rejections_in_stage = _last_rejection(strategy_id, stage_changed_at)
+    if prefetched is not None:
+        raw_approval = prefetched["pending_approvals"].get(strategy_id)
+        pending_approval = dict(raw_approval) if raw_approval is not None else None
+        raw_rejection, rejections_in_stage = prefetched["rejections"].get(strategy_id, (None, 0))
+        last_rejection = dict(raw_rejection) if raw_rejection is not None else None
+    else:
+        pending_approval = _pending_approval(strategy_id)
+        last_rejection, rejections_in_stage = _last_rejection(strategy_id, stage_changed_at)
     if last_rejection:
         last_rejection["age_days"] = _age_days(last_rejection.get("at"), now)
 
@@ -830,19 +1045,24 @@ def explain_pipeline(stage: str | None = None, limit: int = 200) -> dict:
     now = datetime.now(timezone.utc)
     probation_ready = _probation_ready_cache()
     probation_knobs = _probation_knobs()
-    strategies: list[dict] = []
-    errors: list[dict] = []
+    selected: list[tuple[dict, str]] = []
     truncated = False
     for raw in rows:
         row = dict(raw)
         row_stage = normalize_stage(str(row.get("stage") or row.get("status") or ""))
         if row_stage not in requested:
             continue
-        if len(strategies) >= cap:
+        if len(selected) >= cap:
             truncated = True
             break
+        selected.append((row, row_stage))
+
+    prefetched = _fleet_prefetch(selected)
+    strategies: list[dict] = []
+    errors: list[dict] = []
+    for row, _row_stage in selected:
         try:
-            strategies.append(_explain_row(row, now, probation_ready, probation_knobs))
+            strategies.append(_explain_row(row, now, probation_ready, probation_knobs, prefetched=prefetched))
         except Exception as exc:  # one bad strategy must not blank the fleet view
             log.warning("pipeline explain failed for %s: %s", row.get("id"), exc)
             errors.append({"id": row.get("id"), "error": str(exc)})
