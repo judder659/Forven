@@ -314,6 +314,8 @@ export interface LiveCapacityReport {
 	capacity_scale: number;
 	/** Live strategies that share a coin and a direction, so they refuse each other's entries. */
 	conflicts: Array<{ coin: string; sides: string[]; strategy_ids: string[] }>;
+	/** True when shared coins (live netting) is active: strategies share coins and draw on dynamic slots. */
+	netting?: boolean;
 }
 
 export interface LiveFleet {

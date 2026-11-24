@@ -1576,7 +1576,7 @@ export const SETTINGS_MANIFEST: SettingsEntry[] = [
     id: 'pipeline.probation.max_strategies',
     label: 'Probation: most strategies at once',
     unit: 'strategies',
-    default: 10,
+    default: 0,
     type: 'number',
     area: 'lab',
     subsection: 'lab-pipeline-probation',

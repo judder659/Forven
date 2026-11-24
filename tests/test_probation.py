@@ -731,3 +731,57 @@ def test_no_backtest_trades_anywhere_is_shown_not_silent(forven_db, monkeypatch)
     rec = {"strategy_id": "S1", "state": rules.STATE_ACTIVE, "size_pct": 25.0, "size_locked": False}
     verdict = probation._verdict(rec, {"live_trades": 2, "triggers": [], "limits_unmeasured": True}, {}, K)
     assert verdict["verdict"] == "unmeasured" and "Re-run its backtest" in verdict["verdict_detail"]
+
+
+def test_probation_max_strategies_defaults_unlimited_and_saves_via_settings(forven_db):
+    from forven.api_core import PipelineSettingsUpdateBody, get_settings, put_pipeline_settings
+
+    # Default is unlimited (0).
+    assert rules.DEFAULTS["max_strategies"] == 0
+    assert rules.settings(probation.config())["max_strategies"] == 0
+
+    # Saving a cap through PUT /api/settings/pipeline reaches probation.config().
+    put_pipeline_settings(
+        PipelineSettingsUpdateBody(updates={"probation": {"max_strategies": 15}}, actor="test")
+    )
+    assert rules.settings(probation.config())["max_strategies"] == 15
+    assert get_settings()["probation"]["max_strategies"] == 15
+
+    # Setting 0 restores unlimited and persists to pipeline_thresholds.
+    put_pipeline_settings(
+        PipelineSettingsUpdateBody(updates={"probation": {"max_strategies": 0}}, actor="test")
+    )
+    assert rules.settings(probation.config())["max_strategies"] == 0
+    assert get_settings()["probation"]["max_strategies"] == 0
+
+
+def test_probation_cap_migration_rescues_stray_edits_and_lifts_old_default(forven_db):
+    from forven.db import kv_set
+    from forven.readiness_checks import apply_probation_cap_migration
+
+    # Simulate an install with the old persisted default (10) in pipeline_thresholds
+    # and a Settings edit that landed in forven:pipeline:settings before routing was fixed.
+    kv_set("forven:pipeline_thresholds", {"probation": {"max_strategies": 10, "confirm_trades": 3}})
+    kv_set("forven:pipeline:settings", {"probation": {"max_strategies": 0}, "promotion_mode": "manual"})
+
+    summary = apply_probation_cap_migration(kv_get, kv_set)
+    assert summary["first_run"] is True
+    assert summary["rescued"] == {"max_strategies": 0}
+    assert kv_get("forven:pipeline_thresholds")["probation"]["max_strategies"] == 0
+    assert kv_get("forven:pipeline_thresholds")["probation"]["confirm_trades"] == 3
+    assert "probation" not in kv_get("forven:pipeline:settings")
+
+    # Idempotent: a later cap chosen by the operator stays intact.
+    kv_set("forven:pipeline_thresholds", {"probation": {"max_strategies": 10}})
+    assert apply_probation_cap_migration(kv_get, kv_set)["first_run"] is False
+    assert kv_get("forven:pipeline_thresholds")["probation"]["max_strategies"] == 10
+
+
+def test_probation_cap_migration_lifts_persisted_default_ten_to_unlimited(forven_db):
+    from forven.db import kv_set
+    from forven.readiness_checks import apply_probation_cap_migration
+
+    kv_set("forven:pipeline_thresholds", {"probation": {"max_strategies": 10}})
+    summary = apply_probation_cap_migration(kv_get, kv_set)
+    assert summary["max_strategies"] == [10, 0]
+    assert kv_get("forven:pipeline_thresholds")["probation"]["max_strategies"] == 0

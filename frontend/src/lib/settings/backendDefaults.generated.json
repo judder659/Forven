@@ -192,7 +192,7 @@
     "probation.demote_mismatch_trades": 2,
     "probation.demote_streak_extra": 2,
     "probation.graduate_trades": 10,
-    "probation.max_strategies": 10,
+    "probation.max_strategies": 0,
     "probation.min_cost_coverage": 2.0,
     "probation.paper_edge_min_trades": 10,
     "probation.reentry_cooldown_days": 30,

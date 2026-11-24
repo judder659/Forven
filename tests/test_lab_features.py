@@ -33,6 +33,24 @@ def test_paper_has_no_stage_wip_cap(forven_db):
     assert "No WIP cap" in reason
 
 
+def test_live_graduated_has_no_stage_wip_cap(forven_db):
+    """Live strategies are bounded by live admission / netting slots and
+    probation.max_strategies, not the old hardcoded 5-strategy WIP cap."""
+    from forven.db import get_db
+    from forven.lab_features import check_stage_wip_capacity
+
+    with get_db() as conn:
+        for idx in range(8):
+            _insert_strategy(conn, f"S-LIVE-{idx:02d}", "live_graduated")
+
+    has_capacity, current, cap, reason = check_stage_wip_capacity("live_graduated")
+
+    assert has_capacity is True
+    assert current == 8
+    assert cap is None
+    assert "No WIP cap" in reason
+
+
 def test_pipeline_settings_can_set_graveyard_strategy_limit_unlimited(forven_db):
     from forven.api_core import (
         PipelineSettingsUpdateBody,

@@ -10,6 +10,8 @@
 	export let overview: ProbationOverview | null = null;
 
 	let showReady = false;
+	let showAll = false;
+	const COMPACT_LIMIT = 6;
 
 	$: rows = overview?.strategies ?? [];
 	$: readyAll = overview?.ready?.strategies ?? [];
@@ -19,13 +21,27 @@
 
 	const href = (id: string) => `/lab/strategy/${encodeURIComponent(id)}`;
 
+	const VERDICT_RANK: Record<string, number> = { failed: 0, ready: 1, step: 2, unmeasured: 4 };
+	function rowPriority(row: ProbationOverview['strategies'][number]): number {
+		if (row.verdict && row.verdict in VERDICT_RANK) return VERDICT_RANK[row.verdict];
+		return row.live_trades > 0 ? 3 : 5;
+	}
+
+	$: sortedRows = [...rows].sort((a, b) => rowPriority(a) - rowPriority(b) || b.live_trades - a.live_trades);
 	$: readyCount = rows.filter((r) => r.verdict === 'ready').length;
 	$: failedCount = rows.filter((r) => r.verdict === 'failed').length;
+	$: unmeasuredCount = rows.filter((r) => r.verdict === 'unmeasured').length;
+	$: actionableRows = sortedRows.filter((r) => r.verdict === 'failed' || r.verdict === 'ready' || r.verdict === 'step');
+	$: collapsible = rows.length > COMPACT_LIMIT;
+	$: visibleRows = !collapsible || showAll
+		? sortedRows
+		: (actionableRows.length ? actionableRows : sortedRows.slice(0, 5));
+	$: hiddenRowsCount = rows.length - visibleRows.length;
 
 	function rowTone(verdict: string | null | undefined): string {
 		if (verdict === 'ready') return 'border border-emerald-500/70 bg-emerald-500/20 hover:bg-emerald-500/30';
 		if (verdict === 'failed') return 'border border-red-500/70 bg-red-500/20 hover:bg-red-500/30';
-		if (verdict === 'unmeasured') return 'border border-amber-500/70 hover:bg-amber-400/10';
+		if (verdict === 'unmeasured') return 'border border-amber-500/40 hover:bg-amber-400/10';
 		return 'border border-transparent hover:bg-amber-400/10';
 	}
 </script>
@@ -37,11 +53,18 @@
 				<div class="flex flex-wrap items-center gap-2 text-[12px]">
 					<ProbationBadge sizePct={null} />
 					<span class="font-semibold text-amber-100">{rows.length} live strateg{rows.length === 1 ? 'y' : 'ies'} on probation (real money, reduced size)</span>
-					<span class="text-sc-ink3">· {rows.length} of {overview.max_strategies} allowed on probation · demotion {auto?.auto_demote ? 'automatic' : 'by hand'}</span>
+					<span class="text-sc-ink3">{#if overview.max_strategies}· {rows.length} of {overview.max_strategies} allowed on probation {:else}· no probation cap {/if}· demotion {auto?.auto_demote ? 'automatic' : 'by hand'}</span>
 					{#if readyCount}<span class="rounded border border-emerald-500/70 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">{readyCount} READY FOR FULL SIZE</span>{/if}
 					{#if failedCount}<span class="rounded border border-red-500/70 bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-200">{failedCount} FAILED</span>{/if}
+					{#if unmeasuredCount}<span class="rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200" title="Backtest trade files are missing for these strategies, so drawdown/streak/band limits are off until their backtest is re-run">{unmeasuredCount} LIMITS UNMEASURED</span>{/if}
+					{#if collapsible}
+						<button type="button" class="ml-auto text-[11px] text-amber-100/80 underline hover:text-amber-100" on:click={() => (showAll = !showAll)} data-testid="desk-probation-toggle">
+							{showAll ? 'Show fewer' : `Show all ${rows.length}`}
+						</button>
+					{/if}
 				</div>
-				{#each rows as row (row.strategy_id)}
+				<div class={`grid gap-1 ${showAll && collapsible ? 'max-h-[340px] overflow-y-auto pr-1' : ''}`}>
+				{#each visibleRows as row (row.strategy_id)}
 					<a
 						href={href(row.strategy_id)}
 						class={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded px-1 py-0.5 text-[12px] ${rowTone(row.verdict)}`}
@@ -65,6 +88,13 @@
 						</span>
 					</a>
 				{/each}
+				</div>
+				{#if hiddenRowsCount > 0}
+					<div class="flex items-center gap-2 pt-0.5 text-[11px] text-sc-ink3">
+						<span>+ {hiddenRowsCount} more on probation{actionableRows.length ? ' (showing those needing action)' : ''}</span>
+						<button type="button" class="underline hover:text-sc-ink" on:click={() => (showAll = true)}>Show all {rows.length}</button>
+					</div>
+				{/if}
 			</div>
 		{/if}
 		{#if ready.length}
