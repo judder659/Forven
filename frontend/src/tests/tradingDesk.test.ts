@@ -130,8 +130,22 @@ describe('statistics and the backtest comparison', () => {
 		expect(stats.n).toBe(8);
 		expect(exp?.headline).toBe('unlucky so far, too early to judge');
 		expect(exp?.verdict).toContain('about 9% of the time by chance');
-		expect(exp?.flag).toBe('info');
+		expect(exp?.flag).toBeNull(); // the pill says so; the desk's attention list stays quiet
 		expect(exp?.slow).toBe(false);
+	});
+
+	it('still raises a small sample that chance explains less than 1% of the time', () => {
+		const fills = Array.from({ length: 9 }, (_, i) =>
+			fill({ id: `E${i}`, net_pnl_usd: -1, closed_at: `2026-09-${10 + i}T00:00:00Z` }));
+		const exp = expectation({
+			backtest: { total_trades: 43, win_rate: 0.4186, backtest_months: 14.3847 } as never,
+			stats: statsFor(fills),
+			since: Date.parse('2026-07-21T14:40:55Z'),
+			now: NOW,
+			mode: 'live',
+		});
+		expect(exp?.headline).toBe('far behind the backtest on few trades');
+		expect(exp?.flag).toBe('info');
 	});
 
 	it('flags a strategy that trades far below its backtest pace', () => {

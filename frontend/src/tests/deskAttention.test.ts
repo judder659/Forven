@@ -48,3 +48,31 @@ describe('DeskAttention collapse', () => {
 		expect(screen.getByTestId('desk-attention-toggle').getAttribute('aria-expanded')).toBe('true');
 	});
 });
+
+describe('DeskAttention dismiss', () => {
+	beforeEach(() => window.localStorage.clear());
+	afterEach(() => cleanup());
+
+	it('hides a dismissed item, keeps it hidden on the next visit, and shows it again on request', async () => {
+		render(DeskAttention, { props: { mode: 'paper', items } });
+		const buttons = screen.getAllByTestId('desk-attention-dismiss');
+		await fireEvent.click(buttons[2]); // the note
+		expect(screen.queryByText('S3: too early to judge')).toBeNull();
+		expect(screen.getByTestId('desk-attention').textContent).toContain('1 critical · 1 warning · 0 notes');
+		cleanup();
+
+		render(DeskAttention, { props: { mode: 'paper', items } });
+		expect(screen.queryByText('S3: too early to judge')).toBeNull();
+		await fireEvent.click(screen.getByTestId('desk-attention-restore'));
+		expect(screen.getByText('S3: too early to judge')).toBeTruthy();
+	});
+
+	it('brings a dismissed item back when it turns more severe', async () => {
+		render(DeskAttention, { props: { mode: 'paper', items } });
+		await fireEvent.click(screen.getAllByTestId('desk-attention-dismiss')[2]);
+		cleanup();
+		const worse = items.map((item) => (item.id === 'c' ? { ...item, severity: 'caution' as const } : item));
+		render(DeskAttention, { props: { mode: 'paper', items: worse } });
+		expect(screen.getByText('S3: too early to judge')).toBeTruthy();
+	});
+});
