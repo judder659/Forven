@@ -154,10 +154,21 @@
 			{/if}
 		</p>
 		{#if status.books_on}
-			<p class="text-[11px] text-yellow-500">
-				Direction books (sub-accounts) are on. The engine runs on the main wallet only and stays off until they are
-				turned off.
-			</p>
+			<div class="space-y-1 text-[11px] text-yellow-500">
+				<p>
+					Off because "Separate long and short accounts" is on. Hyperliquid holds one position per coin per account,
+					so that setting sends longs to one sub-account and shorts to another. Each still allows only one live
+					strategy per coin, and your money is split between them. This engine does the same job on your main wallet
+					without splitting it: long and short strategies share a coin and the exchange holds their sum.
+				</p>
+				<p>
+					To switch: with no live position open, move the USDC from both sub-accounts to your main wallet on
+					Hyperliquid, then turn off
+					<a class="underline hover:text-yellow-400" href="/settings#hyperliquid/risk.live_books_enabled"
+						>Separate long and short accounts</a
+					>. This engine then turns itself on within about 10 minutes.
+				</p>
+			</div>
 		{/if}
 
 		{#if asking && status.enabled}

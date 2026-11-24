@@ -440,8 +440,9 @@ def set_enabled(value: bool) -> dict:
         return status()
     if value and _books_on():
         raise ValueError(
-            "Direction books (sub-accounts) are on. The netting engine runs on the main wallet "
-            "only: turn direction books off first."
+            "\"Separate long and short accounts\" (direction books) is on. The shared-coin engine runs "
+            "on the main wallet only: move the USDC from both sub-accounts to the main wallet, then "
+            "turn that setting off in Settings > Hyperliquid."
         )
     rows = open_rows()
     takeover = None
