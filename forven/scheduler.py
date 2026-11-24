@@ -760,6 +760,50 @@ def migrate_probation_watchdog() -> bool:
     return True
 
 
+# Jobs with a long interval that must still run soon after they are first
+# created. A plain interval job's first run is "now + interval", so the 30-day
+# Binance Vision backfill never ran on a new install (or after any reseed)
+# until a month later, and backtests needing OI / long-short / taker history
+# from before the live collectors started saw empty columns and made no trades.
+_FIRST_RUN_SOON_JOB_IDS: dict[str, float] = {
+    "forven-data-bv-backfill": 10 * 60.0,
+}
+
+
+def _first_run_soon_at(job_id: str) -> str | None:
+    delay = _FIRST_RUN_SOON_JOB_IDS.get(job_id)
+    if delay is None:
+        return None
+    return (datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat()
+
+
+def migrate_first_run_soon_jobs() -> int:
+    """Bring forward the first run of a job in ``_FIRST_RUN_SOON_JOB_IDS``
+    that has never run and is waiting out its long interval. Idempotent: once
+    the job has run (last_run_at set) its schedule is left alone."""
+    moved = 0
+    now = datetime.now(timezone.utc)
+    with get_db() as conn:
+        for job_id, delay in _FIRST_RUN_SOON_JOB_IDS.items():
+            row = conn.execute(
+                "SELECT last_run_at, next_run_at FROM scheduler_jobs WHERE id = ? AND enabled = 1",
+                (job_id,),
+            ).fetchone()
+            if row is None or row["last_run_at"]:
+                continue
+            soon = now + timedelta(seconds=delay)
+            next_dt = _parse_job_next_run({"next_run_at": row["next_run_at"]})
+            if next_dt is not None and next_dt <= soon:
+                continue
+            conn.execute(
+                "UPDATE scheduler_jobs SET next_run_at = ? WHERE id = ?",
+                (soon.isoformat(), job_id),
+            )
+            moved += 1
+            log.info("Scheduled the first run of %s for %s", job_id, soon.isoformat())
+    return moved
+
+
 def _sync_data_collector_cadence() -> None:
     """Keep forven-data-sla-collector on collector.tick_seconds (Settings ->
     Data is the source of truth for its cadence)."""
@@ -906,7 +950,8 @@ def add_job(
             (
                 job_id, name, schedule_type, schedule_expr,
                 timezone_str, command, json.dumps(payload) if payload else None,
-                _compute_next_run(schedule_type, schedule_expr, timezone_str, job_id=job_id),
+                _first_run_soon_at(job_id)
+                or _compute_next_run(schedule_type, schedule_expr, timezone_str, job_id=job_id),
             ),
         )
 
@@ -3563,6 +3608,10 @@ def reconcile_forven_jobs() -> dict[str, int]:
         added = len(missing)
     else:
         added = 0
+
+    # Bring forward the first Binance Vision backfill on installs where it
+    # was scheduled a month out and never ran.
+    migrate_first_run_soon_jobs()
 
     return {"removed": removed, "added": added}
 
