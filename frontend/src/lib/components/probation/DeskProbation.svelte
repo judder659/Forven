@@ -25,6 +25,7 @@
 	function rowTone(verdict: string | null | undefined): string {
 		if (verdict === 'ready') return 'border border-emerald-500/70 bg-emerald-500/20 hover:bg-emerald-500/30';
 		if (verdict === 'failed') return 'border border-red-500/70 bg-red-500/20 hover:bg-red-500/30';
+		if (verdict === 'unmeasured') return 'border border-amber-500/70 hover:bg-amber-400/10';
 		return 'border border-transparent hover:bg-amber-400/10';
 	}
 </script>
@@ -58,6 +59,7 @@
 							<span class={row.live_return_pct < 0 ? 'text-red-300' : 'text-sc-ink'}>{row.live_return_pct > 0 ? '+' : ''}{row.live_return_pct.toFixed(2)}%</span>
 							{#if row.verdict === 'ready'}<span class="rounded bg-emerald-500/25 px-1.5 text-[10.5px] font-semibold text-emerald-200">Ready for full size</span>
 							{:else if row.verdict === 'failed'}<span class="rounded bg-red-500/25 px-1.5 text-[10.5px] font-semibold text-red-200">Failed: back to paper recommended</span>
+							{:else if row.verdict === 'unmeasured'}<span class="rounded bg-amber-500/25 px-1.5 text-[10.5px] font-semibold text-amber-200">Limits can't be checked</span>
 							{:else if row.verdict === 'step'}<span class="rounded bg-sky-500/20 px-1.5 text-[10.5px] font-semibold text-sky-200">Next size earned</span>{/if}
 							{#if row.triggers.length}<span class="text-red-300" title={row.triggers.map((t) => t.label).join(', ')}>⚠ {row.triggers.length}</span>{/if}
 						</span>
