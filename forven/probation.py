@@ -477,6 +477,7 @@ def entry_check(
         detail += f"; {confirmation['mismatched']} paper trade(s) were not the replay's own"
     checks.append(_check("paper_confirmation", "Paper trades match the backtest", ok, detail))
 
+    paper_return: float | None = None
     try:
         paper = policy._check_paper_return(strategy_id)
         extra = paper[2] if len(paper) > 2 and isinstance(paper[2], dict) else {}
@@ -495,7 +496,7 @@ def entry_check(
     else:
         checks.append(_check(
             "edge_covers_costs", "Edge covers costs", coverage >= want,
-            f"average trade covers {coverage:.1f}x the round-trip cost (need {want:g}x)",
+            f"average trade covers {_floor_tenth(coverage):.1f}x the round-trip cost (need {want:g}x)",
         ))
 
     try:
@@ -590,7 +591,13 @@ def entry_check(
         "need_days": int(k["slow_confirm_days"]) if slow else 0,
         "notes": notes,
         "holdout_submitted": holdout_submitted,
+        "paper_return_pct": paper_return,
     }
+
+
+def _floor_tenth(value: float) -> float:
+    """Round down to one decimal, so 1.96x reads 1.9x, not a passing-looking 2.0x."""
+    return math.floor(value * 10.0 + 1e-9) / 10.0
 
 
 def _holdout_missing(strategy_id: str) -> bool:
@@ -1114,17 +1121,41 @@ def _ready_entries(cfg: dict, *, holdout_submits: int = 0) -> list[dict[str, Any
             "WHERE LOWER(TRIM(COALESCE(stage, ''))) IN ('paper', 'paper_trading') "
             "ORDER BY COALESCE(stage_changed_at, created_at)"
         ).fetchall()
-    entries: list[dict[str, Any]] = []
+    reports: dict[str, dict[str, Any]] = {}
     for row in rows:
         sid = str(row["id"])
         try:
-            report = entry_check(sid, cfg, submit_holdout_when_clear=holdout_submits > 0)
+            reports[sid] = entry_check(sid, cfg)
         except Exception as exc:  # noqa: BLE001
             log.debug("Probation entry check failed for %s: %s", sid, exc)
+
+    # Held-back tests are scarce (a few per strategy family per quarter), so
+    # spend them on the strongest paper records first, not the oldest.
+    if holdout_submits > 0:
+        waiting = [
+            sid for sid, report in reports.items()
+            if [c["key"] for c in report["failing"]] == ["held_back"] and _holdout_missing(sid)
+        ]
+        waiting.sort(key=lambda sid: -(reports[sid].get("paper_return_pct") or 0.0))
+        for sid in waiting:
+            if holdout_submits <= 0:
+                break
+            try:
+                report = entry_check(sid, cfg, submit_holdout_when_clear=True)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Probation entry check failed for %s: %s", sid, exc)
+                continue
+            reports[sid] = report
+            if report.get("holdout_submitted"):
+                holdout_submits -= 1
+                log.info("Probation: started the held-back test for %s (every other check passes)", sid)
+
+    entries: list[dict[str, Any]] = []
+    for row in rows:
+        sid = str(row["id"])
+        report = reports.get(sid)
+        if report is None:
             continue
-        if report.get("holdout_submitted"):
-            holdout_submits -= 1
-            log.info("Probation: started the held-back test for %s (every other check passes)", sid)
         entries.append({
             "strategy_id": sid,
             "display_id": row["display_id"] or sid,

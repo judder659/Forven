@@ -560,3 +560,36 @@ def test_pending_full_size_go_live_requests_are_closed(forven_db):
         close(conn)
         rows = dict(conn.execute("SELECT requested_status, status FROM approvals").fetchall())
     assert rows == {"live_graduated": "expired", "paper": "pending_approval"}
+
+
+def test_scarce_held_back_tests_go_to_the_best_paper_record_first(env, monkeypatch):
+    import forven.policy as policy
+
+    holdouts = {"S1": "missing", "S2": "missing"}
+    submitted = []
+
+    def fake_gate(sid, submit=False, stage="paper"):
+        if submit and holdouts[sid] == "missing":
+            submitted.append(sid)
+            holdouts[sid] = "running"
+        return ("Held-back test pending", "holdout_pending")
+
+    monkeypatch.setattr(policy, "holdout_gate_reason", fake_gate)
+    monkeypatch.setattr(probation, "_holdout_missing", lambda sid: holdouts[sid] == "missing")
+    monkeypatch.setattr(probation, "HOLDOUT_SUBMITS_PER_TICK", 1)
+    monkeypatch.setattr("forven.paper_door.holdout_at_paper", lambda cfg: False)
+    returns = {"S1": 0.5, "S2": 4.0}
+    monkeypatch.setattr(policy, "_check_paper_return", lambda sid: (True, "", {"current": returns[sid]}))
+    for sid in ("S1", "S2"):  # S1 entered paper first
+        _strategy(sid)
+        for _ in range(3):
+            _trade(sid)
+
+    probation.tick()
+    assert submitted == ["S2"]
+
+
+def test_cost_coverage_never_rounds_up_to_the_bar():
+    assert probation._floor_tenth(1.96) == 1.9
+    assert probation._floor_tenth(2.0) == 2.0
+    assert probation._floor_tenth(2.04) == 2.0
