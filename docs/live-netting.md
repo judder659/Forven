@@ -5,16 +5,22 @@ Forven lets one live strategy hold a coin at a time and refuses every other
 entry on it. With the engine on, any number of live strategies can trade the
 same coin, long or short, at the same time.
 
-It is **off by default**. Turn it on from the Risk page ("Shared coins"), by
-typing `NETTING`. It runs on the main wallet only (it stays off while direction
-books are on).
+It is **on by default**, on the main wallet (it stays off while direction books
+are on). An install that has never chosen is switched over by itself the first
+time Forven runs with exchange keys set, and you are told when it happens. The
+Live Trades page shows the slots at the top: how many are free, what is in each,
+and what every coin adds up to on the exchange.
 
-Turning it on with live positions open takes them over: the coin's disaster stop
-is placed first, then each trade's own stop and target orders are cancelled and
-Forven runs those levels from then on. If the exchange refuses a disaster stop,
-or a coin's trades do not match the exchange, nothing is changed and the engine
-stays off. Turning it off waits until the live positions have closed, because by
-then several strategies may share a coin.
+Switching over with live positions open takes them over: the coin's disaster
+stop is placed first, then each trade's own stop and target orders are cancelled
+and Forven runs those levels from then on. If the exchange refuses a disaster
+stop, or a coin's trades do not match the exchange, nothing is changed, you get
+a notice, and Forven tries again every 10 minutes.
+
+You can turn it off on the Risk page ("Shared coins") by typing `ONE PER COIN`.
+That brings back one live strategy per coin. Turning it off waits until the live
+positions have closed, because by then several strategies may share a coin. An
+install that was turned off stays off until you turn it on again.
 
 ## What changes when it is on
 
@@ -109,7 +115,8 @@ the rest out without an order.
 
 - `GET /api/live/netting`: status, slots, each coin's trades, net position and
   disaster stop.
-- `POST /api/live/netting` `{"enabled": true, "confirm": "NETTING"}`: switch.
+- `POST /api/live/netting` `{"enabled": true}` to turn on,
+  `{"enabled": false, "confirm": "ONE PER COIN"}` to turn off.
 - `POST /api/live/netting/settings`
   `{"slots_override": 0, "slot_coverage_pct": 95, "disaster_gap_pct": 0.5}`.
 - `POST /api/live/netting/check`: compare with the exchange now.

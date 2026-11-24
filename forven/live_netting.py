@@ -21,10 +21,12 @@ every other entry. With it:
   operator, who decides how to resolve it. The engine never trades on its own
   to "fix" a difference.
 
-Off by default (setting ``live_netting_enabled``). Master wallet only: it will
-not turn on while direction books (sub-accounts) are enabled. It can only be
-switched while no live position is open, so a position is never handed from
-one set of rules to the other midway.
+Master wallet only: it will not turn on while direction books (sub-accounts)
+are enabled. Turning it on takes over open live positions; turning it off waits
+for them to close.
+
+On by default: an install that has never chosen is switched over by the daemon
+(``auto_activate``). An operator can turn it off on the Risk page.
 """
 
 from __future__ import annotations
@@ -255,10 +257,20 @@ def _invalidate_enabled() -> None:
     _enabled_cache.update(at=0.0, value=False)
 
 
-def _write_switch(value: bool) -> None:
+def _switch_chosen() -> bool:
+    """Whether this install has a stored choice (on or off) rather than the default."""
+    raw = kv_get(SETTINGS_KV_KEY, {})
+    return isinstance(raw, dict) and "live_netting_enabled" in raw
+
+
+def _write_switch(value: bool | None) -> None:
+    """Store the switch. None forgets the choice, so the install is back on the default."""
     raw = kv_get(SETTINGS_KV_KEY, {})
     raw = dict(raw) if isinstance(raw, dict) else {}
-    raw["live_netting_enabled"] = bool(value)
+    if value is None:
+        raw.pop("live_netting_enabled", None)
+    else:
+        raw["live_netting_enabled"] = bool(value)
     kv_set(SETTINGS_KV_KEY, raw)
     _invalidate_enabled()
 
@@ -311,6 +323,7 @@ def _take_over_open_positions(rows: list[dict]) -> dict:
             )
 
     _ensure_schema()
+    chosen_before = _switch_chosen()
     _mark_rows(rows, True)
     _write_switch(True)
     failed: list[str] = []
@@ -327,7 +340,9 @@ def _take_over_open_positions(rows: list[dict]) -> dict:
                 _cancel_stop(coin, stop["oid"], testnet)
         with get_db() as conn:
             conn.execute("DELETE FROM live_netting_stops")
-        _write_switch(False)
+        # Back to exactly what was stored before: an install that had never
+        # chosen is still on the default and is tried again later.
+        _write_switch(False if chosen_before else None)
         _mark_rows(rows, False)
         raise ValueError(
             f"The exchange refused the disaster stop on {', '.join(failed)}, so the engine was left off "
@@ -359,6 +374,57 @@ def _take_over_open_positions(rows: list[dict]) -> dict:
             severity="warning",
         )
     return {"taken_over": [r["trade_id"] for r in rows], "coins": coins, "uncancelled": leftover}
+
+
+AUTO_RETRY_SECONDS = 600.0
+_auto_last_try = [0.0]
+
+
+def auto_activate() -> str | None:
+    """Switch an install over by itself. Returns what happened, None when nothing to do.
+
+    The engine is the default way to trade live. The stored switch stays the
+    one source of truth (so a position is never under two sets of rules); an
+    install that has never chosen is moved onto the engine here, with any open
+    live positions taken over the safe way. An operator who turned it off is
+    left alone. If the takeover cannot be done cleanly it changes nothing,
+    tells the operator once, and tries again later.
+    """
+    if _switch_chosen():
+        return None  # already on, or the operator's own choice
+    if _books_on():
+        return None  # sub-account trading keeps the one-position-per-coin rules
+    from forven.sim.clock import is_sim_active
+
+    if is_sim_active():
+        return None  # a simulation never touches the real switch or the exchange
+    now = time.time()
+    if now - _auto_last_try[0] < AUTO_RETRY_SECONDS:
+        return None
+    _auto_last_try[0] = now
+    try:
+        out = set_enabled(True)
+    except Exception as exc:  # noqa: BLE001 - nothing was changed; retry later
+        log.warning("live netting: could not switch this install over yet: %s", exc)
+        _notify(
+            "live_netting_auto_activation_waiting", "install",
+            "Shared coins not switched on yet",
+            f"Forven tried to move live trading onto the shared-coin engine and left everything as it was: {exc} "
+            "It will try again in 10 minutes. You can also turn it on from the Risk page.",
+            severity="warning",
+        )
+        return f"waiting: {exc}"
+    taken = len((out.get("takeover") or {}).get("taken_over") or [])
+    _notify(
+        "live_netting_auto_activated", "install",
+        "Live strategies can now share coins",
+        "Live trading now runs on the shared-coin engine: any number of live strategies can trade the same coin, "
+        "Forven runs each strategy's stop and target, and one disaster stop per coin rests on the exchange. "
+        + (f"{taken} open live position(s) were taken over. " if taken else "")
+        + "You can turn it off on the Risk page.",
+        severity="info",
+    )
+    return "activated"
 
 
 def set_enabled(value: bool) -> dict:
@@ -1433,17 +1499,18 @@ def slot_slice(equity: float | None) -> tuple[float | None, dict]:
     }
 
 
+def slot_share(row: dict, weights: dict[str, float] | None = None) -> float:
+    """How much of one slot an open trade takes: 1 at full size, its share on probation."""
+    probation = row["signal_data"].get("probation")
+    size_pct = _float(probation.get("size_pct")) if isinstance(probation, dict) else None
+    if size_pct is not None:
+        return min(max(size_pct / 100.0, 0.0), 1.0)
+    return (weights or {}).get(row["strategy_id"], 1.0) if isinstance(probation, dict) else 1.0
+
+
 def slots_in_use(rows: list[dict] | None = None, weights: dict[str, float] | None = None) -> float:
     rows = open_rows() if rows is None else rows
-    used = 0.0
-    for row in rows:
-        probation = row["signal_data"].get("probation")
-        size_pct = _float(probation.get("size_pct")) if isinstance(probation, dict) else None
-        if size_pct is not None:
-            used += min(max(size_pct / 100.0, 0.0), 1.0)
-        else:
-            used += (weights or {}).get(row["strategy_id"], 1.0) if isinstance(probation, dict) else 1.0
-    return used
+    return sum(slot_share(row, weights) for row in rows)
 
 
 def slot_admission(strategy_id: str, equity: float | None) -> tuple[bool, str]:
@@ -1510,7 +1577,10 @@ def status() -> dict:
                     if issue else None
                 ),
                 "trades": [
-                    {k: r.get(k) for k in ("trade_id", "strategy_id", "side", "size", "entry_price", "stop_price", "target_price", "opened_at")}
+                    {
+                        **{k: r.get(k) for k in ("trade_id", "strategy_id", "side", "size", "entry_price", "stop_price", "target_price", "opened_at")},
+                        "slot_share": slot_share(r),
+                    }
                     for r in coin_rows
                 ],
             })

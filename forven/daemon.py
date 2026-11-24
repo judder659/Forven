@@ -1780,7 +1780,11 @@ def _run_live_netting() -> dict | None:
     from forven import live_netting
 
     if not live_netting.enabled():
-        return None
+        # On by default: an install that has never chosen is switched over here.
+        # Only where real orders are possible at all (exchange credentials set).
+        creds_ok, _ = _exchange_credentials_status()
+        if not creds_ok or not live_netting.auto_activate() == "activated":
+            return None
     return live_netting.sweep()
 
 

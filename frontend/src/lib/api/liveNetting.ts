@@ -3,7 +3,8 @@
 // operator's tools for a coin whose books and exchange position differ.
 import { fetchApi } from './core';
 
-export const NETTING_CONFIRM_PHRASE = 'NETTING';
+// Typed to turn the engine OFF (back to one live strategy per coin). On needs no phrase.
+export const NETTING_OFF_PHRASE = 'ONE PER COIN';
 
 export interface NettingTrade {
 	trade_id: string;
@@ -14,6 +15,8 @@ export interface NettingTrade {
 	stop_price: number | null;
 	target_price: number | null;
 	opened_at: string | null;
+	/** Share of one slot this trade takes: 1 at full size, 0.25 or 0.5 on probation. */
+	slot_share?: number;
 }
 
 export interface NettingDisasterStop {

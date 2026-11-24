@@ -170,7 +170,7 @@ def _settle() -> None:
 # --- the switch -----------------------------------------------------------------
 
 
-def test_off_by_default_and_every_call_goes_straight_to_the_exchange(ex):
+def test_when_off_every_call_goes_straight_to_the_exchange(ex):
     kv_set(netting.SETTINGS_KV_KEY, {})
     netting._invalidate_enabled()
     assert netting.enabled() is False
@@ -249,6 +249,89 @@ def test_it_stays_off_while_direction_books_are_on(ex, monkeypatch):
     netting._invalidate_enabled()
     assert netting.enabled() is False  # even if the stored switch says on
     assert netting.active_for("0xsubaccount") is False
+
+
+# --- on by default --------------------------------------------------------------
+
+
+def _never_chosen() -> None:
+    kv_set(netting.SETTINGS_KV_KEY, {})
+    netting._invalidate_enabled()
+    netting._auto_last_try[0] = 0.0
+
+
+def test_an_install_that_never_chose_is_switched_on(ex):
+    _never_chosen()
+    assert netting.enabled() is False
+    assert netting.auto_activate() == "activated"
+    assert netting.enabled() is True
+    assert [a["event"] for a in ex.alerts] == ["live_netting_auto_activated"]
+    assert netting.auto_activate() is None  # nothing more to do
+
+
+def test_switching_on_by_default_takes_over_open_positions(ex):
+    _legacy_position(ex)
+    netting._auto_last_try[0] = 0.0
+    assert netting.auto_activate() == "activated"
+    assert [s["price"] for s in ex.stops.values()] == [pytest.approx(190.0 * 0.995)]
+    assert sorted(ex.cancelled) == ["501", "502"]
+    assert "1 open live position" in ex.alerts[-1]["summary"]
+
+
+def test_a_takeover_that_cannot_be_done_cleanly_changes_nothing_and_waits(ex):
+    _legacy_position(ex)
+    netting._auto_last_try[0] = 0.0
+    ex.reject_stop = "would immediately trigger"
+    assert netting.auto_activate().startswith("waiting")
+    assert netting.enabled() is False
+    assert sorted(ex.stops) == ["501", "502"] and not ex.cancelled
+    assert ex.alerts[-1]["event"] == "live_netting_auto_activation_waiting"
+    ex.reject_stop = None
+    assert netting.auto_activate() is None  # not hammered: waits for the retry interval
+    netting._auto_last_try[0] = 0.0
+    assert netting.auto_activate() == "activated"
+
+
+def test_an_operator_who_turned_it_off_is_left_alone(ex):
+    assert netting.set_enabled(False)["enabled"] is False
+    netting._auto_last_try[0] = 0.0
+    assert netting.auto_activate() is None
+    assert netting.enabled() is False
+
+
+def test_it_is_not_switched_on_by_default_while_direction_books_are_on(ex, monkeypatch):
+    from forven.exchange import books
+
+    _never_chosen()
+    monkeypatch.setattr(books, "books_enabled", lambda settings=None: True)
+    assert netting.auto_activate() is None
+    assert netting.enabled() is False
+
+
+def test_the_daemon_only_switches_an_install_that_can_trade(ex, monkeypatch):
+    from forven import daemon
+
+    _never_chosen()
+    monkeypatch.setattr(daemon, "_exchange_credentials_status", lambda: (False, "no key"))
+    assert daemon._run_live_netting() is None
+    assert netting.enabled() is False
+    monkeypatch.setattr(daemon, "_exchange_credentials_status", lambda: (True, None))
+    assert daemon._run_live_netting() is not None
+    assert netting.enabled() is True
+
+
+def test_turning_it_off_asks_for_the_typed_phrase_and_on_does_not(ex):
+    from fastapi import HTTPException
+
+    from forven.routers import live_netting as router
+
+    with pytest.raises(HTTPException) as refused:
+        router.switch_live_netting(router.LiveNettingSwitchBody(enabled=False))
+    assert refused.value.status_code == 400 and netting.enabled() is True
+    assert router.switch_live_netting(
+        router.LiveNettingSwitchBody(enabled=False, confirm="one per coin")
+    )["enabled"] is False
+    assert router.switch_live_netting(router.LiveNettingSwitchBody(enabled=True))["enabled"] is True
 
 
 def test_a_failed_read_keeps_the_last_known_switch(ex, monkeypatch):

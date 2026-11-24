@@ -2,7 +2,7 @@
 	import { onDestroy, onMount } from 'svelte';
 	import { ApiError } from '$lib/api/core';
 	import {
-		NETTING_CONFIRM_PHRASE,
+		NETTING_OFF_PHRASE,
 		checkLiveNetting,
 		getLiveNetting,
 		resolveLiveNetting,
@@ -51,15 +51,16 @@
 		}
 	}
 
-	async function turnOn() {
-		await run(() => setLiveNetting(true, confirmText), 'Could not turn the engine on.');
+	const turnOn = () => run(() => setLiveNetting(true), 'Could not turn the engine on.');
+
+	async function turnOff() {
+		await run(() => setLiveNetting(false, confirmText), 'Could not turn the engine off.');
 		if (!actionError) {
 			asking = false;
 			confirmText = '';
 		}
 	}
 
-	const turnOff = () => run(() => setLiveNetting(false), 'Could not turn the engine off.');
 	const checkNow = () => run(() => checkLiveNetting(), 'Could not check the exchange.');
 	const resolve = (coin: string, action: NettingResolveAction) =>
 		run(() => resolveLiveNetting(coin, action), 'Could not resolve the difference.');
@@ -122,11 +123,13 @@
 					<button class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" disabled={busy} on:click={checkNow}>
 						Check now
 					</button>
-					<button class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" disabled={busy} on:click={turnOff}>
-						Turn off
-					</button>
-				{:else if !asking}
-					<button class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" disabled={busy} on:click={() => (asking = true)}>
+					{#if !asking}
+						<button class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" disabled={busy} on:click={() => (asking = true)}>
+							Turn off
+						</button>
+					{/if}
+				{:else}
+					<button class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink" disabled={busy || status.books_on} on:click={turnOn}>
 						Turn on
 					</button>
 				{/if}
@@ -146,7 +149,8 @@
 				exchange in case Forven is not running.
 			{:else}
 				Off: one live strategy can hold a coin at a time and every other entry on that coin is refused. Turn this on
-				to let live strategies share coins. Open live positions are taken over when you turn it on.
+				to let live strategies share coins. Open live positions are taken over when you turn it on: each coin gets
+				its disaster stop first, then Forven runs each trade's own stop and target, so Forven must be running.
 			{/if}
 		</p>
 		{#if status.books_on}
@@ -156,26 +160,25 @@
 			</p>
 		{/if}
 
-		{#if asking && !status.enabled}
+		{#if asking && status.enabled}
 			<div class="space-y-2 border border-yellow-900 p-3">
 				<p class="text-[11px] text-yellow-500">
-					With this on, a live trade no longer has its own stop order on the exchange, and the stop orders of positions that are open now are replaced. Forven closes it when its
-					stop or target is touched, so Forven must be running. The exchange keeps one disaster stop per coin,
-					{num(status.settings.live_netting_disaster_gap_pct, 2)}% beyond the furthest strategy stop. Type
-					{NETTING_CONFIRM_PHRASE} to turn it on.
+					Turning this off brings back the old rule: one live strategy per coin, and every other live entry on that
+					coin is refused. It can only be turned off while no live position is open. Type {NETTING_OFF_PHRASE} to
+					turn it off.
 				</p>
 				<div class="flex flex-wrap items-center gap-2">
 					<input
 						class="w-40 border border-sc-line2 bg-transparent px-2 py-1 text-[12px] text-sc-ink"
-						placeholder={NETTING_CONFIRM_PHRASE}
+						placeholder={NETTING_OFF_PHRASE}
 						bind:value={confirmText}
 					/>
 					<button
 						class="border border-sc-line2 px-3 py-1 text-[12px] text-sc-ink2 hover:text-sc-ink disabled:opacity-40"
-						disabled={busy || confirmText.trim().toUpperCase() !== NETTING_CONFIRM_PHRASE}
-						on:click={turnOn}
+						disabled={busy || confirmText.trim().toUpperCase() !== NETTING_OFF_PHRASE}
+						on:click={turnOff}
 					>
-						Turn on
+						Turn off
 					</button>
 					<button class="px-2 py-1 text-[12px] text-sc-ink3 hover:text-sc-ink" on:click={() => ((asking = false), (confirmText = ''))}>
 						Cancel

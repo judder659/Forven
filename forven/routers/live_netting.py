@@ -8,7 +8,7 @@ from forven.api_security import require_operator_access
 
 router = APIRouter(tags=["live-netting"], dependencies=[Depends(require_operator_access)])
 
-ENABLE_CONFIRMATION = "NETTING"
+DISABLE_CONFIRMATION = "ONE PER COIN"
 
 
 class LiveNettingSwitchBody(BaseModel):
@@ -34,10 +34,12 @@ def read_live_netting() -> dict:
 
 @router.post("/api/live/netting")
 def switch_live_netting(body: LiveNettingSwitchBody) -> dict:
-    if body.enabled and str(body.confirm or "").strip().upper() != ENABLE_CONFIRMATION:
+    # Off is the unusual state now: it brings back one-strategy-per-coin, so that
+    # is the direction that asks for the typed word.
+    if not body.enabled and str(body.confirm or "").strip().upper() != DISABLE_CONFIRMATION:
         raise HTTPException(
             status_code=400,
-            detail=f"Type {ENABLE_CONFIRMATION} to turn the live netting engine on.",
+            detail=f"Type {DISABLE_CONFIRMATION} to turn shared coins off.",
         )
     try:
         return live_netting.set_enabled(body.enabled)
