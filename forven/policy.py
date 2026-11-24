@@ -319,13 +319,19 @@ DEFAULT_PIPELINE_CONFIG = {
         "max_per_market": 0,
         "max_per_family": 0,
         "retire_enabled": True,
-        "retire_min_trades": 15,
+        "retire_min_trades": 10,
         "retire_max_t_stat": -1.0,
         "retire_max_drawdown_pct": 0.15,
         "retire_idle_days": 60,
         # Retire when the sequential evidence test fails (forward significantly
         # worse than the backtest, or significantly losing).
         "retire_on_sequential_fail": True,
+        # Retire when the one-shot held-back test failed: with these parameters
+        # the strategy can never pass the live gate.
+        "retire_on_holdout_fail": True,
+        # Retire when the edge is under the probation cost bar in the backtest
+        # AND over this many matching home-coin paper trades (0 = never).
+        "retire_edge_min_trades": 20,
         # Submit a paper strategy's frozen rule on up to this many coins its
         # breadth test rates as working, as single-coin siblings (0 = off).
         "auto_port_max": 5,
