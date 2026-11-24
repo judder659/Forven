@@ -362,10 +362,18 @@ def _live_close_trade(trade: dict, *, close_reason: str, note: str | None = None
     testnet = _live_testnet()
     vault = _live_vault_for_trade(trade)
 
+    from forven import live_netting
     from forven.exchange.hyperliquid import close_position
 
     try:
-        result = close_position(asset, size, close_side, testnet=testnet, vault_address=vault)
+        if live_netting.active_for(vault):
+            # NETTING-1: the coin's position is shared; the engine sends the order
+            # that takes THIS trade out of it.
+            result = live_netting.close_position(
+                asset, size, close_side, testnet=testnet, trade_id=str(trade.get("id") or "") or None,
+            )
+        else:
+            result = close_position(asset, size, close_side, testnet=testnet, vault_address=vault)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Exchange close failed: {exc}") from exc
     if isinstance(result, dict) and result.get("error"):
@@ -573,10 +581,14 @@ def _live_reduce(trade: dict, close_qty: float) -> tuple[float, float] | None:
     close_side = "sell" if direction == "long" else "buy"
     testnet = _live_testnet()
     vault = _live_vault_for_trade(trade)
+    from forven import live_netting
     from forven.exchange.hyperliquid import close_position
 
     try:
-        result = close_position(asset, close_qty, close_side, testnet=testnet, vault_address=vault)
+        if live_netting.active_for(vault):
+            result = live_netting.close_position(asset, close_qty, close_side, testnet=testnet)  # NETTING-1
+        else:
+            result = close_position(asset, close_qty, close_side, testnet=testnet, vault_address=vault)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Exchange partial close failed: {exc}") from exc
     if isinstance(result, dict) and result.get("error"):
@@ -844,17 +856,32 @@ def _live_open(
 
     side = "buy" if direction == "long" else "sell"
     normalized_idempotency_key = str(idempotency_key or "").strip()[:160] or None
+    # NETTING-1: through the engine the entry carries no stop/target order of its
+    # own. Forven enforces the levels and the coin keeps one disaster stop.
+    from forven import live_netting
+
+    netted = live_netting.active_for(vault)
     try:
-        result = market_order(
-            asset, side, float(resolved_size),
-            stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
-            testnet=testnet, vault_address=vault,
-            idempotency_key=(
-                f"manual-open:{normalized_idempotency_key}"
-                if normalized_idempotency_key
-                else None
-            ),
-        )
+        if netted:
+            result = live_netting.market_order(
+                asset, side, float(resolved_size), testnet=testnet,
+                idempotency_key=(
+                    f"manual-open:{normalized_idempotency_key}"
+                    if normalized_idempotency_key
+                    else None
+                ),
+            )
+        else:
+            result = market_order(
+                asset, side, float(resolved_size),
+                stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
+                testnet=testnet, vault_address=vault,
+                idempotency_key=(
+                    f"manual-open:{normalized_idempotency_key}"
+                    if normalized_idempotency_key
+                    else None
+                ),
+            )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Exchange open failed: {exc}") from exc
     if isinstance(result, dict) and result.get("error"):
@@ -890,10 +917,12 @@ def _live_open(
         )
     if normalized_idempotency_key:
         signal_data["manual_open_idempotency_key"] = normalized_idempotency_key
+    if netted:
+        signal_data["netting"] = True
     if stop_loss_price:
         signal_data["stop_loss_price"] = float(stop_loss_price)
         signal_data["stop_loss_source"] = "manual"
-        signal_data["exchange_stop_requested"] = True
+        signal_data["exchange_stop_requested"] = not netted
         if stop_oid is not None:
             signal_data["exchange_stop_order_id"] = str(stop_oid)
     if take_profit_price:
@@ -965,6 +994,8 @@ def _live_open(
             stop_loss_price=stop_loss_price, take_profit_price=take_profit_price,
             testnet=testnet, vault=vault,
         )
+    if netted:
+        live_netting.after_fill(asset, testnet=testnet)
     log.info("Manual LIVE open %s %s %s size=%s @ %s", trade_id, direction, asset, filled_size, fill)
 
 
@@ -1089,6 +1120,10 @@ def _adjust_protective(session_id: str, session: dict, trade: dict, kind: str, p
     direction = _normalize_trade_direction(trade.get("direction"))
     live = _trade_is_live(trade)
     sd = parse_trade_signal_data(trade.get("signal_data"))
+    if live and sd.get("netting"):
+        # NETTING-1: a netted trade has no resting order of its own. The level is
+        # stored and Forven's mark watcher enforces it, as for a paper trade.
+        live = False
     existing_oid = sd.get(oid_key)
     vault = _live_vault_for_trade(trade) if live else None
 
@@ -1424,6 +1459,8 @@ def _apply_levels_to_open_trade(trade: dict, levels: dict) -> dict:
     direction = _normalize_trade_direction(trade.get("direction"))
     live = _trade_is_live(trade)
     sd = parse_trade_signal_data(trade.get("signal_data"))
+    if live and sd.get("netting"):
+        live = False  # NETTING-1: levels are stored; Forven enforces them
     vault = _live_vault_for_trade(trade) if live else None
 
     new_sl = levels.get("stop_loss")

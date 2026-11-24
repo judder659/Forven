@@ -1072,9 +1072,13 @@ def _force_close_exchange_backed_trade(trade_id: str, body) -> dict[str, object]
 
     close_side = "sell" if direction == "long" else "buy"
     try:
+        from forven import live_netting
         from forven.exchange.hyperliquid import close_position
 
-        close_result = close_position(asset, float(size), close_side, testnet=testnet)
+        if live_netting.active_for(None):
+            close_result = live_netting.close_position(asset, float(size), close_side, testnet=testnet)  # NETTING-1
+        else:
+            close_result = close_position(asset, float(size), close_side, testnet=testnet)
         if isinstance(close_result, dict) and close_result.get("error"):
             # HL-CLOSE-1: this branch now also catches a reduce-only IOC that came
             # back with NO FILL under a success-shaped payload — close_position fails
@@ -1271,9 +1275,15 @@ def force_close_trade(trade_id: str, body):
     testnet = _resolve_exchange_testnet()
 
     try:
+        from forven import live_netting
         from forven.exchange.hyperliquid import close_position
 
-        close_result = close_position(asset, size, close_side, testnet=testnet)
+        if live_netting.active_for(None):
+            close_result = live_netting.close_position(  # NETTING-1
+                asset, size, close_side, testnet=testnet, trade_id=str(trade_id),
+            )
+        else:
+            close_result = close_position(asset, size, close_side, testnet=testnet)
         if isinstance(close_result, dict) and close_result.get("error"):
             # HL-CLOSE-1 (see _force_close_exchange_backed_trade): a rejected /
             # zero-fill reduce-only IOC arrives here as an error. The trade row stays

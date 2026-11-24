@@ -59,6 +59,7 @@
 	import DeskStrategyRail from './DeskStrategyRail.svelte';
 	import DeskWhyPanel from './DeskWhyPanel.svelte';
 	import DeskProbation from '$lib/components/probation/DeskProbation.svelte';
+	import DeskSlots from './DeskSlots.svelte';
 
 	export let mode: DeskMode;
 	export let dashboard: ForvenDashboardResponse | null = null;
@@ -625,6 +626,7 @@
 			{/if}
 
 			<DeskStatusLine {mode} dashboard={dash} {jobs} wsConnected={$forvenWsConnected} now={clock} />
+			{#if mode === 'live'}<DeskSlots />{/if}
 			<DeskAccountStrip {mode} dashboard={dash} {risk} {fleet} {sessions} {openPnl} openLegs={allLegs.length} {openLong} {openShort} {riskAtStops} {maxBookRiskPct} now={clock} />
 			<DeskAttention {mode} items={attention} on:show={(event) => selectStrategy(event.detail.strategyId, event.detail.tab)} />
 			{#if mode === 'live'}<DeskProbation overview={probation} />{/if}

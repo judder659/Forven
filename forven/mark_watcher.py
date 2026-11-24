@@ -21,11 +21,19 @@ Fills are AT the level — the backtest kernel's own stop/TP convention (TP is a
 resting limit; a stop's fee+slippage cost is charged by the close's PnL drag
 term) — so parity with the backtest is price-exact; only the timing becomes
 honest. Live-stage trades are excluded: their stops rest on the exchange.
+
+The one exception is the live netting engine (``forven.live_netting``). With it
+on, many live strategies share a coin's single exchange position, which cannot
+carry a stop per strategy, so THIS watcher enforces each live trade's stop and
+target: a touched level sends that trade's real close order through the
+scanner's live close path. The exchange keeps only one disaster stop per coin,
+beyond every strategy stop, for the case where Forven is not running.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 log = logging.getLogger("forven.mark_watcher")
@@ -35,6 +43,13 @@ log = logging.getLogger("forven.mark_watcher")
 # are picked up within seconds while ticks stay O(open trades) dict lookups.
 _ARMED_TTL_SECONDS = 10.0
 _armed_cache: dict = {"loaded_at": 0.0, "items": None}
+# A live close is a real order. When one fails (exchange down, liquidity guard),
+# wait before sending it again rather than re-firing on every price tick.
+_LIVE_RETRY_SECONDS = 30.0
+_live_retry_at: dict[str, float] = {}
+# One pass at a time: a pass that sends real orders can outlast the daemon's wait
+# for it, and a second pass over the same rows must not start beside it.
+_pass_lock = threading.Lock()
 
 
 def watcher_enabled() -> bool:
@@ -53,23 +68,45 @@ def _normalize_asset(value) -> str:
     return raw.split("/", 1)[0] if "/" in raw else raw
 
 
-def _load_armed_trades() -> list[dict]:
+def _netting_on() -> bool:
+    try:
+        from forven import live_netting
+
+        return bool(live_netting.enabled())
+    except Exception:  # noqa: BLE001 - unreadable switch: live rows stay with the exchange
+        return False
+
+
+def _load_armed_trades(*, paper: bool = True, live: bool = False) -> list[dict]:
     """Every OPEN local paper trade with an enforceable stop/TP, with the level a
-    real resting order would sit at."""
+    real resting order would sit at. With ``live``, also the netted live trades
+    (the engine's rows), whose levels Forven enforces itself."""
     from forven.db import get_db
     from forven.scanner import _coerce_positive_float
     from forven.trade_state import parse_trade_signal_data
 
+    types: list[str] = []
+    if paper:
+        types += ["paper", "paper_challenger"]
+    if live:
+        types += ["live"]
+    if not types:
+        return []
+    marks = ",".join("?" for _ in types)
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM trades WHERE status = 'OPEN' "
-            "AND COALESCE(execution_type, '') IN ('paper', 'paper_challenger')"
+            f"AND COALESCE(execution_type, '') IN ({marks})",
+            types,
         ).fetchall()
 
     armed: list[dict] = []
     for row in rows:
         trade = dict(row)
         sd = parse_trade_signal_data(trade.get("signal_data"))
+        is_live = str(trade.get("execution_type") or "").strip().lower() == "live"
+        if is_live and not sd.get("netting"):
+            continue  # its stop rests on the exchange
         if sd.get("manual_pause") or sd.get("pending_close_reconcile"):
             continue  # detached from auto-management / close already in flight
         kernel_managed = bool(sd.get("kernel_managed"))
@@ -101,17 +138,24 @@ def _load_armed_trades() -> list[dict]:
                 "stop_kind": stop_kind,
                 "target": target,
                 "kernel_managed": kernel_managed,
+                "live": is_live,
             }
         )
     return armed
 
 
-def _armed_trades(now: float) -> list[dict]:
+def _armed_trades(now: float, *, paper: bool = True, live: bool = False) -> list[dict]:
     items = _armed_cache["items"]
-    if items is None or now - float(_armed_cache["loaded_at"]) > _ARMED_TTL_SECONDS:
-        items = _load_armed_trades()
+    lanes = (paper, live)
+    if (
+        items is None
+        or _armed_cache.get("lanes") != lanes
+        or now - float(_armed_cache["loaded_at"]) > _ARMED_TTL_SECONDS
+    ):
+        items = _load_armed_trades(paper=paper, live=live)
         _armed_cache["items"] = items
         _armed_cache["loaded_at"] = now
+        _armed_cache["lanes"] = lanes
     return items
 
 
@@ -151,6 +195,9 @@ def _close_at_mark(item: dict, reason: str, fill: float, mark: float) -> str | N
         return None
     now_iso = get_now().isoformat()
 
+    if item.get("live"):
+        return _close_live_at_mark(item, reason, mark)
+
     if item["kernel_managed"]:
         from forven.scanner import _kernel_close_recorded
 
@@ -189,6 +236,43 @@ def _close_at_mark(item: dict, reason: str, fill: float, mark: float) -> str | N
     return f"MARK-{reason.upper()} {trade.get('asset')} {direction} @ {fill:.6g}"
 
 
+def _close_live_at_mark(item: dict, reason: str, mark: float) -> str | None:
+    """A netted live trade touched its level: send its real close order.
+
+    Goes through the scanner's live close, so the order, the fill, the PnL, the
+    notification and the risk release are exactly those of a strategy-signalled
+    close. The fill is whatever the exchange gives, not the level. A failed
+    order leaves the trade open and is retried after a short wait.
+    """
+    from types import SimpleNamespace
+
+    from forven.scanner import _kernel_close_live_trade
+
+    from forven.db import get_db
+
+    trade_id = str(item["trade"].get("id"))
+    now = time.time()
+    if now < _live_retry_at.get(trade_id, 0.0):
+        return None
+    with get_db() as conn:  # the cached row may be seconds old: size and flags must be current
+        fresh = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    if not fresh or str(fresh["status"] or "").strip().upper() != "OPEN":
+        return None
+    trade = dict(fresh)
+    strat_id = str(trade.get("strategy_id") or trade.get("strategy") or "")
+    action = SimpleNamespace(
+        recorded={"_row": trade},
+        trade={"exit_price": float(mark), "exit_reason": reason},
+    )
+    msg = _kernel_close_live_trade(strat_id, {"asset": trade.get("asset")}, action, current_price=float(mark))
+    text = str(msg or "")
+    if "FAILED" in text or "pending" in text or "partial" in text or "held" in text:
+        _live_retry_at[trade_id] = now + _LIVE_RETRY_SECONDS
+    else:
+        _live_retry_at.pop(trade_id, None)
+    return f"MARK-{reason.upper()} live {text}" if text else None
+
+
 def check_mark_exits(prices: dict) -> list[str]:
     """Daemon tick entry point: fresh ``{COIN: mark}`` prices → close messages.
 
@@ -197,10 +281,12 @@ def check_mark_exits(prices: dict) -> list[str]:
     if not isinstance(prices, dict) or not prices:
         return []
     try:
-        if not watcher_enabled():
+        paper_on = watcher_enabled()
+        live_on = _netting_on()  # NETTING-1: never gated by the paper setting
+        if not paper_on and not live_on:
             return []
         now = time.time()
-        armed = _armed_trades(now)
+        armed = _armed_trades(now, paper=paper_on, live=live_on)
     except Exception as exc:
         log.warning("mark watcher: armed-level load failed: %s", exc)
         return []
@@ -216,6 +302,15 @@ def check_mark_exits(prices: dict) -> list[str]:
         if price > 0:
             marks[_normalize_asset(key)] = price
 
+    if not _pass_lock.acquire(blocking=False):
+        return []
+    try:
+        return _run_pass(armed, marks)
+    finally:
+        _pass_lock.release()
+
+
+def _run_pass(armed: list[dict], marks: dict[str, float]) -> list[str]:
     out: list[str] = []
     closed_any = False
     for item in armed:
@@ -231,6 +326,8 @@ def check_mark_exits(prices: dict) -> list[str]:
         try:
             msg = _close_at_mark(item, reason, fill, mark)
         except Exception as exc:
+            if item.get("live"):
+                _live_retry_at[str((item.get("trade") or {}).get("id"))] = time.time() + _LIVE_RETRY_SECONDS
             log.error(
                 "mark watcher: close failed for trade %s (%s %s): %s",
                 (item.get("trade") or {}).get("id"), item.get("asset"), reason, exc,

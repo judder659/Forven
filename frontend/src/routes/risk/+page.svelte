@@ -10,6 +10,7 @@
 	import { rebaselineEquityAnchors, setLiveNotionalCeiling, triggerEmergencyHalt } from '$lib/api/forven';
 	import ErrorBanner from '$lib/components/ErrorBanner.svelte';
 	import LoadingState from '$lib/components/LoadingState.svelte';
+	import LiveNettingPanel from '$lib/components/risk/LiveNettingPanel.svelte';
 	import RegimeGatePanel from '$lib/components/risk/RegimeGatePanel.svelte';
 	import { createRealtimeRefresh, type RealtimeRefreshController } from '$lib/utils/realtime';
 
@@ -896,6 +897,10 @@
 			Live-only guards (Portfolio Budget, Liquidity Guard) are hidden in PAPER scope —
 			paper sessions are isolated $10k sandboxes and never share a budget.
 		</div>
+	{/if}
+
+	{#if scope === 'live'}
+		<LiveNettingPanel />
 	{/if}
 
 	<RegimeGatePanel gate={risk?.regime_gate} {scope} on:changed={() => loadRiskData()} />

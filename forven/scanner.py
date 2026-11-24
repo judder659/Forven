@@ -3911,6 +3911,13 @@ def _execute_direct(
     # strict=True: a resolution failure must FAIL the order (not silently route
     # to master), so a routed close can't no-op and strand a live position.
     vault_address = _resolve_trade_vault_address(trade_id, strict=True)
+    # NETTING-1: with the live netting engine on, the master wallet's position
+    # on a coin is shared by every live strategy trading it. The order then
+    # carries no stop/target of its own (Forven runs those; the coin has one
+    # disaster stop) and a close may have to move the position through zero.
+    from forven import live_netting as _netting
+
+    netting_on = (not is_sim_active()) and _netting.active_for(vault_address)
 
     def _extract_order_meta(payload: dict) -> tuple[float | None, str | None, dict]:
         if not isinstance(payload, dict):
@@ -4031,6 +4038,10 @@ def _execute_direct(
         # which silently went DOWN (1.3 -> 1). Unusable values keep the old 1x
         # fallback; the kernel lane refuses them before reaching this point.
         exchange_leverage = _exchange_margin_leverage(leverage) or 1
+        if netting_on:
+            # The coin's margin setting is shared: never lower it under a row
+            # that is already open at a higher leverage.
+            exchange_leverage = max(exchange_leverage, int(_netting.coin_leverage(asset) or 0))
         if not is_sim_active():
             from forven.exchange.hyperliquid import set_leverage
             lev_res = set_leverage(asset, exchange_leverage, testnet=testnet, vault_address=vault_address)
@@ -4050,7 +4061,12 @@ def _execute_direct(
             market_order_kwargs["vault_address"] = vault_address
         if take_profit is not None:
             market_order_kwargs["take_profit_price"] = take_profit
-        result = market_order(**market_order_kwargs)
+        if netting_on:
+            result = _netting.market_order(
+                asset, direction, size, idempotency_key=f"{trade_id}:open", testnet=testnet,
+            )
+        else:
+            result = market_order(**market_order_kwargs)
         fill = None
         if isinstance(result, dict):
             if result.get("error"):
@@ -4068,12 +4084,21 @@ def _execute_direct(
                 order_meta["pending_open_reconcile_at"] = get_now().isoformat()
                 order_meta["open_fill_unconfirmed_price"] = fill
                 fill = None
-            if stop_loss is not None:
-                order_meta["exchange_stop_price"] = float(stop_loss)
-            order_meta["exchange_stop_requested"] = stop_loss is not None
-            if take_profit is not None:
-                order_meta["exchange_take_profit_price"] = float(take_profit)
-            order_meta["exchange_take_profit_requested"] = take_profit is not None
+            if netting_on:
+                # No resting order belongs to this trade: say so, so nothing
+                # later looks for one or reports the position as unprotected.
+                order_meta["netting"] = True
+                order_meta["exchange_stop_requested"] = False
+                order_meta["exchange_take_profit_requested"] = False
+                if result.get("netting_fill_price_estimated"):
+                    order_meta["netting_fill_price_estimated"] = True
+            else:
+                if stop_loss is not None:
+                    order_meta["exchange_stop_price"] = float(stop_loss)
+                order_meta["exchange_stop_requested"] = stop_loss is not None
+                if take_profit is not None:
+                    order_meta["exchange_take_profit_price"] = float(take_profit)
+                order_meta["exchange_take_profit_requested"] = take_profit is not None
             order_meta["exchange_leverage"] = exchange_leverage
             filled_size = result.get("filled_size")
             try:
@@ -4195,6 +4220,8 @@ def _execute_direct(
                             })
                     except Exception as _exc:
                         log.warning("[%s] re-arm take-profit after rejected bracket leg failed for %s trade=%s: %s", strat_id, asset, trade_id, _exc)
+        if netting_on:
+            _netting.after_fill(asset, testnet=testnet)
         log_activity("trade", "scanner", f"OPEN {strat_id} {asset} trade={trade_id} fill={fill}")
         return result
 
@@ -4209,6 +4236,10 @@ def _execute_direct(
         # Best-effort — a read failure must never block the close.
         funding_since_open_usd = None
         try:
+            if netting_on:
+                # The exchange reports funding for the whole shared position,
+                # not for this strategy's part of it: do not book it to one trade.
+                raise LookupError("shared position")
             from forven.exchange.hyperliquid import get_positions as _get_positions_for_funding
             _pos_payload = _get_positions_for_funding(
                 testnet=testnet, **({"account_address": vault_address} if vault_address else {})
@@ -4224,7 +4255,10 @@ def _execute_direct(
                     break
         except Exception:
             funding_since_open_usd = None
-        result = close_position(asset, size, close_side, **close_kwargs)
+        if netting_on:
+            result = _netting.close_position(asset, size, close_side, testnet=testnet, trade_id=str(trade_id))
+        else:
+            result = close_position(asset, size, close_side, **close_kwargs)
         if isinstance(result, dict) and funding_since_open_usd is not None:
             result["funding_since_open_usd"] = funding_since_open_usd
             # Persist on the trade so EVERY close path folds funding into net,
@@ -7284,7 +7318,22 @@ def _kernel_refresh_live_trade(strat_id: str, action) -> str | None:
         tightened = eff is not None and (
             old is None or (eff - old) * sign > max(abs(old), 1e-9) * 1e-4
         )
-        if tightened:
+        if tightened and sd.get("netting"):
+            # NETTING-1: this trade has no resting stop of its own. Forven's mark
+            # watcher enforces the level, so the ratchet is a stored value; the
+            # coin's disaster stop follows it on the next engine sweep.
+            updates.update({
+                "stop_loss": float(eff), "stop_loss_price": float(eff), "effective_stop_price": float(eff),
+                "stop_loss_source": "kernel_trailing" if pos.get("trail_pct") else "kernel",
+                "sl_adjusted_at": get_now().isoformat(),
+            })
+            try:
+                from forven.mark_watcher import invalidate_armed_cache
+
+                invalidate_armed_cache()
+            except Exception:
+                pass
+        elif tightened:
             trade_id = str(row.get("id"))
             asset = str(row.get("asset") or "").strip().upper()
             size = abs(_coerce_positive_float(row.get("size")) or 0.0)
@@ -7331,7 +7380,7 @@ def _kernel_refresh_live_trade(strat_id: str, action) -> str | None:
         updates["kernel_entry_time"] = str(action.entry_time)
     if updates:
         _update_trade_signal_data(str(row.get("id")), updates)
-    if updates.get("exchange_stop_order_id"):
+    if updates.get("exchange_stop_order_id") or (sd.get("netting") and updates.get("sl_adjusted_at")):
         return f"LIVE-STOP-RATCHET {row.get('asset')} {direction} → {float(updates['stop_loss']):.6g}"
     return None
 
@@ -8063,12 +8112,20 @@ def _kernel_close_live_trade(
     # the trade OPEN for retry, mirroring the legacy _close_via_execution path (the
     # kernel path previously let the exception propagate to a bare log.error with no
     # operator notification).
+    # NETTING-1: on a shared position "nothing left to reduce" does not mean this
+    # trade is closed, and the trade owns no resting order to retire.
+    from forven import live_netting as _netting
+
+    _netted = bool(parse_trade_signal_data(row.get("signal_data")).get("netting")) and _netting.enabled()
     try:
         result = _execute_direct("close", trade_id, strat_id, asset, direction, size, ref_price, close_reason=reason)
     except Exception as exc:
-        if _close_refused_position_gone(exc):
+        if _close_refused_position_gone(exc) and not _netted:
             _hold_close_for_reconcile(strat_id, trade_id, asset, exc)
             return f"LIVE-KERNEL-CLOSE {asset} position already closed on the exchange (held for reconcile)"
+        if _netted and _netting.is_hold(exc):
+            log.info("[%s] live close of %s trade=%s waiting: %s", strat_id, asset, trade_id, exc)
+            return f"LIVE-KERNEL-CLOSE {asset} held for retry — {exc}"
         log.error("[%s] live kernel close failed for %s trade=%s: %s", strat_id, asset, trade_id, exc)
         _report_execution_failure(strat_id, "close", trade_id, str(exc))
         return f"LIVE-KERNEL-CLOSE {asset} FAILED — {exc} (held for retry)"
@@ -8086,15 +8143,18 @@ def _kernel_close_live_trade(
     pnl_pct = ((ref_price - entry_price) / entry_price) * signed * leverage if entry_price else 0.0
     pnl_usd = (ref_price - entry_price) * size * signed
     _close_trade_db(trade_id, ref_price, pnl_pct, pnl_usd, close_reason=reason)
-    try:
-        _vault = _resolve_trade_vault_address(trade_id)
-        _stop_oids = _trade_stop_oids(row)
-        if _vault:
-            _retire_trade_protection_orders(asset, _vault, stop_oids=_stop_oids)
-        else:
-            _retire_trade_protection_orders(asset, stop_oids=_stop_oids)
-    except Exception as exc:
-        log.warning("[%s] live kernel close: protection-order retire failed: %s", strat_id, exc)
+    if _netted:
+        _netting.after_fill(asset)
+    else:
+        try:
+            _vault = _resolve_trade_vault_address(trade_id)
+            _stop_oids = _trade_stop_oids(row)
+            if _vault:
+                _retire_trade_protection_orders(asset, _vault, stop_oids=_stop_oids)
+            else:
+                _retire_trade_protection_orders(asset, stop_oids=_stop_oids)
+        except Exception as exc:
+            log.warning("[%s] live kernel close: protection-order retire failed: %s", strat_id, exc)
     try:
         release(trade_id)
     except Exception:
@@ -10238,6 +10298,14 @@ def sweep_pending_close_reconcile() -> dict:
             # RECON-1: resolve the trade's routed sub-account so the exchange
             # truth check reads where the position actually lives, not master.
             vault = _resolve_trade_vault_address(trade_id)
+            # NETTING-1: on a shared position "the coin is flat" or "the coin is
+            # still held" says nothing about ONE trade. The engine's own sweep
+            # checks the coin's net position and frees a close that did not
+            # happen, so this per-trade check stands aside.
+            from forven import live_netting as _netting
+
+            if _netting.active_for(vault):
+                continue
             exchange_size = _exchange_open_size(asset, vault)
             has_position = None if exchange_size is None else exchange_size > 0
 
