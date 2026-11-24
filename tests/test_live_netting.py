@@ -304,8 +304,12 @@ def test_it_is_not_switched_on_by_default_while_direction_books_are_on(ex, monke
 
     _never_chosen()
     monkeypatch.setattr(books, "books_enabled", lambda settings=None: True)
+    kv_set(netting.BOOKS_NOTICE_KV_KEY, None)
     assert netting.auto_activate() is None
     assert netting.enabled() is False
+    assert netting.auto_activate() is None
+    # Told once how to switch, not on every pass.
+    assert [a["event"] for a in ex.alerts] == ["live_netting_books_on"]
 
 
 def test_the_daemon_only_switches_an_install_that_can_trade(ex, monkeypatch):

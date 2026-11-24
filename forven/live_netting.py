@@ -376,6 +376,27 @@ def _take_over_open_positions(rows: list[dict]) -> dict:
     return {"taken_over": [r["trade_id"] for r in rows], "coins": coins, "uncancelled": leftover}
 
 
+BOOKS_NOTICE_KV_KEY = "forven:live_netting:books_notice_sent"
+
+
+def _tell_books_users_once() -> None:
+    try:
+        if kv_get(BOOKS_NOTICE_KV_KEY, None):
+            return
+        kv_set(BOOKS_NOTICE_KV_KEY, {"at": _iso()})
+    except Exception:  # noqa: BLE001 - a notice must never break the daemon pass
+        return
+    _notify(
+        "live_netting_books_on", "install",
+        "Shared coins is off while you use separate long and short accounts",
+        "Live strategies can now share coins, but only on the main wallet. To switch: with no live position open, "
+        "move the USDC from both sub-accounts back to your main wallet on Hyperliquid (Sub-Accounts page, Transfer), "
+        "then turn off Settings > Hyperliquid > \"Separate long and short accounts\". Shared coins turns on by itself "
+        "within a minute.",
+        severity="info",
+    )
+
+
 AUTO_RETRY_SECONDS = 600.0
 _auto_last_try = [0.0]
 
@@ -393,7 +414,10 @@ def auto_activate() -> str | None:
     if _switch_chosen():
         return None  # already on, or the operator's own choice
     if _books_on():
-        return None  # sub-account trading keeps the one-position-per-coin rules
+        # Sub-account trading keeps the one-position-per-coin rules. Say once how
+        # to switch, so the operator is not left wondering why nothing changed.
+        _tell_books_users_once()
+        return None
     from forven.sim.clock import is_sim_active
 
     if is_sim_active():

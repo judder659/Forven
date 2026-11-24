@@ -22,6 +22,22 @@ That brings back one live strategy per coin. Turning it off waits until the live
 positions have closed, because by then several strategies may share a coin. An
 install that was turned off stays off until you turn it on again.
 
+### If you use separate long and short accounts
+
+With "Separate long and short accounts" on (Settings > Hyperliquid), shared
+coins stays off and the old one-strategy-per-coin rule applies. Your money sits
+in the two sub-accounts and the main wallet is usually empty. To switch:
+
+1. Make sure no live position is open.
+2. On Hyperliquid, open the Sub-Accounts page and transfer the USDC from the
+   long and the short sub-account back to your main wallet.
+3. In Forven, turn off Settings > Hyperliquid > "Separate long and short
+   accounts".
+
+Shared coins turns on by itself within a minute and the Live Trades page shows
+your slots. You do not need the separate accounts any more: a long and a short
+on the same coin net on one account, and each strategy keeps its own trade.
+
 ## What changes when it is on
 
 | | Engine off | Engine on |
