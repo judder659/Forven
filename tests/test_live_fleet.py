@@ -399,3 +399,49 @@ def test_rule_refusals_do_not_clear_after_a_healthy_scan(forven_db):
     _scan("S1", _ago(minutes=1))
 
     assert _by_id(build_live_fleet(now=NOW))["S1"]["state"] == "exit_blocked"
+
+
+def test_live_fleet_clears_coin_conflicts_and_worst_case_when_netting_on(forven_db, monkeypatch):
+    from forven import live_netting
+    from forven.exchange import risk
+
+    _strategy("S1")
+    _strategy("S2")
+    _scan("S1", _ago(minutes=1))
+    _scan("S2", _ago(minutes=1))
+
+    fake_report = {
+        "margin_cap_pct": 80.0,
+        "cohort_size": 2,
+        "slice_usd": 100.0,
+        "capacity_scale": 0.4,
+        "conflicts": [{"coin": "DOGE", "sides": ["short"], "strategy_ids": ["S1", "S2"]}],
+        "wallets": [
+            {
+                "wallet": "main",
+                "sides": ["long", "short"],
+                "equity_usd": 500.0,
+                "capacity_usd": 400.0,
+                "worst_case_margin_usd": 900.0,
+                "over_capacity": True,
+            }
+        ],
+    }
+    monkeypatch.setattr(risk, "live_capacity_report", lambda _conn: {**fake_report, "wallets": [dict(fake_report["wallets"][0])]})
+    monkeypatch.setattr(live_netting, "enabled", lambda: True)
+
+    cap = build_live_fleet(now=NOW)["capacity"]
+    assert cap["netting"] is True
+    assert cap["conflicts"] == []
+    assert cap["capacity_scale"] == 1.0
+    assert cap["wallets"][0]["over_capacity"] is False
+    assert cap["wallets"][0]["worst_case_margin_usd"] is None
+    assert cap["wallets"][0]["equity_usd"] == 500.0
+
+    # With netting off, the one-per-coin conflicts and worst-case margin stay intact.
+    monkeypatch.setattr(live_netting, "enabled", lambda: False)
+    cap_off = build_live_fleet(now=NOW)["capacity"]
+    assert not cap_off.get("netting")
+    assert len(cap_off["conflicts"]) == 1
+    assert cap_off["capacity_scale"] == 0.4
+    assert cap_off["wallets"][0]["over_capacity"] is True

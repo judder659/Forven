@@ -95,14 +95,19 @@
 			const wallets = (fleet?.capacity?.wallets ?? []).filter((wallet) => wallet.sides.some((side) => sides.includes(side)));
 			const books = risk?.portfolio_budget_live?.per_book ?? {};
 			const slice = risk?.portfolio_budget_live?.capital_slice?.slice_usd ?? fleet?.capacity?.slice_usd ?? null;
+			const netting = Boolean(fleet?.capacity?.netting);
 			list.push({
 				tone: wallets.some((wallet) => wallet.over_capacity) ? 'caution' : 'ok',
 				title: 'Room in the wallets it uses',
 				body: `${wallets.map((wallet) => {
 					const book = books[wallet.wallet];
 					const free = (num(book?.limit_usd) ?? num(wallet.capacity_usd) ?? 0) - (num(book?.margin_usd) ?? 0);
-					return `${cap1(wallet.wallet)} wallet: ${fmtUsd(free)} margin free of ${fmtUsd(wallet.capacity_usd)}. If every ${wallet.wallet} strategy opened at once: ${fmtUsd(wallet.worst_case_margin_usd)}${wallet.over_capacity ? ', over capacity' : ', fits'}.`;
-				}).join(' ')}${slice ? ` Each order is sized from a ${fmtUsd(slice)} slice of the account.` : ''}` || 'Wallet figures are not available yet.',
+					const worstText =
+						netting || wallet.worst_case_margin_usd === null
+							? ''
+							: ` If every ${wallet.wallet} strategy opened at once: ${fmtUsd(wallet.worst_case_margin_usd)}${wallet.over_capacity ? ', over capacity' : ', fits'}.`;
+					return `${cap1(wallet.wallet)} wallet: ${fmtUsd(free)} margin free of ${fmtUsd(wallet.capacity_usd)}.${worstText}`;
+				}).join(' ')}${netting ? ' Shared coins is on: entries draw on live slots.' : ''}${slice ? ` Each order is sized from ${netting ? 'one slot' : 'a slice'} (${fmtUsd(slice)}).` : ''}` || 'Wallet figures are not available yet.',
 			});
 			const ceiling = num(session.live_notional_ceiling_usd);
 			list.push({

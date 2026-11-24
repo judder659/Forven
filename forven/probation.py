@@ -647,9 +647,18 @@ def entry_check(
             )
     except Exception as exc:  # noqa: BLE001
         refusal = f"live admission check unavailable: {exc}"
+    try:
+        netting_on = bool(_mod("forven.live_netting").enabled())
+    except Exception:  # noqa: BLE001
+        netting_on = False
+    ok_detail = (
+        "shared coins is on — strategies share coins and draw on live slots"
+        if netting_on
+        else "no other live strategy trades this coin and side, and the wallet can hold it"
+    )
     checks.append(_check(
         "live_admission", "Room on the live account", refusal is None,
-        refusal or "no other live strategy trades this coin and side, and the wallet can hold it",
+        refusal or ok_detail,
         bypassable=False,
     ))
 

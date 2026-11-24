@@ -43,7 +43,7 @@ DEFAULTS: dict[str, Any] = {
     "step_size_pct": 50.0,
     "graduate_trades": 10,
     # Most strategies in probation at once (0 = no limit).
-    "max_strategies": 10,
+    "max_strategies": 0,
     # Demotion triggers.
     "demote_drawdown_multiple": 1.5,
     "demote_streak_extra": 2,

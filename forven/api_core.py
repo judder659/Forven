@@ -431,6 +431,14 @@ def _bootstrap_scheduler_jobs(force: bool = False):
                     apply_paper_caps_migration(kv_get, kv_set)
             except Exception as exc:
                 log.warning("Paper caps settings migration failed: %s", exc)
+            # Probation: rescue edits written before 'probation' routed to
+            # pipeline_thresholds, and lift the old max_strategies default (10 -> 0).
+            try:
+                from forven.readiness_checks import apply_probation_cap_migration
+                with _SETTINGS_MUTATION_LOCK:
+                    apply_probation_cap_migration(kv_get, kv_set)
+            except Exception as exc:
+                log.warning("Probation cap settings migration failed: %s", exc)
             existing_jobs = get_jobs()
             if not existing_jobs:
                 seed_forven_jobs()
@@ -3671,6 +3679,8 @@ _PIPELINE_THRESHOLD_SETTING_KEYS = {
     # and the paper pool (cap, diversity, automatic retirement).
     "paper_door",
     "paper_pool",
+    # Live probation thresholds (size ladder, demotion triggers, max_strategies).
+    "probation",
 }
 
 # Keys that exist in BOTH the main settings blob and the flat pipeline payload

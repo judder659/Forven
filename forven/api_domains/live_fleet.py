@@ -609,9 +609,21 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
         capacity = None
         if mode == "live":
             try:
+                from forven import live_netting
                 from forven.exchange.risk import live_capacity_report
 
                 capacity = live_capacity_report(conn)
+                if isinstance(capacity, dict) and live_netting.enabled():
+                    # NETTING-1: with shared coins on, strategies share coins
+                    # and draw on dynamic slots, so neither coin/side conflicts
+                    # nor the every-strategy-at-once worst-case margin cap apply.
+                    capacity["netting"] = True
+                    capacity["conflicts"] = []
+                    capacity["capacity_scale"] = 1.0
+                    for wallet in capacity.get("wallets") or []:
+                        if isinstance(wallet, dict):
+                            wallet["over_capacity"] = False
+                            wallet["worst_case_margin_usd"] = None
             except Exception as exc:  # noqa: BLE001 — the scorecard must still load
                 log.warning("Live fleet: capacity report failed: %s", exc)
     return {

@@ -321,3 +321,71 @@ def apply_paper_caps_migration(
         {"applied_at": datetime.now(timezone.utc).isoformat(), "lifted": summary["lifted"]},
     )
     return summary
+
+
+PROBATION_CAP_MIGRATION_KEY = "forven:migrations:probation_cap_off_v1"
+_PIPELINE_FLAT_SETTINGS_KEY = "forven:pipeline:settings"
+_OLD_PROBATION_MAX_STRATEGIES = 10
+
+
+def apply_probation_cap_migration(
+    kv_get: Callable[..., Any], kv_set: Callable[[str, Any], None]
+) -> dict[str, Any]:
+    """Once per install, rescue stray probation settings and lift the old cap of 10 -> 0.
+
+    Before ``probation`` was routed through ``_PIPELINE_THRESHOLD_SETTING_KEYS``,
+    Settings saves wrote ``probation`` into ``forven:pipeline:settings`` while
+    ``forven.probation`` read ``forven:pipeline_thresholds``. Merge any stray
+    ``probation`` dict into ``forven:pipeline_thresholds`` first, then lift an
+    unchanged old default ``max_strategies`` of 10 to 0 (unlimited).
+
+    Idempotent. Run under the settings mutation lock.
+    """
+    first_run = not kv_get(PROBATION_CAP_MIGRATION_KEY)
+    summary: dict[str, Any] = {"first_run": first_run, "rescued": {}, "max_strategies": None}
+    if not first_run:
+        return summary
+
+    pipeline_config = kv_get(PIPELINE_STORAGE_KEY)
+    flat_settings = kv_get(_PIPELINE_FLAT_SETTINGS_KEY)
+    stray = flat_settings.get("probation") if isinstance(flat_settings, dict) else None
+    changed_thresholds = False
+
+    if isinstance(stray, dict) and stray:
+        if not isinstance(pipeline_config, dict):
+            pipeline_config = {}
+        existing = pipeline_config.get("probation")
+        merged_probation = dict(existing) if isinstance(existing, dict) else {}
+        merged_probation.update(stray)
+        pipeline_config["probation"] = merged_probation
+        summary["rescued"] = dict(stray)
+        changed_thresholds = True
+        cleaned_flat = {k: v for k, v in flat_settings.items() if k != "probation"}
+        kv_set(_PIPELINE_FLAT_SETTINGS_KEY, cleaned_flat)
+
+    block = pipeline_config.get("probation") if isinstance(pipeline_config, dict) else None
+    if isinstance(block, dict) and block.get("max_strategies") in (
+        _OLD_PROBATION_MAX_STRATEGIES,
+        str(_OLD_PROBATION_MAX_STRATEGIES),
+    ):
+        block["max_strategies"] = 0
+        summary["max_strategies"] = [_OLD_PROBATION_MAX_STRATEGIES, 0]
+        changed_thresholds = True
+        log.warning(
+            "Probation: the old default cap of %d strategies is lifted to 0 (unlimited). "
+            "Set one again in Settings if you want a cap.",
+            _OLD_PROBATION_MAX_STRATEGIES,
+        )
+
+    if changed_thresholds:
+        kv_set(PIPELINE_STORAGE_KEY, pipeline_config)
+
+    kv_set(
+        PROBATION_CAP_MIGRATION_KEY,
+        {
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "rescued": summary["rescued"],
+            "max_strategies": summary["max_strategies"],
+        },
+    )
+    return summary

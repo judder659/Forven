@@ -49,12 +49,16 @@
 						<i class="absolute inset-y-0 left-0 bg-sc-ink2" style={`width:${capacity ? Math.min(100, (used / capacity) * 100) : 0}%`}></i>
 						{#if capacity && wallet.worst_case_margin_usd !== null}<span class="absolute -bottom-0.5 -top-0.5 w-0.5 bg-[#e7b24a]" style={`left:${Math.min(99, ((wallet.worst_case_margin_usd ?? 0) / capacity) * 100)}%`} title={`If every ${wallet.wallet} strategy opened at once`}></span>{/if}
 					</div>
-					<div class="flex justify-between gap-2 text-[11.5px] text-sc-ink3"><span>{fmtUsd(used)} margin used of {fmtUsd(capacity)}</span><span>all at once {fmtUsd(wallet.worst_case_margin_usd)}</span></div>
+					<div class="flex justify-between gap-2 text-[11.5px] text-sc-ink3"><span>{fmtUsd(used)} margin used of {fmtUsd(capacity)}</span>{#if wallet.worst_case_margin_usd !== null}<span>all at once {fmtUsd(wallet.worst_case_margin_usd)}</span>{/if}</div>
 				</div>
 			{:else}
 				<p class="text-[12px] text-sc-ink3">Wallet figures are not available.</p>
 			{/each}
-			<p class="text-[12px] text-sc-ink3">The amber tick is the margin needed if every strategy on that side opened at once.{wallets.every((wallet) => !wallet.over_capacity) && wallets.length ? ' Every wallet fits it today.' : ''}</p>
+			{#if fleet?.capacity?.netting}
+				<p class="text-[12px] text-sc-ink3">Shared coins is on: live positions share coins and draw on slots rather than reserving margin for every strategy at once.</p>
+			{:else}
+				<p class="text-[12px] text-sc-ink3">The amber tick is the margin needed if every strategy on that side opened at once.{wallets.every((wallet) => !wallet.over_capacity) && wallets.length ? ' Every wallet fits it today.' : ''}</p>
+			{/if}
 		</section>
 		<section class="grid min-w-0 content-start gap-2.5 border-b border-sc-line p-3 lg:border-b-0 lg:border-r">
 			<h3 class={heading}>Risk budget</h3>

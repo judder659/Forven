@@ -210,3 +210,29 @@ def test_untestable_recovery_data_check_error_stays_archived(forven_db, monkeypa
         ).fetchone()
     assert row["stage"] == "archived"
     assert row["status_reason"] == "untestable:no_data: feed missing"
+
+
+def test_probation_entry_admits_past_five_live_strategies(forven_db, monkeypatch):
+    """Live netting + probation manage live capacity; no hardcoded 5-strategy WIP cap."""
+    import forven.db as db
+    from forven.exchange import risk
+    from forven.strategies import registry
+
+    for idx in range(5):
+        _insert_strategy(f"forge-live-{idx}", stage="live_graduated")
+    _insert_strategy("forge-live-6th", stage="paper")
+    _allow_backtest_precondition(monkeypatch)
+    monkeypatch.setattr(registry, "runtime_unloadable_reason", lambda *_args: None)
+    monkeypatch.setattr(db, "find_duplicate_trading_strategy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(risk, "go_live_refusal", lambda *_args, **_kwargs: None)
+
+    result = brain.transition_stage(
+        "forge-live-6th",
+        "live_graduated",
+        reason="Start probation",
+        actor="api",
+        probation_entry=True,
+    )
+
+    assert result["to"] == "live_graduated"
+    assert not result.get("blocked_reason")
