@@ -223,3 +223,34 @@ def test_deny_skill_update_leaves_skill_untouched(env):
     assert refreshed is not None
     assert "should not appear" not in refreshed.what_works
     assert refreshed.version == initial_version
+
+
+def test_a_skill_holds_one_open_proposal_and_new_ones_fold_it_in(env):
+    """The Brain proposed after most reviews, so one skill gathered 700+
+    proposals that each expired unread. A new proposal now carries the
+    waiting one's changes and replaces it."""
+    tools_brain = _load_tools_brain()
+    _seed_skill()
+    _seed_skill("other-skill")
+
+    first = json.loads(tools_brain._tool_propose_skill_update({
+        "skill_name": "regime-trend-rsi", "rationale": "one",
+        "add_what_works": ["A", "B"], "metadata_updates": {"regime": "X"},
+    }))
+    other = json.loads(tools_brain._tool_propose_skill_update({
+        "skill_name": "other-skill", "rationale": "unrelated", "add_what_works": ["Z"],
+    }))
+    second = json.loads(tools_brain._tool_propose_skill_update({
+        "skill_name": "regime-trend-rsi", "rationale": "two",
+        "add_what_works": ["b", "C"], "add_what_doesnt_work": ["D"],
+    }))
+    assert second["superseded"] == [first["approval_id"]]
+
+    pending = forven_db_mod.list_approvals(status="pending_approval", approval_type="skill_update_proposal")
+    assert sorted(a["id"] for a in pending) == sorted([other["approval_id"], second["approval_id"]])
+    merged = next(a for a in pending if a["id"] == second["approval_id"])["payload"]
+    assert merged["add_what_works"] == ["A", "b", "C"]  # repeats dropped, case-insensitive
+    assert merged["add_what_doesnt_work"] == ["D"]
+    assert merged["metadata_updates"] == {"regime": "X"}
+    old = forven_db_mod.get_approval(first["approval_id"])
+    assert old["status"] == "expired" and f"#{second['approval_id']}" in old["reason"]
