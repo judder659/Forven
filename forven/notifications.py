@@ -88,6 +88,15 @@ _SEVERITY_SQL_VALUES = {
 }
 # Event types that are actionable whatever their severity.
 _ACTIONABLE_EVENT_TYPES = ("system_degraded", "risk_critical", "agent_task_failed", "trade_failed")
+# Event types that never count as an operator issue, whatever their severity.
+# Agent bug reports are an agent's unverified claims about the code: dozens a
+# day, at fail/critical, most of them misreadings. They belong in the Log tab
+# and the developer's triage log, not in the inbox and badge that say what
+# needs the operator now.
+_NON_ACTIONABLE_EVENT_TYPES = ("bug_report",)
+# The inbox holds the same window the badge counts: an issue nobody acted on
+# for a week has either cleared or recurred as a fresh row.
+_ACTIONABLE_INBOX_WINDOW_DAYS = 7
 _ACTIONABLE_SEVERITY_VALUES = (
     *_SEVERITY_SQL_VALUES["warn"],
     *_SEVERITY_SQL_VALUES["fail"],
@@ -601,6 +610,37 @@ def acknowledge_notification(notification_id: int) -> dict[str, Any]:
     return _row_to_notification(dict(row))
 
 
+def acknowledge_open_by_dedupe_key(
+    *, keys: list[str] | None = None, like: str | None = None, event_type: str | None = None
+) -> int:
+    """Clear open notifications whose cause is gone; returns how many were cleared.
+
+    For producers that re-check a condition: once it no longer holds, the
+    notifications it raised stop asking for the operator. Matches exact
+    ``keys`` and/or a SQL LIKE pattern on the dedupe key.
+    """
+    matchers: list[str] = []
+    params: list[Any] = []
+    if keys:
+        matchers.append(f"dedupe_key IN ({', '.join('?' for _ in keys)})")
+        params.extend(str(key) for key in keys)
+    if like:
+        matchers.append("dedupe_key LIKE ?")
+        params.append(str(like))
+    if not matchers:
+        return 0
+    conditions = [f"({' OR '.join(matchers)})", "status NOT IN ('acknowledged', 'suppressed')"]
+    if event_type:
+        conditions.append("event_type = ?")
+        params.append(str(event_type).strip().lower())
+    with get_db() as conn:
+        cursor = conn.execute(
+            f"UPDATE notifications SET status = 'acknowledged', acknowledged_at = ? WHERE {' AND '.join(conditions)}",
+            (_now(), *params),
+        )
+        return int(cursor.rowcount or 0)
+
+
 def acknowledge_notifications(notification_ids: list[int]) -> list[dict[str, Any]]:
     """Mark multiple notifications as acknowledged in one update."""
     normalized_ids: list[int] = []
@@ -711,12 +751,14 @@ def _actionable_sql_clause(*, alias: str = "") -> tuple[str, list[Any]]:
     prefix = f"{alias}." if alias else ""
     event_marks = ", ".join("?" for _ in _ACTIONABLE_EVENT_TYPES)
     severity_marks = ", ".join("?" for _ in _ACTIONABLE_SEVERITY_VALUES)
+    excluded_marks = ", ".join("?" for _ in _NON_ACTIONABLE_EVENT_TYPES)
     clause = (
         f"LOWER(COALESCE({prefix}status, '')) NOT IN ('acknowledged', 'suppressed') "
+        f"AND LOWER(COALESCE({prefix}event_type, '')) NOT IN ({excluded_marks}) "
         f"AND (LOWER(COALESCE({prefix}event_type, '')) IN ({event_marks}) "
         f"OR LOWER(COALESCE({prefix}severity, '')) IN ({severity_marks}))"
     )
-    return clause, [*_ACTIONABLE_EVENT_TYPES, *_ACTIONABLE_SEVERITY_VALUES]
+    return clause, [*_NON_ACTIONABLE_EVENT_TYPES, *_ACTIONABLE_EVENT_TYPES, *_ACTIONABLE_SEVERITY_VALUES]
 
 
 def get_actionable_notification_summary(
@@ -1201,6 +1243,8 @@ def _notification_where_clause(
         clause, clause_params = _actionable_sql_clause(alias=alias)
         conditions.append(f"({clause})")
         params.extend(clause_params)
+        conditions.append(f"{prefix}created_at >= ?")
+        params.append((_utc_now() - timedelta(days=_ACTIONABLE_INBOX_WINDOW_DAYS)).isoformat())
     return (f"WHERE {' AND '.join(conditions)}" if conditions else "", params)
 
 
@@ -1411,6 +1455,8 @@ def _notification_is_actionable(notification: Mapping[str, Any]) -> bool:
     status = str(notification.get("status") or "").strip().lower()
     severity = normalize_severity(notification.get("severity"))
     if status == "suppressed":
+        return False
+    if event_type in _NON_ACTIONABLE_EVENT_TYPES:
         return False
     if event_type in _ACTIONABLE_EVENT_TYPES:
         return True
