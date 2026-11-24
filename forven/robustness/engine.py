@@ -3153,10 +3153,19 @@ def holdout_settings() -> dict:
 def _holdout_family(row) -> str:
     from forven.strategy_diversity import infer_strategy_family
 
-    # Only the design (not mutable notes/metrics), so the family a shot was
-    # counted under stays the family the strategy is judged under.
-    fields = ("type", "runtime_type", "name", "params")
-    return infer_strategy_family(*(row[field] if field in row.keys() else None for field in fields))
+    # The strategy's type only: not mutable notes/metrics, so the family a shot
+    # was counted under stays the family it is judged under; and not its name or
+    # params, where an EMA trend filter put 250 unrelated paper strategies in one
+    # "ema" budget. A type that names no known family is its own family:
+    # "other" was a catch-all that made 400 unrelated strategies share 3 shots.
+    keys = row.keys()
+    runtime_type = str(row["runtime_type"] or "").strip() if "runtime_type" in keys else ""
+    strategy_type = str(row["type"] or "").strip() if "type" in keys else ""
+    family = infer_strategy_family(strategy_type, runtime_type)
+    if family != "other":
+        return family
+    own = (runtime_type or strategy_type).lower()
+    return f"type:{own}" if own else "other"
 
 
 def holdout_rows(strategy_id: str) -> list[dict]:

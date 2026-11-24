@@ -122,6 +122,7 @@ const SPECS: Record<string, Spec> = {
   'pipeline.probation.slow_confirm_trades': [0, null, 1],
   'pipeline.probation.slow_confirm_days': [0, null, 1],
   'pipeline.probation.min_cost_coverage': [0, null, 'any'],
+  'pipeline.probation.paper_edge_min_trades': [0, 1000, 1],
   'pipeline.probation.start_size_pct': [1, 100, 'any'],
   'pipeline.probation.step_trades': [0, null, 1],
   'pipeline.probation.step_size_pct': [1, 100, 'any'],

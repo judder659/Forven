@@ -33,6 +33,9 @@ DEFAULTS: dict[str, Any] = {
     "slow_confirm_days": 21,
     # The backtest's average trade must be at least this many round-trip costs.
     "min_cost_coverage": 2.0,
+    # ...or, with at least this many matching paper trades on the home coin, the
+    # real paper fills' average gross move must clear the same bar (0 = off).
+    "paper_edge_min_trades": 10,
     # Size ladder: start_size_pct from the first live trade, step_size_pct once
     # step_trades live trades have closed, full size (graduation) at graduate_trades.
     "start_size_pct": 25.0,
@@ -61,6 +64,7 @@ _BOUNDS: dict[str, tuple[float, float, type]] = {
     "slow_confirm_trades": (0, 100, int),
     "slow_confirm_days": (0, 365, int),
     "min_cost_coverage": (0.0, 100.0, float),
+    "paper_edge_min_trades": (0, 1000, int),
     "start_size_pct": (1.0, 100.0, float),
     "step_trades": (0, 1000, int),
     "step_size_pct": (1.0, 100.0, float),

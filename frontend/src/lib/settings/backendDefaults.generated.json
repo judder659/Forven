@@ -192,6 +192,7 @@
     "probation.graduate_trades": 10,
     "probation.max_strategies": 10,
     "probation.min_cost_coverage": 2.0,
+    "probation.paper_edge_min_trades": 10,
     "probation.reentry_cooldown_days": 30,
     "probation.slow_confirm_days": 21,
     "probation.slow_confirm_trades": 1,
