@@ -555,6 +555,79 @@ def test_bulk_backfill_surfaces_stream_errors(monkeypatch, forven_db):
     assert "BTC-USDT" in error and "archive listing unavailable" in error
 
 
+_BV_JOB = {
+    "id": "forven-data-bv-backfill", "name": "Bulk archive import",
+    "command": "data-bv-backfill", "payload": json.dumps({"kind": "data_manager_backfill"}),
+}
+
+
+def test_bulk_backfill_resumes_after_its_time_budget(monkeypatch, forven_db):
+    """A run stopped by its budget is not marked done, so the next hourly run
+    resumes; a run that gets through every symbol is, and later runs rest."""
+    from forven.db import kv_get
+    from forven.data_manager import data_manager
+
+    calls = []
+
+    def fake_backfill(streams=(), cancel_event=None, **_kw):
+        calls.append(streams)
+        if streams == ("ohlcv", "oi"):
+            cancel_event.set()
+            return {"BTC-USDT": {"metrics:lsr": 10}, "cancelled": True}
+        return {"BTC-USDT": {}}
+
+    monkeypatch.setattr(data_manager, "backfill", fake_backfill)
+    assert asyncio.run(scheduler.run_job(dict(_BV_JOB))) == ("ok", None)
+    assert not kv_get(scheduler.BV_BACKFILL_DONE_KV_KEY, "")
+
+    def finishing_backfill(streams=(), cancel_event=None, **_kw):
+        calls.append(streams)
+        return {"BTC-USDT": {}}
+
+    monkeypatch.setattr(data_manager, "backfill", finishing_backfill)
+    assert asyncio.run(scheduler.run_job(dict(_BV_JOB))) == ("ok", None)
+    assert kv_get(scheduler.BV_BACKFILL_DONE_KV_KEY, "")
+
+    calls.clear()
+    assert asyncio.run(scheduler.run_job(dict(_BV_JOB))) == ("ok", None)
+    assert calls == []  # resting: done within the last 30 days
+
+
+def test_bulk_backfill_budget_stops_between_symbols(monkeypatch, forven_db):
+    from forven.data_manager import data_manager
+
+    seen = {}
+
+    def fake_backfill(streams=(), cancel_event=None, **_kw):
+        seen.setdefault("fired", cancel_event.wait(2))
+        return {"cancelled": True} if cancel_event.is_set() else {}
+
+    monkeypatch.setattr(data_manager, "backfill", fake_backfill)
+    job = dict(_BV_JOB, payload=json.dumps({"kind": "data_manager_backfill", "budget_seconds": 0.05}))
+    assert asyncio.run(scheduler.run_job(job)) == ("ok", None)
+    assert seen["fired"] is True
+
+
+def test_legacy_monthly_backfill_moves_to_hourly(forven_db):
+    from forven.db import get_db
+
+    scheduler.seed_forven_jobs()
+    far = (datetime.now(timezone.utc) + timedelta(days=29)).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE scheduler_jobs SET schedule_expr = '2592000000', next_run_at = ?, last_run_at = ? WHERE id = ?",
+            (far, datetime.now(timezone.utc).isoformat(), "forven-data-bv-backfill"),
+        )
+    scheduler.reconcile_forven_jobs()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT schedule_expr, next_run_at FROM scheduler_jobs WHERE id = 'forven-data-bv-backfill'"
+        ).fetchone()
+    assert row["schedule_expr"] == "3600000"
+    assert datetime.fromisoformat(row["next_run_at"]) <= datetime.now(timezone.utc) + timedelta(minutes=11)
+    assert scheduler.migrate_bv_backfill_cadence() is False
+
+
 def test_tick_skips_due_gauntlet_job_while_zombie_thread_alive(monkeypatch, forven_db):
     """A due gauntlet_step_loop tick must NOT be claimed (not even via the
     stale takeover in _try_mark_job_running) while a previous tick's worker
