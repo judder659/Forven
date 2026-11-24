@@ -143,8 +143,21 @@ kill_port_listener() {
 	if [[ -z "$pids" ]]; then
 		return 0
 	fi
-	local pid
+	local pid ppid top=""
+	# Signal only the top of the tree (the uvicorn parent, whose own parent is
+	# not a listener) and let it stop its workers. Signalling the workers too
+	# raced uvicorn's supervisor: a worker exited before the parent handled its
+	# SIGTERM, the supervisor respawned it, and the respawned worker outlived
+	# the parent as an orphan running old code (2026-11-19 and 11-24).
 	for pid in $pids; do
+		ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+		case " $(echo $pids) " in
+			*" $ppid "*) ;;
+			*) top="$top $pid" ;;
+		esac
+	done
+	[[ -z "$top" ]] && top="$pids"
+	for pid in $top; do
 		warn "Stopping PID ${pid} listening on port ${port}"
 		kill "$pid" 2>/dev/null || true
 	done
@@ -169,6 +182,49 @@ kill_port_listener() {
 			kill -9 "$pid" 2>/dev/null || true
 		fi
 	done
+	if [[ "$port" == "$BACKEND_PORT" ]]; then
+		stop_orphaned_backend_workers
+	fi
+}
+
+# A backend worker whose uvicorn parent is gone (reparented to init, systemd
+# --user or launchd) serves nothing and runs old code. Stop any from this
+# checkout. Only multiprocessing spawn children qualify: sandbox strategy
+# workers and bot runners are started with -m and are left alone.
+stop_orphaned_backend_workers() {
+	local pid ppid cmd parent_name cwd orphans=""
+	while read -r pid ppid cmd; do
+		[[ -z "$pid" ]] && continue
+		case "$cmd" in
+			*"multiprocessing.spawn import spawn_main"*) ;;
+			*) continue ;;
+		esac
+		if [[ "$ppid" != "1" ]]; then
+			parent_name="$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d ' ')"
+			case "$parent_name" in
+				*systemd | *launchd | init) ;;
+				*) continue ;;
+			esac
+		fi
+		case "$cmd" in
+			*"$DIR/"*) ;;
+			*)
+				cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+				[[ "$cwd" == "$DIR" ]] || continue
+				;;
+		esac
+		orphans="$orphans $pid"
+	done < <(ps -ww -eo pid=,ppid=,command= 2>/dev/null)
+	[[ -z "$orphans" ]] && return 0
+	for pid in $orphans; do
+		warn "Stopping orphaned backend worker PID ${pid} (its server had already exited)"
+		kill "$pid" 2>/dev/null || true
+	done
+	sleep 3
+	for pid in $orphans; do
+		kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+	done
+	return 0
 }
 
 clear_stale_db_locks() {
