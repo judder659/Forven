@@ -64,10 +64,11 @@ def _ready_ids(conn: sqlite3.Connection) -> set[str]:
     entries = payload.get("strategies") if isinstance(payload, dict) else None
     ids: set[str] = set()
     for entry in entries or []:
-        if isinstance(entry, dict):
-            sid = entry.get("strategy_id") or entry.get("id")
-        else:
-            sid = entry
+        # The list holds every paper strategy with its checks; only the ones
+        # that pass them all are ready for live.
+        if not isinstance(entry, dict) or not entry.get("eligible"):
+            continue
+        sid = entry.get("strategy_id") or entry.get("id")
         if sid:
             ids.add(str(sid))
     return ids
@@ -103,6 +104,7 @@ def load_trades(conn: sqlite3.Connection, start: datetime, now: datetime) -> lis
             "side": 1 if str(direction or "").strip().lower() != "short" else -1,
             "open": opened,
             "close": closed,
+            "still_open": _parse_ts(closed_at) is None,
             "pnl": float(pnl) if pnl is not None else None,
         })
     trades.sort(key=lambda t: t["open"])
@@ -245,11 +247,59 @@ def coin_sharing(trades: list[dict]) -> dict:
     }
 
 
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return round(ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0, 2)
+
+
+def capital_fit(rows: list[dict], now: datetime, equity: float, leverage: float) -> list[dict]:
+    """How many strategies the account can carry before orders fall under the minimum.
+
+    Strategies are ranked by their summed paper result in the window, which
+    flatters the result; the point of the table is the slot arithmetic.
+    """
+    totals: dict[str, float] = defaultdict(float)
+    for t in rows:
+        totals[t["strategy"]] += t["pnl"] or 0.0
+    ranked = sorted(totals, key=lambda sid: totals[sid], reverse=True)
+    caps = {
+        "probation_25pct": int(equity * leverage * 0.25 // MIN_ORDER_USD),
+        "full_size": int(equity * leverage // MIN_ORDER_USD),
+    }
+    table = []
+    for size in (10, 25, 50, 100, 200, len(ranked)):
+        if size > len(ranked) or (table and table[-1]["strategies"] == size):
+            continue
+        chosen = set(ranked[:size])
+        subset = [t for t in rows if t["strategy"] in chosen]
+        if not subset:
+            continue
+        window = max((now - subset[0]["open"]).total_seconds(), 1.0)
+        seconds = _time_at_level(subset)
+        row = {
+            "strategies": size,
+            "entries": len(subset),
+            "slots_for_95pct": max(_level_covering(seconds, 0.95, window) + 1, 1),
+            "peak_open_at_once": max(seconds) if seconds else 0,
+        }
+        for label, cap in caps.items():
+            row[f"blocked_pct_at_{label}_cap_{cap}_slots"] = simulate_slots(subset, max(cap, 1))["blocked_share_pct"]
+        table.append(row)
+    return table
+
+
 def cohort_report(trades: list[dict], members: set[str], days: int, equity: float, leverage: float) -> dict:
     rows = [t for t in trades if t["strategy"] in members]
     traders = {t["strategy"] for t in rows}
-    window_seconds = days * 86400.0
+    now = max((t["close"] for t in rows), default=datetime.now(timezone.utc))
+    # Measure from the first trade, not the start of the window: a fleet that is
+    # younger than the window would otherwise look idle for the missing days.
+    window_seconds = max((now - rows[0]["open"]).total_seconds(), 1.0) if rows else days * 86400.0
     seconds = _time_at_level(rows)
+    held_seconds = sum((t["close"] - t["open"]).total_seconds() for t in rows)
     slot_table = []
     for share in COVERAGE_LEVELS:
         slots = max(_level_covering(seconds, share, window_seconds) + (0 if share >= 1.0 else 1), 1)
@@ -270,6 +320,14 @@ def cohort_report(trades: list[dict], members: set[str], days: int, equity: floa
         "entries_per_strategy_per_30d": round(len(rows) / max(len(members), 1) * 30.0 / days, 2),
         "avg_net_pnl_pct_all_entries": _mean([t["pnl"] for t in rows if t["pnl"] is not None]),
         "peak_open_at_once": max(seconds) if seconds else 0,
+        "history_days": round(window_seconds / 86400.0, 1),
+        "trades_still_open": sum(1 for t in rows if t["still_open"]),
+        "median_hold_hours": _median([(t["close"] - t["open"]).total_seconds() / 3600.0 for t in rows]),
+        "avg_open_at_once": round(held_seconds / window_seconds, 1),
+        "share_of_time_a_trading_strategy_is_in_a_trade_pct": round(
+            100.0 * held_seconds / (window_seconds * max(len(traders), 1)), 1
+        ),
+        "capital_fit": capital_fit(rows, now, equity, leverage),
         "today_one_per_coin_rule": simulate_today(rows),
         "slots_by_coverage": slot_table,
         "coin_sharing": coin_sharing(rows),
