@@ -75,14 +75,17 @@
 				<span class={label}>Slots</span>
 				<span class="text-sc-ink2">
 					{#if status.books_on}
-						Shared coins are off while direction books are on: one live strategy per coin.
+						Shared coins are off because this install uses separate long and short accounts, so it still allows one live
+						strategy per coin. To switch: with no live position open, move the USDC from both sub-accounts back to your
+						main wallet on Hyperliquid (Sub-Accounts page, Transfer), then turn off Settings › Hyperliquid › "Separate long
+						and short accounts". Shared coins turns on by itself within a minute.
 					{:else if status.enabled}
 						Shared coins are not running in this mode.
 					{:else}
 						Shared coins are off: one live strategy can hold a coin at a time and other entries on it are refused.
 					{/if}
 				</span>
-				<a href="/risk" class="text-[11px] text-sc-ink3 underline hover:text-sc-ink">Open Risk</a>
+				<a href={status.books_on ? '/settings' : '/risk'} class="text-[11px] text-sc-ink3 underline hover:text-sc-ink">{status.books_on ? 'Open Settings' : 'Open Risk'}</a>
 			</div>
 		{:else}
 			<div class="flex flex-wrap items-baseline gap-x-5 gap-y-1">

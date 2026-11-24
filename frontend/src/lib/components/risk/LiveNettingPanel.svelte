@@ -155,8 +155,11 @@
 		</p>
 		{#if status.books_on}
 			<p class="text-[11px] text-yellow-500">
-				Direction books (sub-accounts) are on. The engine runs on the main wallet only and stays off until they are
-				turned off.
+				This install uses separate long and short accounts, so shared coins stays off. To switch: with no live
+				position open, move the USDC from both sub-accounts back to your main wallet on Hyperliquid (Sub-Accounts
+				page, Transfer), then turn off Settings › Hyperliquid › "Separate long and short accounts". Shared coins turns
+				on by itself within a minute. A long and a short on the same coin net on one account, so the separate accounts
+				are no longer needed.
 			</p>
 		{/if}
 
