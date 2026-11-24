@@ -332,7 +332,7 @@
 <AfterUpdateCard />
 
 {#if wizardSettings && $wizardOpen}
-	<SetupWizardModal settings={wizardSettings} />
+	<SetupWizardModal settings={wizardSettings} onSettingsUpdated={reloadWizardSettings} />
 {/if}
 
 <!--
