@@ -156,3 +156,56 @@ def test_hygiene_backstop_ignores_active_stages(forven_db, monkeypatch):
     closed = _close_terminal_stage_orphan_positions()
     assert closed == 0
     assert _trade("E-A1")["status"] == "OPEN"
+
+
+# ----------------------------------------------------------- promotion close
+
+
+def test_promotion_to_live_closes_open_paper_positions(forven_db, monkeypatch):
+    monkeypatch.setattr(trade_state, "_fresh_mark_price", lambda asset: 108.0)
+    _insert_strategy("S-PROMO1", stage="paper")
+    _insert_open_trade("E-PR1", "S-PROMO1", execution_type="paper", asset="ETH")
+    _insert_open_trade("E-PR2", "S-PROMO1", execution_type="paper_challenger", asset="SOL")
+    _insert_open_trade("E-PR-LIVE", "S-PROMO1", execution_type="live", asset="BTC")
+
+    result = transition_stage(
+        "S-PROMO1",
+        "live_graduated",
+        reason="Operator started probation",
+        actor="api",
+        force=True,
+        skip_approval_gate=True,
+        probation_entry=True,
+    )
+    assert not result.get("blocked_reason"), result
+    assert _strategy_stage("S-PROMO1") == "live_graduated"
+
+    for tid in ("E-PR1", "E-PR2"):
+        trade = _trade(tid)
+        assert trade["status"] == "CLOSED"
+        assert float(trade["exit_price"]) == 108.0
+        sd = json.loads(trade["signal_data"])
+        assert sd.get("close_reason") == "stage_promotion_close"
+        assert sd.get("close_price_source") == "stage_promotion_close"
+
+    # Never touch real-money live positions during a lifecycle hook.
+    assert _trade("E-PR-LIVE")["status"] == "OPEN"
+
+
+def test_promotion_to_live_skips_paper_close_without_fresh_mark(forven_db, monkeypatch):
+    monkeypatch.setattr(trade_state, "_fresh_mark_price", lambda asset: None)
+    _insert_strategy("S-PROMO2", stage="paper")
+    _insert_open_trade("E-PR3", "S-PROMO2", execution_type="paper")
+
+    result = transition_stage(
+        "S-PROMO2",
+        "live_graduated",
+        reason="Operator started probation",
+        actor="api",
+        force=True,
+        skip_approval_gate=True,
+        probation_entry=True,
+    )
+    assert not result.get("blocked_reason"), result
+    assert _strategy_stage("S-PROMO2") == "live_graduated"
+    assert _trade("E-PR3")["status"] == "OPEN"
