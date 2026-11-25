@@ -135,6 +135,23 @@ def test_market_order_still_raises_when_entry_itself_missing(monkeypatch):
         hl.market_order("BTC", "buy", 1.0)
 
 
+def test_market_order_reports_the_exchange_refusal_reason(monkeypatch):
+    """A refused order surfaces Hyperliquid's own reason (S21852's ZEC orders
+    showed only 'Missing HyperLiquid order IDs' for a $10-minimum refusal)."""
+    pytest.importorskip("hyperliquid")
+    import forven.exchange.hyperliquid as hl
+
+    class _Ex:
+        def bulk_orders(self, orders):
+            return {"status": "ok", "response": {"type": "order", "data": {"statuses": [
+                {"error": "Order must have minimum value of $10. asset=214"}
+            ]}}}
+
+    _patch_hl(monkeypatch, hl, _Ex())
+    with pytest.raises(RuntimeError, match=r"HyperLiquid refused the order: Order must have minimum value of \$10"):
+        hl.market_order("BTC", "buy", 1.0)
+
+
 # ─── Scanner kernel live appliers (LIVE-1/LIVE-2/LIVE-4/DB-4) ────────────────────
 
 def _action(direction="long", **pos):

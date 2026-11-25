@@ -1536,6 +1536,12 @@ def _require_bulk_order_ids(
         client_order_ids or {},
         result,
     )
+    rejection = _first_status_error(result)
+    if rejection:
+        # The exchange answered but refused the order: say why, so the
+        # operator sees e.g. "Order must have minimum value of $10" instead
+        # of a generic missing-ID message.
+        raise RuntimeError(f"HyperLiquid refused the order: {rejection}")
     raise RuntimeError(
         "Missing HyperLiquid order IDs for "
         + ", ".join(missing_labels)
