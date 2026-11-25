@@ -203,6 +203,14 @@ def get_active() -> dict[str, BaseStrategy]:
     signature probe re-hydrates only if the underlying rows actually changed.
     """
     global _ACTIVE_CACHE
+    # Hydrate only against a COMPLETE type map. At startup the paper chart and
+    # other callers reached here before (or during) discover(), so every row
+    # backed by a custom module (and, before the builtins loaded, every builtin
+    # row) failed as "runtime type 'x' is not registered" and the partial map was
+    # cached. discover() serializes on its lock, so this waits for an in-flight
+    # discovery instead of racing it; once discovered it is a flag check.
+    if not _discovered:
+        discover()
     cached = _ACTIVE_CACHE
     now = time.monotonic()
     if cached is not None and (now - cached[2]) < _ACTIVE_CACHE_TTL_SECONDS:

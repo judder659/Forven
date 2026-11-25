@@ -210,11 +210,14 @@ def test_get_active_skips_bad_row_and_loads_non_execution_owner(forven_db):
 
 def test_get_active_refuses_unvalidated_prefix_variant(forven_db):
     registry_mod.reset()
-    registry_mod.register_type("bb_fade_s00194", DummyStrategy)
+    # get_active() now completes discovery first, so the bare name must not be a
+    # builtin (bb_fade is one): only the _sNNNNN variant is registered.
+    registry_mod.discover()
+    registry_mod.register_type("zz_fade_s00194", DummyStrategy)
 
     _insert_strategy_row(
         "S-CUSTOM",
-        strategy_type="bb_fade",
+        strategy_type="zz_fade",
         params=json.dumps({}),
         owner="risk-manager",
         runtime_type=None,
@@ -491,3 +494,24 @@ def test_load_archived_custom_runtime_type_negative_caches_broken_module(monkeyp
     assert registry_mod._load_archived_custom_runtime_type("broken_type_s99999") is False
     assert len(attempts) == 1
     assert "broken_type_s99999" in registry_mod._FAILED_CUSTOM_MODULES
+
+
+def test_get_active_completes_discovery_before_hydrating(forven_db):
+    """Startup race (2026-11-24): the paper chart called get_active() before
+    discover() finished, so paper rows of builtin and custom types (S21562
+    donchian, S01566 macd_regime_chandelier_s60087, ...) failed as "runtime type
+    'x' is not registered" and the partial map was cached. get_active() must
+    wait for a complete type map."""
+    registry_mod.reset()
+    assert "donchian" not in registry_mod._TYPE_MAP
+    _insert_strategy_row(
+        "S-RACE",
+        strategy_type="donchian",
+        params=json.dumps({}),
+        runtime_type="donchian",
+    )
+
+    active = registry_mod.get_active()
+
+    assert "S-RACE" in active
+    assert active["S-RACE"].strategy_type == "donchian"
