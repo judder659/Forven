@@ -458,3 +458,43 @@ def test_router_endpoints_delegate(forven_db):
     single = read_strategy_explain("s-router")
     assert single["ok"] is True
     assert single["strategy"]["id"] == "s-router"
+
+
+# --- paper checks that are waits, not decisions (Needs you cleanup) -------------
+
+
+def test_spent_held_back_quota_is_a_wait_and_a_real_fail_is_merit():
+    from forven.pipeline_explain import _paper_check_override
+
+    default = ("evidence", "holdout_pending", ("wait", "x"))
+    budget = {"key": "held_back", "ok": False, "code": "holdout_budget_exhausted", "detail": "..."}
+    kind, code, action = _paper_check_override(budget, *default)
+    assert (kind, code, action[0]) == ("evidence", "holdout_budget_exhausted", "wait")
+    # A cached check from before the code was stored is read from its message.
+    legacy = {"key": "held_back", "ok": False, "detail": "Held-back test budget for the 'trend' family is spent (3 per quarter)"}
+    assert _paper_check_override(legacy, *default)[1] == "holdout_budget_exhausted"
+    failed = {"key": "held_back", "ok": False, "code": "holdout_reject", "detail": "Held-back test failed: lost"}
+    assert _paper_check_override(failed, *default)[:2] == ("merit", "holdout_reject")
+
+
+def test_missing_backtest_trades_cases():
+    from forven.pipeline_explain import _paper_check_override
+
+    default = ("evidence", "missing_backtest_trades", ("run_backtest", "x"))
+    rebuilding = _paper_check_override({"key": "backtest_trades", "ok": False, "code": "backtest_rebuilding"}, *default)
+    assert (rebuilding[0], rebuilding[2][0]) == ("evidence", "wait")
+    failed = _paper_check_override({"key": "backtest_trades", "ok": False, "code": "backtest_rebuild_failed"}, *default)
+    assert failed[:2] == ("merit", "backtest_rebuild_failed") and failed[2][0] == "run_backtest"
+
+
+def test_thin_edge_waits_on_paper_while_the_retire_sweep_can_settle_it():
+    from forven.pipeline_explain import _paper_check_override
+
+    default = ("merit", "edge_below_costs", ("review_strategy", "x"))
+    check = {"key": "edge_covers_costs", "ok": False, "detail": "average trade covers 1.2x",
+             "paper_trades": 4, "paper_need": 10, "retire_trades": 20}
+    kind, code, action = _paper_check_override(check, *default)
+    assert (kind, code, action[0]) == ("evidence", "edge_unproven", "wait")
+    assert "4 matching trades" in action[1] and "archived at 20" in action[1]
+    # Retirement off: nothing settles it on its own, so it stays the operator's call.
+    assert _paper_check_override({**check, "retire_trades": 0}, *default) == default

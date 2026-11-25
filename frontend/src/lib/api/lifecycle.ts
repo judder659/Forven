@@ -762,6 +762,10 @@ export interface PipelineExplainProbationEvidence {
 	paper_days?: number | null;
 	slow?: boolean;
 	failing?: string[];
+	/** Failing check key → its case, e.g. held_back: holdout_budget_exhausted, backtest_trades: backtest_rebuilding. */
+	codes?: Record<string, string>;
+	/** Paper progress on a thin backtest edge; retire_at 0 means paper never settles it. */
+	edge_paper?: { trades: number; need: number; retire_at: number } | null;
 	checked_at?: string | null;
 	// Probation (live at reduced size)
 	state?: string;
