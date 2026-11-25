@@ -87,6 +87,30 @@ def test_min_order_rule_raises_to_the_minimum_within_full_size_and_risk():
     assert why is None and units == pytest.approx(0.102)
 
 
+def test_min_order_rule_rounds_up_to_the_exchange_size_step():
+    # ZEC on Nov 25: 0.0151 ZEC ($10.50) became 0.01 ZEC ($6.94) at the
+    # exchange, which rounds sizes down to its 0.01 step, and was refused.
+    units, why = rules.min_order_units(
+        units=0.006, full_units=0.06, price=693.89, min_notional_usd=10.0,
+        stop_price=714.71, risk_cap_usd=9.98, size_step=0.01,
+    )
+    assert why is None and units == pytest.approx(0.02)
+    assert units * 693.89 >= 10.0
+    # A whole-unit coin rounds up to the next whole unit.
+    units, why = rules.min_order_units(units=20, full_units=300, price=0.1426, min_notional_usd=10.0, size_step=1.0)
+    assert why is None and units == 74
+    # The next step over the minimum is past full size, and full size rounded
+    # down to the step is under the minimum: skipped with the reason.
+    units, why = rules.min_order_units(units=0.005, full_units=0.019, price=693.89, min_notional_usd=10.0, size_step=0.01)
+    assert units is None and "steps of 0.01" in why
+    # Rounding up can still break the risk cap: skipped.
+    units, why = rules.min_order_units(
+        units=0.006, full_units=0.06, price=693.89, min_notional_usd=10.0,
+        stop_price=714.71, risk_cap_usd=0.35, size_step=0.01,
+    )
+    assert units is None and "per-trade cap" in why
+
+
 # --- the record and the actions -------------------------------------------------
 
 

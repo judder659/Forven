@@ -326,6 +326,7 @@ def min_order_units(
     stop_price: float | None = None,
     risk_cap_usd: float | None = None,
     buffer: float = 1.05,
+    size_step: float | None = None,
 ) -> tuple[float | None, str | None]:
     """A probation order's units after the exchange's minimum order value.
 
@@ -334,6 +335,11 @@ def min_order_units(
     back under) as long as that stays within the full-size order and the per-trade
     risk cap. Returns (None, why) when even that is not possible, and the entry is
     skipped rather than sent to be refused.
+
+    ``size_step`` is the exchange's order-size step (Hyperliquid's szDecimals,
+    e.g. 0.01 ZEC). The exchange rounds a size DOWN to its step, so a raised
+    order is rounded UP to a whole step here; otherwise 0.0151 ZEC became
+    0.01 ZEC ($7) at the exchange and was refused as under the minimum.
     """
     if price <= 0 or units <= 0:
         return units, None
@@ -347,6 +353,18 @@ def min_order_units(
         )
     if floor_units > full_units:
         floor_units = full_units
+    if size_step and size_step > 0:
+        steps = math.ceil(floor_units / size_step - 1e-9)
+        stepped = steps * size_step
+        if stepped > full_units + 1e-12:
+            stepped = math.floor(full_units / size_step + 1e-9) * size_step
+        if stepped * price + 1e-9 < min_notional_usd:
+            return None, (
+                f"too small at probation size: the exchange trades this coin in steps of {size_step:g}, "
+                f"and the smallest order over its ${min_notional_usd:,.0f} minimum is larger than the "
+                f"full-size order (${full_units * price:,.2f})"
+            )
+        floor_units = round(stepped, 12)
     if stop_price and risk_cap_usd is not None:
         loss = abs(price - float(stop_price)) * floor_units
         if loss > risk_cap_usd + 1e-9:
