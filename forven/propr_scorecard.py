@@ -27,6 +27,7 @@ do not; the per-trade rows flag ``shared_position`` so the page can say so.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,7 @@ _CACHE_TTL_S = 60.0
 _ACTIVE_STAGES = frozenset({"paper", "live_graduated"})
 
 _cache: dict = {"at": 0.0, "value": None}
+_refresh_lock = threading.Lock()
 
 
 def _parse_when(value) -> datetime | None:
@@ -421,16 +423,12 @@ def invalidate_scorecard() -> None:
     _cache.update(at=0.0, value=None)
 
 
-def get_scorecard(force: bool = False) -> dict:
-    """Cached scorecard (one venue round-trip per minute at most)."""
-    now = time.monotonic()
-    if not force and _cache["value"] is not None and now - _cache["at"] < _CACHE_TTL_S:
-        return _cache["value"]
+def _build_now() -> dict:
     from forven import propr_mirror
     from forven.exchange import propr
 
     halt = propr_mirror.get_halt_state() or {}
-    value = build_scorecard(
+    return build_scorecard(
         propr,
         roster=propr_mirror.mirror_roster(),
         state=propr_mirror.get_state(),
@@ -438,5 +436,33 @@ def get_scorecard(force: bool = False) -> dict:
         equity=_num(halt.get("equity")),
         mode=propr_mirror.roster_mode(),
     )
-    _cache.update(at=now, value=value)
+
+
+def _refresh_in_background() -> None:
+    try:
+        _cache.update(at=time.monotonic(), value=_build_now())
+    except Exception as exc:  # noqa: BLE001 — keep serving the last good copy
+        log.warning("Propr scorecard background refresh failed: %s", exc)
+    finally:
+        _refresh_lock.release()
+
+
+def get_scorecard(force: bool = False) -> dict:
+    """Cached scorecard (one venue round-trip per minute at most).
+
+    PROPR-SCORE-2: a rebuild walks every paper/live trade since the roster's
+    earliest join plus two venue pages, which on a big install outlasts the
+    page's request timeout ("Scorecard unavailable: signal timed out"). Once a
+    copy exists, a stale read returns it at once and rebuilds in the
+    background; only the first build (or an explicit refresh) waits."""
+    now = time.monotonic()
+    cached = _cache["value"]
+    if not force and cached is not None:
+        if now - _cache["at"] >= _CACHE_TTL_S and _refresh_lock.acquire(blocking=False):
+            threading.Thread(
+                target=_refresh_in_background, name="propr-scorecard-refresh", daemon=True
+            ).start()
+        return cached
+    value = _build_now()
+    _cache.update(at=time.monotonic(), value=value)
     return value

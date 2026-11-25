@@ -579,7 +579,7 @@
 						<div
 							class="absolute inset-y-0 rounded-full bg-red-500/30"
 							style={`left:0; width:${track.haltPct}%`}
-							title="Inside the mirror's drawdown halt zone"
+							title="Inside the mirror's drawdown recovery zone (half size)"
 						></div>
 						<div class="absolute inset-y-[-3px] w-px bg-sc-ink3" style={`left:${track.startPct}%`} title="Starting balance"></div>
 						<div
@@ -787,7 +787,9 @@
 							The venue's kill conditions, read from the challenge itself
 							({halt.rules_source === 'challenge' ? "Propr's own phase rules" : 'conservative fallback defaults'}),
 							and how close the account is to each. The white tick on each bar is the mirror's
-							halt line — new opens stop there, 20% before Propr would fail the attempt.
+							safety line, 20% before Propr would fail the attempt: past it, daily loss stops new
+							opens for the day, and drawdown switches to half-size recovery trading until a hard
+							stop at 95%.
 						</p>
 					</div>
 					<span class="text-[10px] text-sc-ink3 shrink-0">
@@ -867,10 +869,12 @@
 							class="absolute inset-y-0 left-0"
 							style={`width:${ddPct}%; background:${gaugeColor(ddPct)}; opacity:.85`}
 						></div>
-						<div class="absolute inset-y-0 w-px bg-sc-ink" style="left:80%" title="Mirror halt line (80% of the allowance)"></div>
+						<div class="absolute inset-y-0 w-px bg-sc-ink" style="left:80%" title="Recovery mode starts here (80% of the allowance): half size"></div>
+						<div class="absolute inset-y-0 w-px bg-red-300" style="left:95%" title="Hard stop (95% of the allowance): no new opens"></div>
 					</div>
 					<div class="text-[10px] text-sc-ink3">
-						Guarded by: open-halt at 80% · every mirrored entry carries an exchange-side stop
+						Guarded by: recovery mode at 80% (half-size trades, and all open stops together must
+						land above the 95% hard stop) · no new opens past 95% · every mirrored entry carries an exchange-side stop
 						bracket · sizing risks {capitalSlice?.risk_pct ?? 2}% of each strategy's slice per
 						trade (tunable in Settings → Trading → Propr challenge mirror) · closes are never
 						halted, so risk can always come down.
@@ -965,7 +969,16 @@
 				<div class="border border-red-900 bg-red-500/5 px-3 py-2 text-[11px] text-red-400">
 					<span class="font-bold uppercase tracking-wider">Halted — new opens blocked:</span>
 					{(halt.reasons ?? []).join('; ')}. Closes still execute. The daily-loss halt clears at
-					the next UTC day; the drawdown halt clears if equity recovers.
+					the next UTC day; the drawdown hard stop clears once drawdown is back under
+					{fmtUsd(halt.drawdown_hard_stop_at_usd)}.
+				</div>
+			{:else if halt?.recovery_mode}
+				<div class="border border-amber-900 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-400">
+					<span class="font-bold uppercase tracking-wider">Recovery mode — trading at reduced size:</span>
+					{halt.recovery_reason}. {fmtUsd(halt.drawdown_room_usd)} of loss-at-stop room is left before
+					the hard stop at {fmtUsd(halt.drawdown_hard_stop_at_usd)} of drawdown, so even every open stop
+					hitting together can't fail the challenge. Normal size returns under
+					{fmtUsd(halt.drawdown_recovery_at_usd)}.
 				</div>
 			{/if}
 			<div class="flex flex-wrap items-center gap-2 text-[12px]">

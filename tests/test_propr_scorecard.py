@@ -346,3 +346,32 @@ def test_empty_roster_still_runs_the_close_pass_for_open_legs(forven_db, monkeyp
     pm.mirror_tick()
 
     assert closed == ["T1"]
+
+
+def test_stale_scorecard_is_served_at_once_and_rebuilt_in_background(monkeypatch):
+    """PROPR-SCORE-2: a slow rebuild must not time the page out once a copy exists."""
+    import threading
+
+    import forven.propr_scorecard as ps
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_build():
+        started.set()
+        release.wait(5)
+        return {"v": "new"}
+
+    monkeypatch.setattr(ps, "_build_now", slow_build)
+    monkeypatch.setitem(ps._cache, "value", {"v": "old"})
+    monkeypatch.setitem(ps._cache, "at", 0.0)  # long stale
+
+    assert ps.get_scorecard() == {"v": "old"}  # returned without waiting
+    assert started.wait(5)
+    assert ps.get_scorecard() == {"v": "old"}  # one rebuild at a time
+    release.set()
+    for _ in range(50):
+        if ps._cache["value"] == {"v": "new"}:
+            break
+        threading.Event().wait(0.05)
+    assert ps.get_scorecard() == {"v": "new"}
