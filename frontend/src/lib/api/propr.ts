@@ -1,4 +1,4 @@
-import { fetchApi } from './core';
+import { fetchApi, LONG_TIMEOUT_MS } from './core';
 
 // PROPR-1: Propr.xyz prop-firm integration. Every route except /api/propr/status
 // 404s while the hidden backend flag (FORVEN_PROPR_ENABLED) is off, and status
@@ -58,6 +58,13 @@ export interface ProprMirrorHalt {
 	daily_halt_at_usd?: number;
 	drawdown_used?: number;
 	drawdown_allowance_usd?: number;
+	/** PROPR-RECOVER-1: recovery mode starts here; opens stop only at the hard stop. */
+	drawdown_recovery_at_usd?: number;
+	drawdown_hard_stop_at_usd?: number;
+	drawdown_room_usd?: number | null;
+	recovery_mode?: boolean;
+	recovery_reason?: string | null;
+	recovery_risk_scale?: number;
 	drawdown_type?: string;
 	starting_balance?: number;
 	profit_target_usd?: number | null;
@@ -289,5 +296,7 @@ export interface ProprScorecard {
 }
 
 export async function getProprScorecard(refresh = false): Promise<ProprScorecard> {
-	return fetchApi(`/api/propr/scorecard?refresh=${refresh}`);
+	// The first build walks every roster trade plus the venue ledger; on a big
+	// install that outlasts the default 30s wait (PROPR-SCORE-2).
+	return fetchApi(`/api/propr/scorecard?refresh=${refresh}`, { timeoutMs: LONG_TIMEOUT_MS });
 }

@@ -110,7 +110,17 @@ UNMANAGED_STATE_KEY = "forven:propr-mirror:unmanaged"
 # (e.g. a $150/day cap halts new opens at $120 of daily loss). Closes always
 # run — reducing risk is never halted.
 DAILY_LOSS_HALT_FRACTION = 0.8
-DRAWDOWN_HALT_FRACTION = 0.8
+# PROPR-RECOVER-1: the drawdown rule used to be a full stop at 80% that "cleared
+# if equity recovers" — but with nothing open, equity can't recover, so the
+# mirror deadlocked for the rest of the attempt. Now 80% starts RECOVERY MODE:
+# opens continue at RECOVERY_RISK_SCALE of normal risk, and the loss-at-stop of
+# everything open (new trade included) must fit in the room left to the hard
+# floor at DRAWDOWN_HARD_STOP_FRACTION, so even every open stop hitting at once
+# lands above it. Opens stop outright only at the hard floor. All three are
+# fractions of the challenge's own allowance, so they scale with any account.
+DRAWDOWN_HALT_FRACTION = 0.8  # recovery mode starts here
+DRAWDOWN_HARD_STOP_FRACTION = 0.95
+RECOVERY_RISK_SCALE = 0.5
 # Used only when the challenge payload doesn't carry readable rules — the
 # free-trial terms (3%/day, 6% drawdown), which are also Propr's strictest
 # published tier, so the fallback can only ever be MORE conservative.
@@ -587,11 +597,23 @@ def _evaluate_halt(attempt: dict, equity: float, now: datetime) -> dict:
         )
     dd_used = max(0.0, rules["drawdown_ref"] - equity)
     dd_allowance = max(0.0, rules["drawdown_ref"] - rules["drawdown_floor"])
-    if dd_allowance > 0 and dd_used >= DRAWDOWN_HALT_FRACTION * dd_allowance:
+    dd_recovery_at = DRAWDOWN_HALT_FRACTION * dd_allowance
+    dd_hard_stop_at = DRAWDOWN_HARD_STOP_FRACTION * dd_allowance
+    recovery_reason = None
+    if dd_allowance > 0 and dd_used >= dd_hard_stop_at:
         reasons.append(
-            f"drawdown ${dd_used:.2f} reached {DRAWDOWN_HALT_FRACTION:.0%} of the "
-            f"${dd_allowance:.2f} allowance ({rules['drawdown_type']})"
+            f"drawdown ${dd_used:.2f} reached the {DRAWDOWN_HARD_STOP_FRACTION:.0%} hard "
+            f"floor of the ${dd_allowance:.2f} allowance ({rules['drawdown_type']})"
         )
+    elif dd_allowance > 0 and dd_used >= dd_recovery_at:
+        recovery_reason = (
+            f"drawdown ${dd_used:.2f} is past {DRAWDOWN_HALT_FRACTION:.0%} of the "
+            f"${dd_allowance:.2f} allowance ({rules['drawdown_type']}): trading at "
+            f"{RECOVERY_RISK_SCALE:.0%} risk, all open stops capped at the "
+            f"{DRAWDOWN_HARD_STOP_FRACTION:.0%} floor"
+        )
+    # Loss-at-stop room before the hard floor (open risk is subtracted by the tick).
+    dd_room = max(0.0, dd_hard_stop_at - dd_used) if dd_allowance > 0 else None
 
     halt = {
         "day": day,
@@ -606,6 +628,12 @@ def _evaluate_halt(attempt: dict, equity: float, now: datetime) -> dict:
         "daily_halt_at_usd": daily_budget,
         "drawdown_used": dd_used,
         "drawdown_allowance_usd": dd_allowance,
+        "drawdown_recovery_at_usd": dd_recovery_at,
+        "drawdown_hard_stop_at_usd": dd_hard_stop_at,
+        "drawdown_room_usd": dd_room,
+        "recovery_mode": bool(recovery_reason) and not reasons,
+        "recovery_reason": recovery_reason,
+        "recovery_risk_scale": RECOVERY_RISK_SCALE,
         "drawdown_type": rules["drawdown_type"],
         "starting_balance": rules["starting_balance"],
         "profit_target_usd": rules["profit_target_usd"],
@@ -630,12 +658,33 @@ def _evaluate_halt(attempt: dict, equity: float, now: datetime) -> dict:
                 body=(
                     "New mirrored opens are blocked to protect the challenge account. "
                     "Closes still execute. The daily-loss halt clears at the next UTC "
-                    "day; the drawdown halt clears if equity recovers."
+                    "day; the drawdown hard stop clears once drawdown drops back under "
+                    f"{DRAWDOWN_HARD_STOP_FRACTION:.0%} of the allowance."
                 ),
                 dedupe_key=f"propr_mirror_halt:{day}",
             )
         except Exception as exc:
             log.debug("Could not emit propr mirror halt notification: %s", exc)
+    elif halt["recovery_mode"] and not prev.get("recovery_mode"):
+        log.warning("Propr mirror in RECOVERY MODE: %s", recovery_reason)
+        try:
+            from forven.notifications import emit_notification
+            emit_notification(
+                "propr_mirror_recovery",
+                severity="info",
+                source="propr_mirror",
+                title="Propr mirror in recovery mode",
+                summary=recovery_reason,
+                body=(
+                    "The mirror keeps trading so the account can win its way back, at "
+                    "reduced size, and never with more open loss-at-stop than the room "
+                    "left before the hard floor. Normal sizing returns once drawdown "
+                    f"drops under {DRAWDOWN_HALT_FRACTION:.0%} of the allowance."
+                ),
+                dedupe_key=f"propr_mirror_recovery:{day}",
+            )
+        except Exception as exc:
+            log.debug("Could not emit propr mirror recovery notification: %s", exc)
     return halt
 
 
@@ -798,7 +847,7 @@ def mirror_equity_slice(equity: float) -> tuple[float, dict]:
 
 def _size_mirror_order(
     asset: str, mid: float, stop_price: float,
-    leverage: float | None, equity: float,
+    leverage: float | None, equity: float, risk_scale: float = 1.0,
 ) -> tuple[float, str | None]:
     """Independent Propr sizing: the operator's mirror risk (see
     mirror_risk_fraction) of this member's SLICE of challenge equity at the
@@ -808,7 +857,7 @@ def _size_mirror_order(
     ``equity`` is the member's slice (see mirror_equity_slice), not the account —
     the notional headroom below is therefore also per-slice, so N members cannot
     collectively exceed the challenge balance."""
-    risk = mirror_risk_fraction()
+    risk = mirror_risk_fraction() * max(0.0, min(1.0, float(risk_scale)))
     stop_dist = abs(mid - stop_price)
     if stop_dist <= 0:
         return 0.0, "zero stop distance"
@@ -968,8 +1017,11 @@ def _mirror_open(
     # and could exhaust the drawdown allowance in one session.
     slice_usd, slice_meta = mirror_equity_slice(equity)
     entry["capital_slice"] = slice_meta
+    risk_scale = float((risk_budget or {}).get("risk_scale") or 1.0)
+    if risk_scale < 1.0:
+        entry["recovery_risk_scale"] = risk_scale
     size, skip_reason = _size_mirror_order(
-        asset, mid, stop_price, row.get("leverage"), slice_usd
+        asset, mid, stop_price, row.get("leverage"), slice_usd, risk_scale
     )
     if skip_reason or size <= 0:
         entry.update({"status": "skipped", "reason": skip_reason or "size resolved to zero"})
@@ -986,7 +1038,8 @@ def _mirror_open(
                 "status": "pending",
                 "reason": (
                     f"deferred: risk-at-stop ${risk_usd:.2f} exceeds the remaining "
-                    f"daily budget ${risk_budget.get('remaining', 0.0):.2f}"
+                    f"{risk_budget.get('limit') or 'daily'} budget "
+                    f"${risk_budget.get('remaining', 0.0):.2f}"
                 ),
             })
             return
@@ -2242,12 +2295,22 @@ def mirror_tick() -> dict:
                     for e in state.values()
                     if e.get("status") in _UNRESOLVED_CLAIM_STATUSES
                 )
-                risk_budget = {
-                    "remaining": max(
-                        0.0,
-                        float(halt["daily_halt_at_usd"]) - float(halt["daily_loss"]) - open_risk,
-                    )
-                }
+                daily_room = max(
+                    0.0,
+                    float(halt["daily_halt_at_usd"]) - float(halt["daily_loss"]) - open_risk,
+                )
+                risk_budget = {"remaining": daily_room, "limit": "daily"}
+                # PROPR-RECOVER-1: open stops must also all fit above the
+                # drawdown hard floor, so a recovery-mode cluster of stop-outs
+                # can never carry the account into the venue's fail line.
+                dd_room = halt.get("drawdown_room_usd")
+                if isinstance(dd_room, (int, float)):  # 0.0 is a real (empty) room
+                    dd_left = max(0.0, dd_room - open_risk)
+                    if dd_left < daily_room:
+                        risk_budget = {"remaining": dd_left, "limit": "drawdown-floor"}
+                if halt.get("recovery_mode"):
+                    risk_budget["risk_scale"] = RECOVERY_RISK_SCALE
+                    summary["recovery_mode"] = True
             for row in to_open[:MAX_OPENS_PER_TICK]:
                 try:
                     _mirror_open(propr, row, state, equity, now, risk_budget=risk_budget)
