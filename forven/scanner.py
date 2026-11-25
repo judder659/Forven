@@ -3857,6 +3857,24 @@ def _report_execution_failure(strategy_id: str | None, action: str, trade_id: st
         log.warning("Could not route execution failure for %s: %s", strategy_id, exc)
 
 
+def _live_size_step(asset: str, venue_url: str | None = None) -> float | None:
+    """The exchange's order-size step for ``asset`` (10^-szDecimals), or None
+    when it is unknown. Read-only use of the Hyperliquid metadata cache."""
+    try:
+        from forven.exchange import hyperliquid as _hl
+
+        url = venue_url or (
+            _hl.constants.TESTNET_API_URL if _resolve_hyperliquid_testnet() else _hl.constants.MAINNET_API_URL
+        )
+        coin = str(asset or "").strip().upper().split("/")[0].split("-")[0]
+        szd = _hl._get_sz_decimals(url).get(coin)
+        if szd is None:
+            szd = _hl._SZ_DECIMALS_FALLBACK.get(coin)
+        return None if szd is None else 10.0 ** (-int(szd))
+    except Exception:
+        return None
+
+
 def _resolve_hyperliquid_testnet() -> bool:
     """Resolve HyperLiquid testnet preference with the shared exchange helper."""
     from forven.exchange.hyperliquid import resolve_configured_testnet
@@ -5539,6 +5557,10 @@ def manage_positions(
                         min_notional_usd=_MIN_LIVE_ORDER_NOTIONAL_USD,
                         stop_price=stop_loss,
                         risk_cap_usd=float(sizing_equity) * float(strategy_risk_pct) if strategy_risk_pct else None,
+                        size_step=(
+                            _live_size_step(strat["asset"])
+                            if float(size) * float(price) < _MIN_LIVE_ORDER_NOTIONAL_USD else None
+                        ),
                     )
                     if _floored is None:
                         _probation.record_skip(strat_id, strat["asset"], str(_too_small))
@@ -7955,6 +7977,10 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
             units=float(units), full_units=float(full_units), price=float(ref_price),
             min_notional_usd=_MIN_LIVE_ORDER_NOTIONAL_USD, stop_price=stop_price,
             risk_cap_usd=_risk_budget_usd,
+            size_step=(
+                _live_size_step(asset, _venue_url)
+                if float(units) * float(ref_price) < _MIN_LIVE_ORDER_NOTIONAL_USD else None
+            ),
         )
         if _floored is None:
             log.warning("[%s] SKIPPED %s live open — %s", strat_id, asset, _too_small)
