@@ -143,6 +143,16 @@ export function entryStatusMeta(
 		};
 	}
 	if (held) return held;
+	const edgePaper = probation.edge_paper;
+	if (thin && edgePaper && edgePaper.retire_at > 0) {
+		return {
+			...base,
+			label: edgePaper.need ? `Edge thin · proving on paper ${edgePaper.trades}/${edgePaper.need}` : 'Edge thin · proving on paper',
+			short: 'edge thin',
+			tone: 'wait',
+			help: `The backtest edge per trade covers trading costs less than twice. Paper decides it: ${edgePaper.need ? `${edgePaper.need} matching paper trades averaging 2x costs pass it, and ` : ''}${edgePaper.retire_at} trades under 2x archive it automatically. You can start probation with a bypass if you trust it.`,
+		};
+	}
 	if (thin && base.key === 'blocked_merit') {
 		return {
 			...base,
@@ -162,8 +172,17 @@ function paperHoldMeta(
 	probation: PipelineExplainProbationEvidence,
 ): StatusMeta | null {
 	const pick = (label: string, short: string, tone: Tone, help: string): StatusMeta => ({ ...base, label, short, tone, help });
-	if (failing.has('held_back') && base.key === 'blocked_merit' && !failing.has('edge_covers_costs')) {
+	const codes = probation.codes ?? {};
+	if (failing.has('held_back') && codes.held_back !== 'holdout_budget_exhausted' && base.key === 'blocked_merit' && !failing.has('edge_covers_costs')) {
 		return pick('Failed held-back data', 'held back', 'fail', 'It lost on the data kept back from research.');
+	}
+	if (codes.backtest_trades === 'backtest_rebuild_failed' || codes.backtest_trades === 'backtest_too_few_trades') {
+		return pick(
+			codes.backtest_trades === 'backtest_too_few_trades' ? 'Backtest too few trades' : 'Backtest trades missing',
+			'no backtest',
+			'fail',
+			'Probation limits come from its backtest trades, and they are not there. Re-run its backtest on the strategy page, or archive it. It keeps paper trading meanwhile.',
+		);
 	}
 	if (failing.has('paper_breakeven')) {
 		return pick('Paper losing', 'losing', 'caution', 'Still paper trading. Probation needs paper at breakeven or better.');
@@ -176,6 +195,17 @@ function paperHoldMeta(
 			'wait',
 			'Paper trades so far that matched what the backtest would have done. Probation needs this many.',
 		);
+	}
+	if (failing.has('held_back') && codes.held_back === 'holdout_budget_exhausted') {
+		return pick(
+			'Held-back test queued',
+			'queued',
+			'wait',
+			'Its strategy type has used this quarter’s held-back tests. It waits for the next quarter, when the best paper records go first. Nothing to do.',
+		);
+	}
+	if (codes.backtest_trades === 'backtest_rebuilding') {
+		return pick('Rebuilding backtest', 'rebuilding', 'wait', 'Its backtest trades file was missing, so Forven is re-running the backtest by itself.');
 	}
 	if (failing.has('cooldown')) {
 		return pick('Cooling down', 'cooling', 'wait', 'It was demoted from probation recently and waits out the cooldown first.');

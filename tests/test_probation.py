@@ -855,3 +855,86 @@ def test_reference_miss_cache_expires_quickly_after_backtest_is_restored(forven_
     clock[0] += probation.REFERENCE_MISS_CACHE_SECONDS + 1.0
     rets2, info2 = probation.backtest_returns("S1", {})
     assert len(rets2) == 10 and not info2.get("unmeasured")
+
+
+# --- automatic backtest rebuilds (Needs you only holds real decisions) ----------
+
+
+def _missing_trades_setup(monkeypatch):
+    import forven.policy as policy
+
+    monkeypatch.setattr("forven.paper_door.holdout_at_paper", lambda cfg=None: False)
+    monkeypatch.setattr(probation, "_holdout_missing", lambda sid: False)
+    monkeypatch.setattr(policy, "holdout_gate_reason", lambda sid, submit=False, stage="paper": None)
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([], {"reason": "no_backtest_trades", "unmeasured": True}))
+
+
+def test_missing_backtest_trades_are_rebuilt_automatically_then_give_up(env, monkeypatch):
+    _strategy("S1")
+    _missing_trades_setup(monkeypatch)
+    submitted: list[str] = []
+    monkeypatch.setattr(probation, "_submit_backtest_rebuild", lambda sid: (submitted.append(sid), f"R{len(submitted)}")[1])
+
+    check = next(c for c in probation.entry_check("S1")["failing"] if c["key"] == "backtest_trades")
+    assert check["trades_missing"] is True and check["code"] == "backtest_rebuilding"
+
+    reports = {"S1": probation.entry_check("S1")}
+    assert probation.rebuild_missing_backtests(reports) == ["S1"]
+    # Not again within the retry gap.
+    assert probation.rebuild_missing_backtests(reports) == []
+    assert probation.backtest_rebuild_state("S1")["state"] == "rebuilding"
+
+    later = probation._now() + timedelta(hours=probation.BACKTEST_REBUILD_RETRY_HOURS + 1)
+    monkeypatch.setattr(probation, "_now", lambda: later)
+    assert probation.rebuild_missing_backtests(reports) == ["S1"]
+    assert submitted == ["S1", "S1"]
+
+    # Both tries ran and the trades are still gone: it stops and says so.
+    much_later = later + timedelta(hours=probation.BACKTEST_REBUILD_RETRY_HOURS + 1)
+    monkeypatch.setattr(probation, "_now", lambda: much_later)
+    assert probation.rebuild_missing_backtests(reports) == []
+    check = next(c for c in probation.entry_check("S1")["failing"] if c["key"] == "backtest_trades")
+    assert check["code"] == "backtest_rebuild_failed"
+    assert "re-run its backtest on the strategy page" in check["detail"]
+
+
+def test_rebuild_record_clears_once_trades_are_back(env, monkeypatch):
+    _strategy("S1")
+    _missing_trades_setup(monkeypatch)
+    monkeypatch.setattr(probation, "_submit_backtest_rebuild", lambda sid: "R1")
+    probation.rebuild_missing_backtests({"S1": probation.entry_check("S1")})
+    assert "S1" in kv_get(probation.BACKTEST_REBUILD_KV_KEY)
+
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([0.01] * 10, {}))
+    probation.rebuild_missing_backtests({"S1": probation.entry_check("S1")})
+    assert "S1" not in kv_get(probation.BACKTEST_REBUILD_KV_KEY)
+
+
+def test_rebuild_stops_when_the_backtest_queue_is_full_and_skips_too_few_trades(env, monkeypatch):
+    _strategy("S1")
+    _strategy("S2")
+    _missing_trades_setup(monkeypatch)
+    monkeypatch.setattr(probation, "_submit_backtest_rebuild", lambda sid: None)  # queue full
+    reports = {sid: probation.entry_check(sid) for sid in ("S1", "S2")}
+    assert probation.rebuild_missing_backtests(reports) == []
+    assert not kv_get(probation.BACKTEST_REBUILD_KV_KEY)  # nothing counted as a try
+
+    # A backtest that ran but made too few trades would only do it again.
+    monkeypatch.setattr(probation, "backtest_returns", lambda sid, cfg: ([0.01], {}))
+    monkeypatch.setattr(probation, "_submit_backtest_rebuild", lambda sid: pytest.fail("should not rebuild"))
+    check = next(c for c in probation.entry_check("S1")["failing"] if c["key"] == "backtest_trades")
+    assert check["code"] == "backtest_too_few_trades"
+    assert probation.rebuild_missing_backtests({"S1": probation.entry_check("S1")}) == []
+
+
+def test_held_back_check_carries_its_code(env, monkeypatch):
+    import forven.policy as policy
+
+    _strategy("S1")
+    monkeypatch.setattr("forven.paper_door.holdout_at_paper", lambda cfg=None: False)
+    monkeypatch.setattr(
+        policy, "holdout_gate_reason",
+        lambda sid, submit=False, stage="paper": ("Held-back test budget for the 'trend' family is spent", "holdout_budget_exhausted"),
+    )
+    check = next(c for c in probation.entry_check("S1")["failing"] if c["key"] == "held_back")
+    assert check["ok"] is False and check["code"] == "holdout_budget_exhausted"

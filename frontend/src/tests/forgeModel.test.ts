@@ -173,6 +173,16 @@ describe('forge status', () => {
 		expect(paper('waiting_evidence', ['cooldown']).label).toBe('Cooling down');
 		expect(paper('ready', []).label).toBe('Ready for probation');
 		expect(paper('waiting_evidence', ['paper_confirmation'], { slow: true, need_days: 21, paper_days: 9.6 }).label).toBe('Confirming 1/3, 9/21d');
+		// Paper settles a thin edge on its own while the retire sweep is on.
+		const edgePaper = { trades: 4, need: 10, retire_at: 20 };
+		expect(paper('waiting_evidence', ['edge_covers_costs'], { edge_paper: edgePaper }).label).toBe('Edge thin · proving on paper 4/10');
+		expect(paper('waiting_evidence', ['edge_covers_costs'], { edge_paper: edgePaper }).tone).toBe('wait');
+		// A spent held-back quota is a wait, not a failed test.
+		const quota = { codes: { held_back: 'holdout_budget_exhausted' } };
+		expect(paper('waiting_evidence', ['held_back'], quota).label).toBe('Held-back test queued');
+		expect(paper('blocked_merit', ['held_back']).label).toBe('Failed held-back data');
+		expect(paper('waiting_evidence', ['backtest_trades'], { codes: { backtest_trades: 'backtest_rebuilding' } }).label).toBe('Rebuilding backtest');
+		expect(paper('blocked_merit', ['backtest_trades'], { codes: { backtest_trades: 'backtest_rebuild_failed' } }).label).toBe('Backtest trades missing');
 		// No probation evidence (another stage): the plain status words.
 		expect(entryStatusMeta(explainEntry({ stage: 'gauntlet', status: 'blocked_merit' })).label).toBe('Blocked on merit');
 	});
@@ -371,6 +381,41 @@ describe('forge attention', () => {
 		expect(items.map((item) => item.key)).toEqual(['slot:S13', 'blocked:S15']);
 		expect(items[0]).toMatchObject({ tone: 'caution', detail: 'Room on the live account: S1227 holds SOL' });
 		expect(items[1].detail).toBe('Edge covers costs: 1.3x (need 2x)');
+	});
+
+	it('keeps rebuilding or missing backtests and a spent held-back quota off Needs you', () => {
+		const wait = { key: 'wait', label: 'Wait' };
+		const rerun = { key: 'run_backtest', label: 'Re-run' };
+		const exec = { key: 'run_validation_suite', label: 'Validate' };
+		const blocker = (reason: string, kind: string, action: { key: string; label: string }, code: string) => ({ reason, code, kind, source: 'probation_gate', action });
+		const items = buildAttention({
+			activeIds: new Set(['S20', 'S21', 'S22', 'S23']),
+			explain: [
+				explainEntry({ id: 'S20', status: 'waiting_evidence', blockers: [blocker('Backtest trades: rebuilding', 'evidence', wait, 'backtest_rebuilding')] }),
+				explainEntry({ id: 'S21', status: 'blocked_merit', blockers: [blocker('Backtest trades: gave up', 'merit', rerun, 'backtest_rebuild_failed')] }),
+				explainEntry({
+					id: 'S22',
+					status: 'waiting_evidence',
+					blockers: [blocker('Held-back test budget spent', 'evidence', wait, 'holdout_budget_exhausted')],
+				}),
+				// Execution settings that need checking are still the operator's.
+				explainEntry({
+					id: 'S23',
+					status: 'blocked_merit',
+					blockers: [
+						blocker('Backtest trades: gave up', 'merit', rerun, 'backtest_rebuild_failed'),
+						blocker('Execution settings verified: changed', 'evidence', exec, 'execution_unverified'),
+					],
+				}),
+			],
+			fleet: null,
+			nowWorking: [],
+			rows: [],
+			health: null,
+			nameOf: (id) => id,
+		});
+		expect(items.map((item) => item.key)).toEqual(['blocked:S23']);
+		expect(items[0].detail).toBe('Execution settings verified: changed');
 	});
 
 	it('sends critical health checks to diagnostics', () => {

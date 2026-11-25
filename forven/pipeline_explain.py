@@ -75,11 +75,65 @@ _PROBATION_CHECKS = {
     "cooldown": ("evidence", "probation_cooldown", ("wait", "Cooling down after a demotion")),
     "capacity": ("contention", "probation_full", ("review_slot", "Probation is full — graduate or demote one first")),
     "live_admission": ("contention", "live_admission", ("review_slot", "Another live strategy holds this coin, or the wallet is full")),
-    "paper_breakeven": ("merit", "paper_losing", ("wait", "Paper is below breakeven — it waits until paper recovers")),
+    # Losing paper is a wait, not a verdict: it recovers, or the paper retire
+    # sweep archives it once enough trades prove the loss.
+    "paper_breakeven": ("evidence", "paper_losing", ("wait", "Paper is below breakeven — it waits until paper recovers or the retire sweep archives it")),
     "edge_covers_costs": ("merit", "edge_below_costs", ("review_strategy", "The backtest's average trade is too thin for costs")),
     "execution_verified": ("evidence", "execution_unverified", ("run_validation_suite", "Execution settings need fresh validation before live trading")),
     "backtest_trades": ("evidence", "missing_backtest_trades", ("run_backtest", "Re-run its backtest so probation drawdown, streak, and band limits can be measured")),
 }
+
+# Paper probation checks whose blocker depends on more than the check key: the
+# check's own code (written by probation.entry_check) says which case it is.
+_HOLDOUT_BUDGET_WAIT = (
+    "evidence", "holdout_budget_exhausted",
+    ("wait", "Its strategy type has used this quarter's held-back tests — it waits for the next quarter, best paper record first"),
+)
+_BACKTEST_TRADE_CASES = {
+    "backtest_rebuilding": (
+        "evidence", "backtest_rebuilding",
+        ("wait", "Its backtest trades file is missing — Forven is re-running the backtest automatically"),
+    ),
+    "backtest_rebuild_failed": (
+        "merit", "backtest_rebuild_failed",
+        ("run_backtest", "Automatic backtest re-runs did not restore its trades — re-run it on the strategy page or archive it"),
+    ),
+    "backtest_too_few_trades": (
+        "merit", "backtest_too_few_trades",
+        ("run_backtest", "Its backtest makes too few trades to set probation limits"),
+    ),
+}
+
+
+def _paper_check_override(check: dict, kind: str, code: str, action: tuple[str, str]) -> tuple[str, str, tuple[str, str]]:
+    key = check.get("key")
+    check_code = str(check.get("code") or "")
+    if key == "held_back" and check.get("ok") is False:
+        # A spent family quota is not a failed test: older cached checks carry
+        # no code, so the message is the fallback.
+        if check_code == "holdout_budget_exhausted" or "budget for the" in str(check.get("detail") or ""):
+            return _HOLDOUT_BUDGET_WAIT
+        return "merit", "holdout_reject", action
+    if key == "backtest_trades" and check_code in _BACKTEST_TRADE_CASES:
+        return _BACKTEST_TRADE_CASES[check_code]
+    if key == "edge_covers_costs":
+        if "not measured" in str(check.get("detail")):
+            return "evidence", "no_metrics_error", action
+        retire_at = int(check.get("retire_trades") or 0)
+        if retire_at > 0:
+            # Paper settles a thin backtest edge on its own: enough matching
+            # paper trades at 2x costs pass it, and the retire sweep archives
+            # it at retire_at trades under. Until then it is a wait.
+            need = int(check.get("paper_need") or 0)
+            done = int(check.get("paper_trades") or 0)
+            return "evidence", "edge_unproven", (
+                "wait",
+                f"Backtest edge is thin — paper decides it ({done} matching trades so far; "
+                + (f"passes at {need} averaging 2x costs, " if need else "")
+                + f"archived at {retire_at} if under)",
+            )
+    return kind, code, action
+
 
 _LIVE_STANDING_NOTE = (
     "Holds live allocation on the graduated schedule; the decay kill-switch "
@@ -688,6 +742,21 @@ def _probation_entry_evidence(report: dict, knobs: dict | None = None) -> dict:
         "paper_days": report.get("paper_days"),
         "slow": slow,
         "failing": [c.get("key") for c in report.get("failing") or []],
+        # Which case a failing check is in (held-back quota vs a real fail,
+        # backtest rebuilding vs given up), and the paper progress on a thin edge.
+        "codes": {c.get("key"): c.get("code") for c in report.get("failing") or [] if c.get("code")},
+        "edge_paper": next(
+            (
+                {
+                    "trades": int(c.get("paper_trades") or 0),
+                    "need": int(c.get("paper_need") or 0),
+                    "retire_at": int(c.get("retire_trades") or 0),
+                }
+                for c in report.get("failing") or []
+                if c.get("key") == "edge_covers_costs" and "paper_trades" in c
+            ),
+            None,
+        ),
         "checked_at": report.get("checked_at"),
     }
 
@@ -878,10 +947,7 @@ def _explain_row(
                 kind, code, action = _PROBATION_CHECKS.get(
                     check.get("key"), ("merit", "probation_check", _DEFAULT_MERIT_ACTION)
                 )
-                if check.get("key") == "held_back" and check.get("ok") is False:
-                    kind, code = "merit", "holdout_reject"
-                if check.get("key") == "edge_covers_costs" and "not measured" in str(check.get("detail")):
-                    kind, code = "evidence", "no_metrics_error"
+                kind, code, action = _paper_check_override(check, kind, code, action)
                 reason = f"{check['label']}: {check['detail']}"
                 seen_reasons.add(reason)
                 blockers.append(_blocker(reason, code, kind, "probation_gate", action, check=check.get("key")))

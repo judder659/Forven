@@ -196,6 +196,11 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
 	return items.sort((a, b) => KIND_RANK[a.kind] - KIND_RANK[b.kind]);
 }
 
+// Blockers that keep a paper strategy out of probation but are not a decision:
+// the strategy keeps paper trading and shows under Blocked, where the strategy
+// page still offers the manual fix (re-run the backtest, or archive it).
+const BLOCKED_NOT_NEEDS_YOU = new Set(['backtest_rebuild_failed', 'backtest_too_few_trades', 'missing_backtest_trades']);
+
 /**
  * The paper blockers worth the operator's time, or null when the strategy is
  * only waiting on its paper results (losing paper, too few matching trades,
@@ -204,7 +209,8 @@ export function buildAttention(input: AttentionInput): AttentionItem[] {
  * detail at all, the status is trusted as is.
  */
 function paperActionableBlockers(entry: PipelineExplainStrategy): PipelineExplainBlocker[] | null {
-	const blockers = entry.blockers ?? [];
+	const blockers = (entry.blockers ?? []).filter((b) => !BLOCKED_NOT_NEEDS_YOU.has(b.code));
+	if (blockers.length === 0 && (entry.blockers ?? []).length > 0) return null;
 	if (blockers.length === 0) {
 		return [{ reason: entry.gate_reason ?? '', code: '', kind: 'merit', source: '', action: null }];
 	}

@@ -45,13 +45,22 @@ READY_KV_KEY = "forven:probation:ready"
 # Bump when entry_check's checks or their sizing change, so a ready list written
 # by older code is recomputed instead of shown (after #246 a pre-restart list
 # still sized every strategy at full size and read "no room live").
-READY_FORMAT = 3
+READY_FORMAT = 4
 # A list older than this is recomputed on read (the watchdog writes it hourly).
 READY_MAX_AGE_SECONDS = 2 * 3600
 # Held-back tests the hourly watchdog may start per run for strategies that pass
 # every other probation check. Each is a walk-forward on the robustness queue,
 # so a large backlog is worked through over a few hours instead of all at once.
 HOLDOUT_SUBMITS_PER_TICK = 6
+# A paper strategy whose backtest trades file is gone (the 2026-11-17 wipe, a
+# cleared data folder) can't have its probation limits measured. The hourly
+# watchdog re-runs its backtest by itself, a few per run so research keeps the
+# workers, and gives up after a couple of tries: then it shows as Blocked with
+# the manual re-run button, instead of asking the operator about every one.
+BACKTEST_REBUILDS_PER_TICK = 6
+BACKTEST_REBUILD_MAX_ATTEMPTS = 2
+BACKTEST_REBUILD_RETRY_HOURS = 6
+BACKTEST_REBUILD_KV_KEY = "forven:probation:backtest_rebuilds"
 SKIPS_KV_PREFIX = "forven:probation:skips:"
 ACTOR = "probation"
 _MAX_SKIPS_KEPT = 20
@@ -532,8 +541,112 @@ def live_record(strategy_id: str, rec: dict | None, cfg: dict | None = None) -> 
 # --- entry ----------------------------------------------------------------------
 
 
-def _check(key: str, label: str, ok: bool | None, detail: str, *, bypassable: bool = True) -> dict[str, Any]:
-    return {"key": key, "label": label, "ok": ok, "detail": detail, "bypassable": bypassable}
+def _check(
+    key: str, label: str, ok: bool | None, detail: str, *, bypassable: bool = True, **extra: Any
+) -> dict[str, Any]:
+    out = {"key": key, "label": label, "ok": ok, "detail": detail, "bypassable": bypassable}
+    # Structured facts the pipeline view reads instead of parsing ``detail``.
+    out.update({k: v for k, v in extra.items() if v is not None})
+    return out
+
+
+def _rebuild_store() -> dict[str, dict[str, Any]]:
+    try:
+        raw = _db().kv_get(BACKTEST_REBUILD_KV_KEY, None)
+    except Exception as exc:  # noqa: BLE001 — unreadable: treat as no rebuilds yet
+        log.debug("Backtest rebuild record unavailable: %s", exc)
+        return {}
+    return {str(k): dict(v) for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else {}
+
+
+def backtest_rebuild_state(strategy_id: str, store: dict | None = None) -> dict[str, Any]:
+    """Where the automatic backtest rebuild stands for one strategy.
+
+    ``state`` is ``none`` (never tried), ``rebuilding`` (queued, running, or
+    tries left) or ``failed`` (every try ran and the trades are still missing).
+    """
+    store = store if store is not None else _rebuild_store()
+    rec = store.get(strategy_id)
+    if not rec:
+        return {"state": "none", "attempts": 0}
+    attempts = int(rec.get("attempts") or 0)
+    last = _parse_ts(rec.get("last_at"))
+    recent = last is not None and (_now() - last).total_seconds() < BACKTEST_REBUILD_RETRY_HOURS * 3600
+    if attempts >= BACKTEST_REBUILD_MAX_ATTEMPTS and not recent:
+        return {"state": "failed", "attempts": attempts, "last_at": rec.get("last_at")}
+    return {"state": "rebuilding", "attempts": attempts, "last_at": rec.get("last_at")}
+
+
+def _rebuild_due(strategy_id: str, store: dict) -> bool:
+    rec = store.get(strategy_id)
+    if not rec:
+        return True
+    if int(rec.get("attempts") or 0) >= BACKTEST_REBUILD_MAX_ATTEMPTS:
+        return False
+    last = _parse_ts(rec.get("last_at"))
+    return last is None or (_now() - last).total_seconds() >= BACKTEST_REBUILD_RETRY_HOURS * 3600
+
+
+def _submit_backtest_rebuild(strategy_id: str) -> str | None:
+    """Queue a background backtest on the strategy's own market and params; its result id, or None when full."""
+    jobs = _mod("forven.api_domains.backtest_jobs")
+    try:
+        # preserve_result: a weak rerun must not be auto-trashed, or its trades
+        # would be skipped and the rebuild would count as failed.
+        job = jobs.submit_backtest_job(jobs.BacktestSubmitBody(strategy_id=strategy_id, preserve_result=True))
+    except Exception as exc:  # noqa: BLE001 — a full queue (429) waits for the next run
+        if getattr(exc, "status_code", None) == 429:
+            return None
+        raise
+    return str(job.get("result_id") or "") or None
+
+
+def rebuild_missing_backtests(
+    reports: dict[str, dict[str, Any]], *, limit: int = BACKTEST_REBUILDS_PER_TICK,
+    order: list[str] | None = None,
+) -> list[str]:
+    """Re-run the backtest of paper strategies whose trades file is missing.
+
+    Only the missing-file case: a backtest that ran but made too few trades
+    would make too few again. Strategies whose trades are back are dropped from
+    the record, so a later loss starts with fresh tries.
+    """
+    store = _rebuild_store()
+    changed = False
+    for sid in list(store):
+        report = reports.get(sid)
+        if report is None or not any(c["key"] == "backtest_trades" for c in report.get("failing") or []):
+            store.pop(sid, None)
+            changed = True
+    started: list[str] = []
+    for sid in order or list(reports):
+        if len(started) >= limit:
+            break
+        report = reports.get(sid)
+        if report is None:
+            continue
+        check = next((c for c in report.get("failing") or [] if c["key"] == "backtest_trades"), None)
+        if check is None or not check.get("trades_missing") or not _rebuild_due(sid, store):
+            continue
+        try:
+            result_id = _submit_backtest_rebuild(sid)
+        except Exception as exc:  # noqa: BLE001 — one bad strategy never stops the rest
+            log.warning("Probation: backtest rebuild for %s could not start: %s", sid, exc)
+            result_id = ""
+        if result_id is None:
+            break  # backtest queue is full: try again next run
+        rec = store.get(sid) or {}
+        store[sid] = {"attempts": int(rec.get("attempts") or 0) + 1, "last_at": _iso(), "result_id": result_id}
+        changed = True
+        if result_id:
+            started.append(sid)
+            log.info("Probation: re-running the backtest of %s (its trades file is missing)", sid)
+    if changed:
+        try:
+            _db().kv_set(BACKTEST_REBUILD_KV_KEY, store)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Backtest rebuild record could not be saved: %s", exc)
+    return started
 
 
 def entry_check(
@@ -631,7 +744,16 @@ def entry_check(
                 f"; paper: {paper_edge['trades']} of {min_paper} matching trades on {paper_edge['coin']}"
                 + (f" averaging {_floor_tenth(paper_cov):.1f}x" if paper_cov is not None else "")
             )
-        checks.append(_check("edge_covers_costs", "Edge covers costs", False, detail))
+        try:
+            pool = _mod("forven.paper_pool").settings(cfg)
+            retire_at = int(pool.get("retire_edge_min_trades") or 0) if pool.get("retire_enabled") else 0
+        except Exception:  # noqa: BLE001 — unknown: the operator's call, as before
+            retire_at = 0
+        checks.append(_check(
+            "edge_covers_costs", "Edge covers costs", False, detail,
+            paper_trades=int(paper_edge["trades"] or 0), paper_need=min_paper, retire_trades=retire_at,
+            unmeasured=True if coverage is None else None,
+        ))
 
     try:
         exec_state = _mod("forven.strategies.execution_check").execution_check(strategy_id)
@@ -668,8 +790,27 @@ def entry_check(
                 "backtest trades file is missing on disk, so probation drawdown, losing-streak and band limits "
                 "can't be checked; re-run its backtest on the strategy page"
             )
+        rebuild = None
+        if not bt_ok and bt_count == 0:
+            rebuild = backtest_rebuild_state(strategy_id)
+            if rebuild["state"] == "rebuilding":
+                bt_detail = (
+                    "no backtest trades on disk; Forven is re-running its backtest automatically "
+                    f"(try {max(1, rebuild['attempts'])} of {BACKTEST_REBUILD_MAX_ATTEMPTS})"
+                )
+            elif rebuild["state"] == "failed":
+                bt_detail = (
+                    f"no backtest trades on disk and {rebuild['attempts']} automatic re-runs did not "
+                    "bring them back; re-run its backtest on the strategy page or archive it"
+                )
         checks.append(_check(
             "backtest_trades", "Backtest trades for limits", bt_ok, bt_detail, bypassable=False,
+            trades_missing=True if (not bt_ok and bt_count == 0) else None,
+            code=None if bt_ok else (
+                "backtest_too_few_trades" if bt_count > 0
+                else "backtest_rebuild_failed" if rebuild and rebuild["state"] == "failed"
+                else "backtest_rebuilding"
+            ),
         ))
     except Exception as exc:  # noqa: BLE001 — fail closed before real money
         checks.append(_check(
@@ -738,7 +879,9 @@ def entry_check(
             checks.append(_check("held_back", "Held-back test", True, "passed or not required"))
         else:
             pending = "pending" in str(holdout[1] or "")
-            checks.append(_check("held_back", "Held-back test", None if pending else False, str(holdout[0])))
+            checks.append(_check(
+                "held_back", "Held-back test", None if pending else False, str(holdout[0]), code=str(holdout[1] or "") or None,
+            ))
 
     coins = policy.strategy_container_coins(strategy_id, row["symbol"]) if stage.startswith("paper") else None
     notes = []
@@ -1429,6 +1572,20 @@ def _ready_entries(cfg: dict, *, holdout_submits: int = 0) -> list[dict[str, Any
                 holdout_submits -= 1
                 log.info("Probation: started the held-back test for %s (every other check passes)", sid)
 
+        # Same pass, same order: strategies whose backtest trades file is gone
+        # get their backtest re-run, so they stop failing a check no wait fixes.
+        best_first = sorted(reports, key=lambda sid: -(reports[sid].get("paper_return_pct") or 0.0))
+        try:
+            rebuilt = rebuild_missing_backtests(reports, order=best_first)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Probation: backtest rebuilds skipped: %s", exc)
+            rebuilt = []
+        for sid in rebuilt:
+            try:
+                reports[sid] = entry_check(sid, cfg)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Probation entry check failed for %s: %s", sid, exc)
+
     entries: list[dict[str, Any]] = []
     for row in rows:
         sid = str(row["id"])
@@ -1442,10 +1599,7 @@ def _ready_entries(cfg: dict, *, holdout_submits: int = 0) -> list[dict[str, Any
             "symbol": row["symbol"],
             "timeframe": row["timeframe"],
             "eligible": report["eligible"],
-            "failing": [
-                {"key": c["key"], "label": c["label"], "detail": c["detail"], "ok": c["ok"]}
-                for c in report["failing"]
-            ],
+            "failing": [{k: v for k, v in c.items() if k != "bypassable"} for c in report["failing"]],
             "confirmation": report["confirmation"],
             "slow": report["slow"],
             "paper_days": report["paper_days"],
