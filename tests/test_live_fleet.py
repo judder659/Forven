@@ -163,6 +163,28 @@ def test_mainnet_guard_refusals_stop_blocking_once_armed(forven_db, monkeypatch)
     assert row["blocked_entries"]["count"] == 0
 
 
+def test_failed_open_brake_stops_blocking_once_its_window_drains(forven_db):
+    """S21852: three failed ZEC opens tripped the 6h failed-open breaker on Nov 25;
+    the strategy then stayed BLOCKED for a week although retries were allowed again."""
+    _strategy("S1")
+    _strategy("S2")
+    _scan("S1", _ago(minutes=1))
+    _scan("S2", _ago(minutes=1))
+    failed = "LIVE-KERNEL-OPEN ZEC FAILED \u2014 Order must have minimum value of $10."
+    breaker = (
+        "BLOCKED ZEC live \u2014 Failed-open breaker for S1: 3 failed live opens on ZEC short "
+        "in the last 6h (limit 3). Standing down until the window drains."
+    )
+    _blocked_entry("S1", _ago(hours=22), failed)
+    _blocked_entry("S1", _ago(hours=19), breaker)
+    _blocked_entry("S2", _ago(hours=3), breaker)
+
+    rows = _by_id(build_live_fleet(now=NOW))
+    assert rows["S1"]["state"] == "watching"
+    assert rows["S1"]["blocked_entries"]["count"] == 2  # history kept for the Why tab
+    assert rows["S2"]["state"] == "blocked"  # still inside the window
+
+
 def test_refusing_a_coin_the_strategy_already_holds_is_not_a_block(forven_db):
     """A strategy that keeps signalling entry while in its own trade is in the trade
     it asked for; the paper desk listed these as "48 entries refused in 30 days"."""

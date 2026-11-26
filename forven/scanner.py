@@ -7824,7 +7824,8 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     size_fraction = _kernel_entry_fraction(strat_id, strat, pos, float(sizing_equity), leverage, execution_type="live")
     # PROBATION-1: a strategy in live probation trades at its probation size
     # (forven.probation). The full-size units are kept so the exchange-minimum
-    # rule below can raise a too-small order, never past full size.
+    # rule below can raise a too-small order (past full size only while the
+    # loss at the stop stays inside the per-trade risk cap).
     from forven import probation as _probation
 
     _probation_block = _probation.blocks_new_entries(strat_id)
@@ -7969,8 +7970,8 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         else:
             _add_risk = _add_notional * 0.03
     # PROBATION-1: the exchange refuses orders under its minimum value. A
-    # probation-sized order below it is raised to the minimum when that stays
-    # within the full-size order and the per-trade risk cap, else skipped (and
+    # probation-sized order below it is raised to the minimum when the loss at
+    # the stop stays within the per-trade risk cap, else skipped (and
     # shown on the strategy) instead of being sent to be refused.
     if probation_meta is not None:
         _floored, _too_small = _probation_rules.min_order_units(
@@ -7989,6 +7990,10 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
         if _floored > float(units):
             probation_meta = {**probation_meta, "raised_to_minimum_usd": round(_floored * float(ref_price), 4),
                               "probation_units": float(units)}
+            if _floored > float(full_units) + 1e-12:
+                # Full size itself was under the minimum; the raise is bounded by
+                # the per-trade risk cap instead (probation_rules.min_order_units).
+                probation_meta["above_full_size_usd"] = round(float(full_units) * float(ref_price), 4)
             units = _floored
             _add_notional = float(units) * float(ref_price)
             _add_risk = (abs(float(ref_price) - float(stop_price)) * float(units)) if stop_price else _add_notional * 0.03

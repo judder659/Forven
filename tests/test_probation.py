@@ -111,6 +111,26 @@ def test_min_order_rule_rounds_up_to_the_exchange_size_step():
     assert units is None and "per-trade cap" in why
 
 
+def test_min_order_rule_raises_past_full_size_within_the_risk_cap():
+    # S25299 on Nov 26: ATR sizing off a ~$66 slot gave a $6.79 full-size ZEC
+    # order, so every signal was skipped although $10 risks ~0.1% of a $997
+    # account. With a stop and a cap the risk cap is the bound, not full size.
+    units, why = rules.min_order_units(
+        units=0.00245, full_units=0.0098, price=693.0, min_notional_usd=10.0,
+        stop_price=640.0, risk_cap_usd=9.97, size_step=0.01,
+    )
+    assert why is None and units == pytest.approx(0.02)
+    # Same order without a stop: risk can't be measured, so still skipped.
+    units, why = rules.min_order_units(units=0.00245, full_units=0.0098, price=693.0, min_notional_usd=10.0)
+    assert units is None and "full-size order" in why
+    # A tight cap still refuses it.
+    units, why = rules.min_order_units(
+        units=0.00245, full_units=0.0098, price=693.0, min_notional_usd=10.0,
+        stop_price=640.0, risk_cap_usd=0.5, size_step=0.01,
+    )
+    assert units is None and "per-trade cap" in why
+
+
 # --- the record and the actions -------------------------------------------------
 
 

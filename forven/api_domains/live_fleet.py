@@ -57,6 +57,14 @@ _MAINNET_UNARMED_REFUSAL = "%FORVEN_ALLOW_MAINNET is not set%"
 # after every multi-bar entry signal.
 _OWN_POSITION_REFUSAL = "%already has an open % position%"
 _SCANNER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S+00:00"
+# Forven's own retry brake after failed live opens (exchange/risk.py RETRY-STORM-1)
+# and the failed opens that trip it. Both stand down only for
+# live_failed_open_window_hours; after that the next signal retries, so they stop
+# holding the strategy in BLOCKED once the window has passed. S21852 showed
+# "42 entries refused" for a week after a 4-hour pause on Nov 25 whose cause
+# (order sizes rounded under the exchange minimum) had already been fixed.
+_RETRY_BRAKE_MARKERS = ("failed-open breaker", "failed-open cooldown")
+_DEFAULT_FAILED_OPEN_WINDOW = timedelta(hours=6)
 _NUMBER_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # Refusals where the scanner could not get candles to evaluate the strategy at
 # all. They are outages, not decisions: once a later scan of the same strategy
@@ -310,17 +318,57 @@ def _refusals(
     return out
 
 
-def _blocked_entries(rows: list[Any]) -> dict[str, Any]:
+def is_retry_brake_refusal(reason: object) -> bool:
+    """True for a failed live open or the failed-open brake it trips."""
+    text = str(reason or "").strip().lower()
+    if any(marker in text for marker in _RETRY_BRAKE_MARKERS):
+        return True
+    # A local guard (mainnet not armed) refuses before reaching the exchange and
+    # stays in force until the operator changes it: not a retry brake.
+    if "forven_allow_mainnet is not set" in text:
+        return False
+    return text.startswith("live-kernel-open") and " failed" in text
+
+
+def _failed_open_window() -> timedelta:
+    try:
+        from forven.db import kv_get
+
+        settings = kv_get("forven:settings", {}) or {}
+        hours = float(settings.get("live_failed_open_window_hours", 6) or 0)
+    except Exception:  # noqa: BLE001 - the scorecard must not fail on a settings read
+        return _DEFAULT_FAILED_OPEN_WINDOW
+    return timedelta(hours=hours) if hours > 0 else _DEFAULT_FAILED_OPEN_WINDOW
+
+
+def _in_force_at(rows: list[Any], now: datetime, brake_window: timedelta) -> str | None:
+    """Time of the newest refusal still in force (rows are newest first)."""
+    for row in rows:
+        if not is_retry_brake_refusal(row["block_reason"]):
+            return row["ts"]
+        at = _parse_ts(row["ts"])
+        if at is not None and now - at <= brake_window:
+            return row["ts"]
+    return None
+
+
+def _blocked_entries(
+    rows: list[Any], now: datetime | None = None, brake_window: timedelta | None = None
+) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "count": len(rows),
         "last_at": None,
         "last_reason": None,
+        "in_force_at": None,
         "top_reason": None,
         "top_count": 0,
     }
     if not rows:
         return summary
     summary["last_at"] = rows[0]["ts"]
+    summary["in_force_at"] = (
+        _in_force_at(rows, now, brake_window or _DEFAULT_FAILED_OPEN_WINDOW) if now is not None else rows[0]["ts"]
+    )
     summary["last_reason"] = rows[0]["block_reason"]
     groups: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -553,6 +601,7 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
         stats = _trade_stats(conn, strategy_ids, mode)
         intervals_by_strategy = _fleet_trade_intervals(conn, strategy_ids, mode)
         mainnet_armed = _mainnet_armed()
+        brake_window = _failed_open_window()
         strategies = []
         for row in strategy_rows:
             sid = str(row["id"])
@@ -561,7 +610,7 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
             if stage_since and stage_since > window_start:
                 window_start = stage_since
             refusals = _refusals(conn, sid, window_start, mainnet_armed=mainnet_armed)
-            blocked = _blocked_entries(refusals["entry"])
+            blocked = _blocked_entries(refusals["entry"], now, brake_window)
             blocked_exits = _blocked_exits(refusals["exit"], intervals_by_strategy[sid])
             last_scan = _last_scan(conn, sid)
             trade_row = stats.get(sid, {})
@@ -569,7 +618,7 @@ def build_fleet(mode: str = "live", now: datetime | None = None) -> dict[str, An
             state = _strategy_state(
                 open_ids=open_ids,
                 last_scan_at=_parse_ts(last_scan["at"]) if last_scan else None,
-                last_blocked_at=_parse_ts(blocked["last_at"]),
+                last_blocked_at=_parse_ts(blocked["in_force_at"]),
                 last_open_at=_parse_ts(trade_row.get("last_open_at")),
                 now=now,
                 stale_after=stale_after,
