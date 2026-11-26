@@ -1,5 +1,5 @@
 <script lang="ts">
-	/** Strategy list: state, the result since inception, a plain reason, the next bar and the equity curve. */
+	/** Strategy list: state, the open position's P&L, the lifetime result, a plain reason, the next bar and the equity curve. */
 	import { createEventDispatcher } from 'svelte';
 	import type { DeskMode } from '$lib/api/desk';
 	import type { LifecycleStrategy } from '$lib/api';
@@ -59,11 +59,10 @@
 	function reason(row: DeskRow): { text: string; tone: string } {
 		if (row.legs.length) {
 			const leg = row.legs[0];
-			const math = row.legMath[0];
 			const asset = legAsset(leg, row.asset);
 			const extra = row.legs.length > 1 ? ` · +${row.legs.length - 1} leg` : '';
 			if (row.state === 'exit_blocked') return { text: `Exit refused · ${cap1(leg.side)} ${fmtQty(leg.size)} ${asset}`, tone: 'text-[#f3a39d]' };
-			return { text: `${cap1(leg.side)} ${fmtQty(leg.size)} ${asset} · ${fmtUsd(math?.pnl, { signed: true })}${leg.stop !== null ? ` · stop ${fmtPx(leg.stop)}` : ''}${extra}`, tone: 'text-sc-ink2' };
+			return { text: `${cap1(leg.side)} ${fmtQty(leg.size)} ${asset} @ ${fmtPx(leg.entry)}${leg.stop !== null ? ` · stop ${fmtPx(leg.stop)}` : ''}${extra}`, tone: 'text-sc-ink2' };
 		}
 		if (row.state === 'stale') return { text: `Not evaluated since ${ago(row.fleet?.last_scan?.at, now)}`, tone: 'text-[#f3a39d]' };
 		if (row.session.status === 'blocked' && row.session.blocked_reason) {
@@ -78,13 +77,31 @@
 		return { text: `No signal at the ${fmtTime(lastBarClose(row.timeframe, now))} close`, tone: 'text-sc-ink2' };
 	}
 
+	/** P&L of the position open right now, all legs: dollars and the price move against entry. Null when flat. */
+	function openResult(row: DeskRow): { pnl: number; pct: number | null } | null {
+		if (!row.legs.length) return null;
+		const pnl = row.perf.open;
+		const notional = row.legMath.length === row.legs.length
+			? row.legs.reduce((sum, leg) => sum + Math.abs(leg.entry * leg.size), 0)
+			: 0;
+		return { pnl, pct: notional > 0 ? (pnl / notional) * 100 : null };
+	}
+
+	function openTitle(row: DeskRow): string {
+		const open = openResult(row);
+		if (!open) return 'No open position';
+		const legs = row.legs.length > 1 ? ` across ${row.legs.length} legs` : '';
+		return `Open position${legs}: ${fmtUsd(open.pnl, { signed: true })} at the current mark${open.pct !== null ? ` (${fmtPct(open.pct, 2)} against entry)` : ''}, before fees and funding.`;
+	}
+
 	function resultTitle(row: DeskRow): string {
 		const perf = row.perf;
 		const since = perf.since !== null ? `Since ${fmtDay(perf.since)}` : 'Since inception';
 		const parts = [`${since}: ${fmtUsd(perf.total, { signed: true })}`, `closed trades ${fmtUsd(perf.realized, { signed: true })}`];
 		if (row.legs.length) parts.push(`open ${fmtUsd(perf.open, { signed: true })}`);
 		if (Math.abs(perf.openCosts) >= 0.005) parts.push(`fees and funding on open legs ${fmtUsd(perf.openCosts, { signed: true })}`);
-		return `${parts.join(', ')}.${perf.returnPct !== null ? ` Return ${fmtPct(perf.returnPct, 2)} ${perf.returnBasis}.` : ''}`;
+		const book = perf.balance !== null ? ` Paper book ${fmtUsd(perf.balance, { digits: 0 })}, open P&L included; every paper strategy starts with ${fmtUsd(perf.capital, { digits: 0 })}.` : '';
+		return `Lifetime result. ${parts.join(', ')}.${perf.returnPct !== null ? ` Return ${fmtPct(perf.returnPct, 2)} ${perf.returnBasis}.` : ''}${book}`;
 	}
 </script>
 
@@ -134,6 +151,7 @@
 			{#each shown as row (row.session.id)}
 				{@const why = reason(row)}
 				{@const perf = row.perf}
+				{@const open = openResult(row)}
 				<button
 					type="button"
 					class={`grid w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 border-b border-l-2 border-sc-line px-3 py-2.5 text-left hover:bg-sc-hover max-lg:min-w-[250px] max-lg:border-b-0 max-lg:border-r ${selectedId === row.session.id ? 'border-l-sc-ink bg-sc-panel2' : 'border-l-transparent'}`}
@@ -149,17 +167,17 @@
 					</div>
 					<div class="flex items-baseline justify-between gap-2">
 						<span class="min-w-0 truncate text-[12px] text-sc-ink2">{row.name}</span>
-						<span class={`shrink-0 whitespace-nowrap font-plex-mono text-[12px] font-medium ${toneClass(perf.total)}`} title={resultTitle(row)} data-testid="desk-rail-result">
-							{fmtUsd(perf.total, { signed: true })}{#if perf.returnPct !== null}<span class="ml-1 text-[11px] font-normal">{fmtPct(perf.returnPct, 1)}</span>{/if}
-						</span>
+						{#if open}
+							<span class={`shrink-0 whitespace-nowrap font-plex-mono text-[12px] font-medium ${toneClass(open.pnl)}`} title={openTitle(row)} data-testid="desk-rail-open">
+								{fmtUsd(open.pnl, { signed: true })}{#if open.pct !== null}<span class="ml-1 text-[11px] font-normal">{fmtPct(open.pct, 1)}</span>{/if}
+							</span>
+						{:else}
+							<span class="shrink-0 font-plex-mono text-[12px] text-sc-ink4" title="No open position" data-testid="desk-rail-open">—</span>
+						{/if}
 					</div>
 					<div class="flex items-baseline justify-between gap-2 text-[11.5px] text-sc-ink3">
 						<span class="min-w-0 truncate">{row.asset} · {row.timeframe} · {tradeModeLabel(row.session.trade_mode)} · {row.session.leverage ?? 1}×</span>
-						{#if perf.balance !== null}
-							<span class="shrink-0 whitespace-nowrap" title={`Paper book balance, open P&L included. Every paper strategy starts with ${fmtUsd(perf.capital, { digits: 0 })}.`}>Book <b class="font-plex-mono font-medium text-sc-ink2">{fmtUsd(perf.balance, { digits: 0 })}</b></span>
-						{:else if perf.since !== null}
-							<span class="shrink-0 whitespace-nowrap">since {fmtDay(perf.since)}</span>
-						{/if}
+						<span class="shrink-0 whitespace-nowrap" title={resultTitle(row)} data-testid="desk-rail-result">Lifetime <b class={`font-plex-mono font-medium ${toneClass(perf.total)}`}>{fmtUsd(perf.total, { signed: true })}</b>{#if perf.returnPct !== null}<span class={`ml-1 font-plex-mono text-[11px] ${toneClass(perf.total)}`}>{fmtPct(perf.returnPct, 1)}</span>{/if}</span>
 					</div>
 					<span class={`min-w-0 break-words text-[12px] ${why.tone}`} title={why.text}>{#each why.text.split(' · ') as part, i}{#if i} · {/if}<span class={part.length <= 28 ? 'whitespace-nowrap' : ''}>{part}</span>{/each}</span>
 					<div class="mt-0.5 grid grid-cols-[minmax(0,1fr)_76px_auto] items-center gap-2 text-[11.5px] text-sc-ink3">
