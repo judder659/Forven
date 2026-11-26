@@ -188,3 +188,37 @@ def test_paper_chart_bundle_draws_custom_strategy_indicators(monkeypatch):
     assert [s["name"] for s in bundle["main_indicators"]][:2] == ["week_vwap", "day_vwap"]
     assert [s["name"] for s in bundle["sub_indicators"]] == ["rsi"]
     assert not any("No indicator overlay" in w for w in bundle["warnings"])
+
+
+def test_paper_chart_resolves_imported_strategy_to_sandbox_proxy(monkeypatch):
+    """Imported types are never in the parent's registry: the chart must still get a
+    proxy, so the overlay (and the trigger replay) go through the sandbox worker."""
+    frame = _frame(500)
+    bars = [
+        {"timestamp": t.isoformat(), "open": r.open, "high": r.high, "low": r.low, "close": r.close, "volume": r.volume}
+        for t, r in zip(frame.index, frame.itertuples())
+    ]
+    rtype = "imported__dropzone_test_vwap_abc123"
+    session = {
+        "id": "compat:strategy:S12276:1", "strategy_id": "S12276", "symbol": "SOL/USDT", "timeframe": "1h",
+        "type": rtype, "runtime_type": rtype, "params": {"hold_bars": 48},
+    }
+    monkeypatch.setattr(paper_domain, "_find_compat_paper_session", lambda sid, include_deployed=True: session)
+    monkeypatch.setattr(paper_domain, "_load_session_bars", lambda s, limit=2000, timeframe_override=None: bars)
+    monkeypatch.setattr("forven.strategies.registry.get_active", lambda: {})
+    monkeypatch.setattr(paper_domain, "get_paper_session_markers", lambda *a, **k: {"entries": [], "exits": []})
+    monkeypatch.setattr(paper_domain, "_kernel_trigger_markers", lambda strat, *a, **k: ([], []))
+    seen = {}
+
+    def fake_isolated(df, strategy_type, params, **_kw):
+        seen["type"], seen["params"] = strategy_type, params
+        return cap.collect_indicator_series(_WeeklyVwapStrategy("S12276", {}), df)
+
+    monkeypatch.setattr(strategy_worker, "capture_indicator_series_isolated", fake_isolated)
+
+    strat = paper_domain._resolve_chart_strategy(session, session["params"])
+    assert getattr(strat, "sandbox_only", False) and strat.strategy_type == rtype
+
+    bundle = paper_domain.get_paper_session_chart("compat:strategy:S12276:1")
+    assert seen["type"] == rtype and seen["params"]["hold_bars"] == 48
+    assert [s["name"] for s in bundle["main_indicators"]][:2] == ["week_vwap", "day_vwap"]

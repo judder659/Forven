@@ -2222,6 +2222,15 @@ def _resolve_chart_strategy(session: dict, params: dict):
         if inst is not None:
             return inst
         runtime_type, _meta = resolve_runtime_type(str(session.get("type") or ""), session.get("runtime_type"))
+        from forven.strategies.sandbox_proxy import is_sandbox_only_type, make_sandbox_proxy
+
+        if is_sandbox_only_type(runtime_type):
+            # Imported strategies never load in this process: a proxy routes their
+            # chart triggers and indicator overlay through the sandbox worker.
+            cp = dict(params)
+            if asset:
+                cp.setdefault("_asset", asset)
+            return make_sandbox_proxy(strat_id, cp, str(runtime_type))
         cls = _TYPE_MAP.get(runtime_type or "")
         if cls is not None:
             cp = dict(params)
@@ -2300,6 +2309,9 @@ def _kernel_trigger_markers(strat, frame, *, params, leverage, strategy_type, cu
     return entries, exits
 
 
+_CHART_TRIGGER_CACHE: dict = {}
+
+
 def get_paper_session_chart(
     session_id: str,
     limit: int = 2000,
@@ -2351,9 +2363,26 @@ def get_paper_session_chart(
         # Full-history triggers: EVERY would-be open/close (buy/sell/short/cover) the
         # strategy makes across the whole chart, as green/red triangles — so the
         # operator can compare the strategy's signals against the actual trades.
-        trigger_entries, trigger_exits = _kernel_trigger_markers(
-            strat, frame, params=params, leverage=leverage, strategy_type=strategy_type, cutoff=None,
-        )
+        if getattr(strat, "sandbox_only", False):
+            # Imported strategies replay in the sandbox worker, which live scans share:
+            # the desk polls every 15s, so reuse the replay until a new bar or tick.
+            last = frame.iloc[-1]
+            tkey = (str(session.get("id") or session_id), strategy_type, timeframe,
+                    json.dumps(params, sort_keys=True, default=str), len(frame),
+                    str(frame.index[-1]), float(last["close"]), float(last["volume"]))
+            cached = _CHART_TRIGGER_CACHE.get(tkey)
+            if cached is None:
+                cached = _kernel_trigger_markers(
+                    strat, frame, params=params, leverage=leverage, strategy_type=strategy_type, cutoff=None,
+                )
+                while len(_CHART_TRIGGER_CACHE) >= 64:
+                    _CHART_TRIGGER_CACHE.pop(next(iter(_CHART_TRIGGER_CACHE)), None)
+                _CHART_TRIGGER_CACHE[tkey] = cached
+            trigger_entries, trigger_exits = [dict(m) for m in cached[0]], [dict(m) for m in cached[1]]
+        else:
+            trigger_entries, trigger_exits = _kernel_trigger_markers(
+                strat, frame, params=params, leverage=leverage, strategy_type=strategy_type, cutoff=None,
+            )
 
     # Active levels from the open position. Every level is self-describing
     # (type/label/color/from_time/to_time) so the frontend draws the industry-
