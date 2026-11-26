@@ -14,6 +14,8 @@ export interface IndicatorConfig {
 	visible: boolean;
 	data?: Array<{ timestamp: string; value: number }>;
 	isStrategyIndicator?: boolean; // True if this indicator came from a strategy
+	/** Lower-pane series with the same group share a scale; different groups each get their own. */
+	group?: string;
 }
 
 export interface SignalMarker {
