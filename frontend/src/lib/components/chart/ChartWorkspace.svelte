@@ -534,7 +534,9 @@
 						color: ind.color || '#ff0000',
 						lineWidth: 2,
 						crosshairMarkerVisible: false,
-						priceScaleId: 'sub', // Separate pane
+						// Separate pane; a grouped series gets its own scale so an RSI (0-100)
+						// and a slope (~1) read side by side instead of one flattening the other.
+						priceScaleId: ind.group ? `sub:${ind.group}` : 'sub',
 					});
 					
 					// Configure the separate pane

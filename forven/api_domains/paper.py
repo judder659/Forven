@@ -2333,11 +2333,21 @@ def get_paper_session_chart(
 
     if frame is not None and len(frame) >= 2:
         specs = _chart_indicator_specs(strategy_type, params)
+        strat = _resolve_chart_strategy(session, params)
         if specs:
             main_indicators, sub_indicators, warnings = _compute_chart_indicators(frame, specs)
         else:
-            warnings.append(f"No indicator overlay available for strategy type '{strategy_type or 'unknown'}'.")
-        strat = _resolve_chart_strategy(session, params)
+            # Custom strategies compute their indicators inside their own code (a weekly
+            # VWAP, EMAs, RSI...), so read the series that code produces on this frame.
+            from forven.strategies.indicator_capture import capture_strategy_indicators
+
+            main_indicators, sub_indicators, warnings = capture_strategy_indicators(
+                strat, frame, strategy_type=strategy_type, params=params,
+                cache_key=(str(session.get("id") or session_id), strategy_type, timeframe,
+                           json.dumps(params, sort_keys=True, default=str)),
+            )
+            if not main_indicators and not sub_indicators and not warnings:
+                warnings.append(f"No indicator overlay available for strategy type '{strategy_type or 'unknown'}'.")
         # Full-history triggers: EVERY would-be open/close (buy/sell/short/cover) the
         # strategy makes across the whole chart, as green/red triangles — so the
         # operator can compare the strategy's signals against the actual trades.

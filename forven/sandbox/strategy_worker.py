@@ -71,6 +71,7 @@ from forven.strategies.base import DirectionalSignals
 WORKER_ENV_FLAG = "FORVEN_IN_STRATEGY_WORKER"
 
 _SIGNAL_COLUMNS = ("long_entries", "long_exits", "short_entries", "short_exits")
+_MAX_INDICATOR_SERIES = 24  # chart-overlay candidates a worker may hand back
 
 DEFAULT_TIMEOUT_SECONDS = 120  # per-request, on an already-warm worker
 READY_TIMEOUT_SECONDS = 90  # startup: import forven + register the builtins
@@ -178,6 +179,16 @@ def _compute_signals(workdir: Path) -> bool:
         raise StrategyWorkerError(f"unknown strategy type {strategy_type!r}")
     strat = cls("isolated", dict(request.get("params") or {}))
     trade_mode = str(request.get("trade_mode") or "long_only")
+
+    if str(request.get("mode") or "") == "indicators":
+        # Chart overlay: run the strategy's signal code once and return only the
+        # float indicator series it computed (no signals, no objects).
+        from forven.strategies.indicator_capture import collect_indicator_series
+
+        series = collect_indicator_series(strat, df)[:_MAX_INDICATOR_SERIES]
+        out = pd.DataFrame({name: arr for name, arr in series}, index=df.index, dtype=float)
+        out.to_parquet(workdir / "out.parquet")
+        return True
 
     if str(request.get("mode") or "vectorized") == "per_bar":
         # Walk the strategy's per-bar generate_signal in isolation, with the SAME
@@ -614,7 +625,7 @@ atexit.register(_reset_worker)
 
 
 def _request_signals(
-    df: pd.DataFrame, request: dict, strategy_type: str, timeout: int
+    df: pd.DataFrame, request: dict, strategy_type: str, timeout: int, reader=None
 ) -> "DirectionalSignals | None":
     """Send one signal-gen request to the persistent worker and return validated,
     schema-checked DirectionalSignals — or ``None`` when the worker produced none for
@@ -670,7 +681,27 @@ def _request_signals(
         out_path = workdir / "out.parquet"
         if not out_path.exists():
             raise StrategyWorkerError(f"isolated worker for {strategy_type!r} produced no output")
-        return _read_and_validate_signals(out_path, df.index, strategy_type)
+        return (reader or _read_and_validate_signals)(out_path, df.index, strategy_type)
+
+
+def capture_indicator_series_isolated(
+    df: pd.DataFrame,
+    strategy_type: str,
+    params: dict,
+    *,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> list:
+    """Chart overlay for an isolated strategy: the worker runs its signal code and
+    hands back only the float indicator series it computed, as (name, array) pairs
+    aligned to ``df``. Same worker, limits and fail-closed rules as signal requests."""
+    result = _request_signals(
+        df,
+        {"mode": "indicators", "strategy_type": strategy_type, "params": params or {}},
+        strategy_type,
+        timeout,
+        reader=_read_and_validate_indicator_series,
+    )
+    return result or []
 
 
 def compute_directional_signals_isolated(
@@ -830,6 +861,27 @@ def _read_and_validate_signals(out_path: Path, index: pd.Index, strategy_type: s
         short_entries=out["short_entries"].astype(bool),
         short_exits=out["short_exits"].astype(bool),
     )
+
+
+def _read_and_validate_indicator_series(out_path: Path, index: pd.Index, strategy_type: str) -> list:
+    """Read the worker's overlay parquet as DATA: aligned float columns only, capped
+    in count, names cleaned before they reach the dashboard."""
+    import numpy as np
+
+    from forven.strategies.indicator_capture import clean_series_name
+
+    out = pd.read_parquet(out_path)
+    if len(out) != len(index) or not out.index.equals(index):
+        raise StrategyWorkerError(f"isolated worker for {strategy_type!r} returned misaligned indicator series")
+    series: list = []
+    seen: set[str] = set()
+    for col in list(out.columns)[:_MAX_INDICATOR_SERIES]:
+        name = clean_series_name(col)
+        if not name or name in seen or not pd.api.types.is_float_dtype(out[col].dtype):
+            continue
+        seen.add(name)
+        series.append((name, out[col].to_numpy(dtype=float, na_value=np.nan)))
+    return series
 
 
 if __name__ == "__main__":

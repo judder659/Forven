@@ -111,13 +111,14 @@
 			if (livePrice !== null && nextBars.length) nextBars = applyTickToBars(nextBars, livePrice, Date.now(), tf);
 			bars = nextBars;
 			if (tf === (session.timeframe || '1h')) atr = atrOf(nextBars, 14);
-			const toConfig = (series: { name: string; panel: string; color?: string; data: Array<{ timestamp: string; value: number | null }> }): IndicatorConfig => ({
+			const toConfig = (series: { name: string; panel: string; group?: string; color?: string; data: Array<{ timestamp: string; value: number | null }> }): IndicatorConfig => ({
 				id: series.name,
 				name: series.name,
 				params: {},
 				color: series.color || '#aab1bc',
 				panel: series.panel === 'main' ? 'main' : 'sub1',
 				visible: true,
+				...(series.group ? { group: series.group } : {}),
 				data: series.data.filter((point) => point.value !== null && point.value !== undefined).map((point) => ({ timestamp: point.timestamp, value: point.value as number })),
 			});
 			mainIndicators = (bundle.main_indicators ?? []).map(toConfig);

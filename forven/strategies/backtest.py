@@ -2665,6 +2665,38 @@ def _build_rule_engine_chart_indicators(
     return main_indicators, sub_indicators, warnings
 
 
+def _capture_custom_chart_indicators(
+    frame: pd.DataFrame, strategy_type: str, params: dict | None
+) -> tuple[list[dict], list[dict], list[str]] | None:
+    """Overlay for a custom strategy type: run its own class on the chart frame and
+    keep the indicator series its code computes (see indicator_capture). None when
+    the type has no loadable class or nothing could be read."""
+    try:
+        from forven.strategies.indicator_capture import capture_strategy_indicators
+        from forven.strategies.registry import _TYPE_MAP, resolve_runtime_type
+        from forven.strategies.sandbox_proxy import is_sandbox_only_type, make_sandbox_proxy
+
+        clean_params = dict(params) if isinstance(params, dict) else {}
+        if is_sandbox_only_type(strategy_type):
+            # Imported strategy: never load its class here; the worker runs it.
+            strat = make_sandbox_proxy("chart", clean_params, strategy_type)
+        else:
+            runtime_type, _meta = resolve_runtime_type(strategy_type, None)
+            cls = _TYPE_MAP.get(runtime_type or strategy_type)
+            if cls is None:
+                return None
+            strat = cls("chart", clean_params)
+    except Exception:
+        return None
+    main, sub, warnings = capture_strategy_indicators(strat, frame, strategy_type=strategy_type, params=params)
+    if not main and not sub:
+        return None
+    def _strip(rows: list[dict]) -> list[dict]:
+        return [{"name": r["name"], "color": r["color"], "data": r["data"]} for r in rows]
+
+    return _strip(main), _strip(sub), warnings
+
+
 def _build_chart_indicators(frame: pd.DataFrame, strategy_type: str, params: dict | None) -> tuple[list[dict], list[dict], list[str]]:
     warnings: list[str] = []
 
@@ -2694,6 +2726,9 @@ def _build_chart_indicators(frame: pd.DataFrame, strategy_type: str, params: dic
                     "forven/strategies/custom/ or archive it."
                 )
             else:
+                captured = _capture_custom_chart_indicators(frame, normalized_type, params)
+                if captured is not None:
+                    return captured
                 warnings.append(f"Indicator overlay is unavailable for strategy type '{normalized_type}'.")
 
         else:
