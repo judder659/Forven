@@ -332,9 +332,17 @@ def min_order_units(
 
     Returns (units, None) when the order may go: unchanged when already above the
     minimum, else raised to the minimum (with ``buffer`` so rounding cannot drop it
-    back under) as long as that stays within the full-size order and the per-trade
-    risk cap. Returns (None, why) when even that is not possible, and the entry is
-    skipped rather than sent to be refused.
+    back under) as long as the loss at the stop stays within the per-trade risk
+    cap. Returns (None, why) when that is not possible, and the entry is skipped
+    rather than sent to be refused.
+
+    The per-trade risk cap is the bound, not the strategy's full-size order. With
+    live capital split into slots, a strategy with a wide stop can have a
+    full-size order under the minimum (S25299: $6.79 off a ~$66 slot) even though
+    a $10 order risks ~0.1% of the account; requiring the raised order to fit
+    inside full size left it unable ever to trade live. When the stop or the cap
+    is unknown the risk cannot be measured, so the full-size order stays the
+    ceiling.
 
     ``size_step`` is the exchange's order-size step (Hyperliquid's szDecimals,
     e.g. 0.01 ZEC). The exchange rounds a size DOWN to its step, so a raised
@@ -345,18 +353,21 @@ def min_order_units(
         return units, None
     if units * price >= min_notional_usd:
         return units, None
+    risk_measured = bool(stop_price) and risk_cap_usd is not None
     floor_units = min_notional_usd * buffer / price
-    if full_units * price + 1e-9 < min_notional_usd:
-        return None, (
-            f"too small at probation size: even the full-size order (${full_units * price:,.2f}) "
-            f"is under the exchange's ${min_notional_usd:,.0f} minimum"
-        )
-    if floor_units > full_units:
-        floor_units = full_units
+    if not risk_measured:
+        if full_units * price + 1e-9 < min_notional_usd:
+            return None, (
+                f"too small at probation size: even the full-size order (${full_units * price:,.2f}) "
+                f"is under the exchange's ${min_notional_usd:,.0f} minimum, and with no stop to "
+                f"measure its risk it is not raised past full size"
+            )
+        if floor_units > full_units:
+            floor_units = full_units
     if size_step and size_step > 0:
         steps = math.ceil(floor_units / size_step - 1e-9)
         stepped = steps * size_step
-        if stepped > full_units + 1e-12:
+        if not risk_measured and stepped > full_units + 1e-12:
             stepped = math.floor(full_units / size_step + 1e-9) * size_step
         if stepped * price + 1e-9 < min_notional_usd:
             return None, (
@@ -365,11 +376,11 @@ def min_order_units(
                 f"full-size order (${full_units * price:,.2f})"
             )
         floor_units = round(stepped, 12)
-    if stop_price and risk_cap_usd is not None:
+    if risk_measured:
         loss = abs(price - float(stop_price)) * floor_units
-        if loss > risk_cap_usd + 1e-9:
+        if loss > float(risk_cap_usd) + 1e-9:
             return None, (
                 f"too small at probation size: the ${min_notional_usd:,.0f} exchange minimum would risk "
-                f"${loss:,.2f}, above the ${risk_cap_usd:,.2f} per-trade cap"
+                f"${loss:,.2f}, above the ${float(risk_cap_usd):,.2f} per-trade cap"
             )
     return floor_units, None
