@@ -7729,6 +7729,17 @@ def _kernel_open_live_trade(strat_id: str, strat: dict, action, *, sizing_equity
     ref_price = _coerce_positive_float(pos.get("entry_price"))
     if not asset or ref_price is None:
         return None
+    # LIQ-2: a coin under the live volume floor can't fill (the order-time
+    # guard refuses it). Skip BEFORE recording a trade so the refusal doesn't
+    # become a FAILED row that trips the failed-open breaker every hour, and
+    # move the strategy back to paper once (forven.live_liquidity).
+    from forven import live_liquidity as _live_liq
+
+    _vol = _live_liq.volume_floor(asset)
+    if _vol is not None and not _vol["ok"]:
+        _thin = _live_liq.handle_thin_coin(strat_id, asset, _vol)
+        log.warning("[%s] %s", strat_id, _thin)
+        return _thin
     # LEV-EXACT-1: the venue only takes whole-number leverage, but there it sets
     # MARGIN, not size. Units below still come from the VALIDATED leverage, so a
     # 1.3x strategy trades its validated notional at 2x exchange margin (see
