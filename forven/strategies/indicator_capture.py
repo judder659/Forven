@@ -85,6 +85,14 @@ def _as_aligned_float(value: Any, index: pd.Index) -> np.ndarray | None:
     return arr
 
 
+def _affine_copy(a: np.ndarray, b: np.ndarray) -> bool:
+    """``a`` is ``b`` scaled, shifted or flipped (|correlation| ~ 1 on shared bars)."""
+    both = np.isfinite(a) & np.isfinite(b)
+    if both.sum() < 20 or np.std(a[both]) == 0 or np.std(b[both]) == 0:
+        return False
+    return abs(float(np.corrcoef(a[both], b[both])[0, 1])) > 0.99999
+
+
 def _same(a: np.ndarray, b: np.ndarray) -> bool:
     """Equal wherever both have a value (one may be a masked or shifted copy)."""
     both = np.isfinite(a) & np.isfinite(b)
@@ -213,6 +221,12 @@ def collect_indicator_series(strategy_obj, frame: pd.DataFrame) -> list[tuple[st
     for name, fn_name, arr in _candidate_sources(recorded, index):
         if any(_same(arr, b) for b in base) or any(_same(arr, k) for _n, k in kept):
             continue
+        # retrace_from_low == 1 - retrace_from_high: a mirror or rescale of a kept line.
+        if any(_affine_copy(arr, k) for _n, k in kept):
+            continue
+        # rsi_prev, ema.shift(1): the previous bars of a line already kept.
+        if any(_same(arr, np.r_[np.full(lag, np.nan), k[:-lag]]) for _n, k in kept for lag in (1, 2, 3) if len(k) > lag):
+            continue
         label = clean_series_name(name if name not in seen_names else f"{name}_{fn_name.lstrip('_')}")
         if not label or label in seen_names:
             continue
@@ -286,6 +300,12 @@ def _is_noise(arr: np.ndarray, frame: pd.DataFrame, price_like: bool) -> bool:
             return True
         bar_mean = float(np.mean(bar[mask]))
         return bar_mean > 0 and float(np.mean(np.abs(arr[mask] - close[mask]))) < 0.35 * bar_mean
+    # Bar-by-bar values (a candle's body ratio, one bar's return) jump around with no
+    # memory and draw as an unreadable zigzag; oscillators and z-scores are smooth.
+    if vals.size > 20 and np.std(vals) > 0:
+        lag1 = float(np.corrcoef(vals[:-1], vals[1:])[0, 1])
+        if not np.isfinite(lag1) or lag1 < 0.6:
+            return True
     # Running totals (cumulative volume, cumulative price*volume) only ever climb.
     steps = np.diff(vals)
     if steps.size > 10 and (np.mean(steps >= 0) >= 0.95 or np.mean(steps <= 0) >= 0.95):
@@ -308,7 +328,7 @@ def format_indicator_series(
     kept: list[tuple[str, np.ndarray]],
     *,
     max_main: int = 6,
-    max_sub: int = 3,
+    max_sub: int = 2,
 ) -> tuple[list[dict], list[dict]]:
     """Split captured series into price-panel and lower-pane chart series."""
     if not kept or not {"close", "high", "low"}.issubset(frame.columns):
