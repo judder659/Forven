@@ -846,13 +846,16 @@ export interface PipelineExplainResponse {
 	truncated: boolean;
 	strategies: PipelineExplainStrategy[];
 	errors: Array<{ id: string | null; error: string }>;
+	/** Set when the backend served its cached copy; refreshing = a rebuild is running. */
+	cache?: { age_seconds: number; refreshing: boolean };
 }
 
 /** Fleet-wide "why is every strategy where it is" — read-only on the backend. */
-export async function explainPipeline(opts?: { stage?: string; limit?: number }): Promise<PipelineExplainResponse> {
+export async function explainPipeline(opts?: { stage?: string; limit?: number; fresh?: boolean }): Promise<PipelineExplainResponse> {
 	const p = new URLSearchParams();
 	if (opts?.stage) p.set('stage', opts.stage);
 	if (opts?.limit !== undefined) p.set('limit', String(opts.limit));
+	if (opts?.fresh) p.set('fresh', 'true');
 	const query = p.toString();
 	return fetchApi(`/lifecycle/pipeline/explain${query ? `?${query}` : ''}`, { timeoutMs: LONG_TIMEOUT_MS });
 }

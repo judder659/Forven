@@ -555,16 +555,38 @@
 		}, delayMs);
 	}
 
-	function loadExplain(): Promise<void> {
+	// The backend serves its last copy at once and rebuilds behind it; when it says
+	// a rebuild is running, pick the new copy up shortly after.
+	let explainFollowUpTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function clearExplainFollowUp() {
+		if (explainFollowUpTimer) {
+			clearTimeout(explainFollowUpTimer);
+			explainFollowUpTimer = null;
+		}
+	}
+
+	function loadExplain(opts: { fresh?: boolean } = {}): Promise<void> {
 		// One run at a time: Refresh clicks, mutations and pipeline events share it.
-		if (explainInFlight) return explainInFlight;
+		// A change the operator just made waits for the run in flight, then asks
+		// for a fresh rebuild so the new stage shows.
+		if (explainInFlight) {
+			return opts.fresh ? explainInFlight.then(() => loadExplain(opts)) : explainInFlight;
+		}
 		clearExplainRetry();
+		clearExplainFollowUp();
 		explainInFlight = (async () => {
 			try {
-				explain = await explainPipeline({ limit: 1000 });
+				explain = await explainPipeline({ limit: 1000, fresh: opts.fresh === true });
 				explainError = null;
 				explainRetryAttempts = 0;
 				explainLoaded = true;
+				if (explain?.cache?.refreshing) {
+					explainFollowUpTimer = setTimeout(() => {
+						explainFollowUpTimer = null;
+						void loadExplain();
+					}, 15_000);
+				}
 			} catch (e) {
 				explainError = e instanceof Error ? e.message : 'The gate explainer is unavailable';
 				if (explain === null) {
@@ -657,7 +679,7 @@
 	async function afterMutation() {
 		await loadData({ forceGraveyard: true });
 		void loadOverview();
-		void loadExplain();
+		void loadExplain({ fresh: true });
 	}
 
 	async function runBatchAction(action: 'trash' | 'archive' | 'recover' | 'delete') {
@@ -912,12 +934,21 @@
 		return id;
 	};
 	/** The Forge column a row sits in: a live strategy on probation has its own. */
-	function railStage(row: ManagerRow, index: Map<string, PipelineExplainStrategy> = explainById): string {
+	// Until the explainer lands, the probation badges (a small, fast call) place
+	// probation strategies, so the rail doesn't show Probation 0 while loading.
+	function railStage(
+		row: ManagerRow,
+		index: Map<string, PipelineExplainStrategy> = explainById,
+		badges: ProbationBadges = probationBadges,
+	): string {
 		const stage = normalizeStage(row.stage);
-		return stage === 'live_graduated' && index.get(row.id)?.pipeline_stage === 'probation' ? 'probation' : stage;
+		if (stage !== 'live_graduated') return stage;
+		const entry = index.get(row.id);
+		const onProbation = entry ? entry.pipeline_stage === 'probation' : Boolean(badges[row.id]);
+		return onProbation ? 'probation' : stage;
 	}
 	$: stageCounts = RAIL_STAGES.reduce(
-		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => railStage(row, explainById) === stage).length }),
+		(acc, stage) => ({ ...acc, [stage]: activeResults.filter((row) => railStage(row, explainById, probationBadges) === stage).length }),
 		{} as Record<RailStage, number>,
 	);
 	$: statusByStage = (() => {
@@ -1039,7 +1070,7 @@
 		void attentionIds;
 		const filtered = activeResults.filter((row) => {
 			if (symbolFilter !== 'all' && !rowSymbols(row).includes(symbolFilter)) return false;
-			if (stageFilter !== 'all' && railStage(row, explainById) !== stageFilter) return false;
+			if (stageFilter !== 'all' && railStage(row, explainById, probationBadges) !== stageFilter) return false;
 			if (!matchesStatus(row, statusFilter)) return false;
 			return matchesSearch(row, query);
 		});
@@ -1196,7 +1227,7 @@
 		healthRealtime.start();
 		// Paper days and trades accrue without any event, so the explainer also re-runs
 		// on a slow clock even while the websocket is up.
-		explainRealtime = createRealtimeRefresh(loadExplain, {
+		explainRealtime = createRealtimeRefresh(() => loadExplain(), {
 			fallbackMs: 120_000,
 			wsDebounceMs: 30_000,
 			wsEvents: ['strategy_transition', 'strategy_promoted', 'approval_created', 'approval_resolved'],
@@ -1238,6 +1269,7 @@
 			clockTimer = null;
 		}
 		clearExplainRetry();
+		clearExplainFollowUp();
 		if (highlightTimer) {
 			clearTimeout(highlightTimer);
 			highlightTimer = null;

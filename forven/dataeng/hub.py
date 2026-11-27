@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -500,12 +501,39 @@ class StreamUnreadableError(RuntimeError):
     one silently running a backtest with a whole aux column absent (FIX 4)."""
 
 
+# path -> ((mtime_ns, size), column names). A schema only changes when the file
+# is rewritten, and every enrich (scanner legs, gate checks, backtests) asks for
+# the same few stream files, so re-opening DuckDB to DESCRIBE each one every time
+# cost seconds per call on a busy machine.
+_SCHEMA_CACHE: dict[str, tuple[tuple[int, int], frozenset[str]]] = {}
+_SCHEMA_CACHE_LOCK = threading.Lock()
+_SCHEMA_CACHE_MAX = 512
+
+
+def _parquet_column_names(path: Path) -> frozenset[str]:
+    st = path.stat()
+    stamp = (int(st.st_mtime_ns), int(st.st_size))
+    cache_key = str(path)
+    with _SCHEMA_CACHE_LOCK:
+        hit = _SCHEMA_CACHE.get(cache_key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    with duckdb.connect(":memory:") as con:
+        names = frozenset(
+            row[0] for row in con.execute("DESCRIBE SELECT * FROM read_parquet(?)", [cache_key]).fetchall()
+        )
+    with _SCHEMA_CACHE_LOCK:
+        if len(_SCHEMA_CACHE) >= _SCHEMA_CACHE_MAX:
+            _SCHEMA_CACHE.clear()
+        _SCHEMA_CACHE[cache_key] = (stamp, names)
+    return names
+
+
 def _parquet_has_columns(path: Path, columns: list[str]) -> bool:
     if not path.exists() or _empty_file(path):
         return False
     try:
-        with duckdb.connect(":memory:") as con:
-            names = {row[0] for row in con.execute("DESCRIBE SELECT * FROM read_parquet(?)", [str(path)]).fetchall()}
+        names = _parquet_column_names(path)
     except Exception as exc:
         # Present but unreadable: fail loudly (parity with the legacy path's
         # StreamUnreadableError) instead of silently dropping the stream.

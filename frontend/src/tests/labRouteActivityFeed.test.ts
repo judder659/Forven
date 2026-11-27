@@ -30,6 +30,10 @@ const dashboardMocks = vi.hoisted(() => ({
 	getPipelineFunnelReport: vi.fn(),
 }));
 
+const probationMocks = vi.hoisted(() => ({
+	getProbationBadges: vi.fn(),
+}));
+
 const realtimeController = vi.hoisted(() => ({
 	start: vi.fn(),
 	stop: vi.fn(),
@@ -44,6 +48,10 @@ vi.mock('$lib/api', () => apiMocks);
 vi.mock('$lib/api/forven', () => healthMocks);
 vi.mock('$lib/api/lifecycle', () => lifecycleMocks);
 vi.mock('$lib/api/dashboard', () => dashboardMocks);
+vi.mock('$lib/api/probation', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/api/probation')>()),
+	getProbationBadges: probationMocks.getProbationBadges,
+}));
 vi.mock('$lib/utils/realtime', () => ({
 	createRealtimeRefresh: vi.fn(() => realtimeController),
 }));
@@ -203,6 +211,7 @@ describe('/lab — the Forge', () => {
 			timestamp: '2026-09-29T16:38:42+00:00',
 		});
 		dashboardMocks.getLiveFleet.mockResolvedValue({ generated_at: '', stale_after_seconds: 1800, strategies: [], live_bots_armed: 0, realized: {}, recent_fills: [], capacity: null });
+		probationMocks.getProbationBadges.mockResolvedValue({});
 		realtimeController.start.mockClear();
 		realtimeController.stop.mockClear();
 	});
@@ -325,6 +334,47 @@ describe('/lab — the Forge', () => {
 
 			expect(lifecycleMocks.explainPipeline).toHaveBeenCalledTimes(2);
 			expect(row?.textContent).toContain('Gathering evidence');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('counts probation strategies from their badges while the gate explainer loads', async () => {
+		apiMocks.getForvenStrategiesQuery.mockImplementation(async ({ status }: { status: string }) =>
+			status === 'live_graduated' ? [strategyRow('S12276', 'live_graduated'), strategyRow('S19944', 'live_graduated')] : [],
+		);
+		probationMocks.getProbationBadges.mockResolvedValue({ S19944: { state: 'probation', size_pct: 25 } });
+		lifecycleMocks.explainPipeline.mockReturnValue(new Promise(() => {}));
+
+		app = mount(LabPage, { target });
+		await flush(8);
+
+		const count = (stage: string) =>
+			target.querySelector(`[data-testid="forge-stage-${stage}"] .font-plex-mono.text-\\[26px\\]`)?.textContent?.trim();
+		expect(count('probation')).toBe('1');
+		expect(count('live_graduated')).toBe('1');
+	});
+
+	it('picks up the rebuilt gates when the backend served its cached copy', async () => {
+		vi.useFakeTimers();
+		try {
+			const good = await lifecycleMocks.explainPipeline();
+			lifecycleMocks.explainPipeline.mockReset();
+			lifecycleMocks.explainPipeline
+				.mockResolvedValueOnce({ ...good, cache: { age_seconds: 90, refreshing: true } })
+				.mockResolvedValue({ ...good, cache: { age_seconds: 0, refreshing: false } });
+
+			app = mount(LabPage, { target });
+			await flush();
+			expect(lifecycleMocks.explainPipeline).toHaveBeenCalledTimes(1);
+
+			await vi.advanceTimersByTimeAsync(15_000);
+			await flush();
+			expect(lifecycleMocks.explainPipeline).toHaveBeenCalledTimes(2);
+
+			await vi.advanceTimersByTimeAsync(15_000);
+			await flush();
+			expect(lifecycleMocks.explainPipeline).toHaveBeenCalledTimes(2);
 		} finally {
 			vi.useRealTimers();
 		}
