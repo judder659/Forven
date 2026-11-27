@@ -503,6 +503,10 @@
 					lineWidth: 2,
 					crosshairMarkerVisible: false,
 					priceScaleId: 'right', // Same as candles
+					// The name rides on the axis label so each line says what it is; no
+					// full-width dotted line per indicator cluttering the candles.
+					title: ind.name,
+					priceLineVisible: false,
 				});
 				mainSeriesMap.set(ind.name, series);
 			}
@@ -534,6 +538,8 @@
 						color: ind.color || '#ff0000',
 						lineWidth: 2,
 						crosshairMarkerVisible: false,
+						title: ind.name,
+						priceLineVisible: false,
 						// Separate pane; a grouped series gets its own scale so an RSI (0-100)
 						// and a slope (~1) read side by side instead of one flattening the other.
 						priceScaleId: ind.group ? `sub:${ind.group}` : 'sub',

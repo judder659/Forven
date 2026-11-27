@@ -222,3 +222,54 @@ def test_paper_chart_resolves_imported_strategy_to_sandbox_proxy(monkeypatch):
     bundle = paper_domain.get_paper_session_chart("compat:strategy:S12276:1")
     assert seen["type"] == rtype and seen["params"]["hold_bars"] == 48
     assert [s["name"] for s in bundle["main_indicators"]][:2] == ["week_vwap", "day_vwap"]
+
+
+def test_lower_pane_skips_bar_by_bar_noise_and_shifted_copies():
+    frame = _frame()
+    close = frame["close"].to_numpy()
+    rng = np.random.default_rng(7)
+    rsi = _rsi(frame["close"]).to_numpy()
+    kept = [
+        ("rsi", rsi),
+        ("rsi_prev", np.r_[np.nan, rsi[:-1]]),
+        ("body_ratio", rng.uniform(0, 1, len(close))),  # a candle's own shape: no memory
+        ("ret", np.r_[np.nan, np.diff(close) / close[:-1]]),
+    ]
+    _main, sub = cap.format_indicator_series(frame, kept)
+    assert [s["name"] for s in sub][0] == "rsi"
+    assert not {"body_ratio", "ret"} & {s["name"] for s in sub}
+    # collect_indicator_series drops shifted copies of a kept line.
+    class Shifted(_WeeklyVwapStrategy):
+        def generate_signals(self, df):
+            rsi = _rsi(df["close"])
+            rsi_prev = rsi.shift(1)
+            entry = (rsi > 50) & (rsi_prev <= 50)
+            empty = pd.Series(False, index=df.index)
+            return entry, empty, empty, empty
+
+        def generate_signal(self, df):
+            return Signal()
+
+    names = [n for n, _a in cap.collect_indicator_series(Shifted("S5", {}), frame)]
+    assert "rsi" in names and "rsi_prev" not in names
+
+
+def test_mirror_series_draw_once():
+    """S21902 computes retrace_from_high and retrace_from_low, which always sum to 1."""
+    class Mirror(_WeeklyVwapStrategy):
+        def generate_signals(self, df):
+            prior = df.shift(1)
+            hi = prior["high"].rolling(8).max()
+            lo = prior["low"].rolling(8).min()
+            rng_ = (hi - lo).replace(0, np.nan)
+            retrace_from_high = (hi - df["close"]) / rng_
+            retrace_from_low = (df["close"] - lo) / rng_
+            entry = (retrace_from_high < 0.5) & (retrace_from_low > 0.2)
+            empty = pd.Series(False, index=df.index)
+            return entry, empty, empty, empty
+
+        def generate_signal(self, df):
+            return Signal()
+
+    names = [n for n, _a in cap.collect_indicator_series(Mirror("S6", {}), _frame())]
+    assert "retrace_from_high" in names and "retrace_from_low" not in names
