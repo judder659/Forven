@@ -840,6 +840,18 @@ def entry_check(
         bypassable=False,
     ))
 
+    try:
+        coin = _home_coin(policy, strategy_id, row["symbol"])
+        vol = _mod("forven.live_liquidity").volume_floor(coin)
+    except Exception:  # noqa: BLE001 — unknown volume: the order-time guard still decides
+        vol = None
+    if vol is not None:
+        checks.append(_check(
+            "coin_volume", "Coin liquid enough for live", bool(vol["ok"]),
+            (f"{vol['asset']} trades ${vol['day_volume']:,.0f} a day (floor ${vol['floor']:,.0f})" if vol["ok"]
+             else _mod("forven.live_liquidity").describe(vol) + "; live orders on it are refused"),
+        ))
+
     rec = get_record(strategy_id)
     if rec and rec.get("last_demoted_at"):
         demoted = _parse_ts(rec["last_demoted_at"])
@@ -1196,11 +1208,16 @@ def pause(strategy_id: str, paused: bool, *, actor: str) -> dict[str, Any]:
     return status(strategy_id)
 
 
-def demote(strategy_id: str, *, actor: str, reason: str, triggers: list[dict] | None = None) -> dict[str, Any]:
+def demote(
+    strategy_id: str, *, actor: str, reason: str, triggers: list[dict] | None = None, strike: bool = True,
+) -> dict[str, Any]:
     """Send a probation (or graduated) strategy back to paper.
 
     No new entries from now; the stage changes once no live position is open
     (an open position keeps its exchange stop and runs to its own exit).
+    ``strike=False`` is a move that isn't the strategy's fault (its coin is too
+    thin to trade live): it doesn't count toward archiving or start the
+    re-entry cooldown.
     """
     rec = get_record(strategy_id)
     row = _strategy_row(strategy_id)
@@ -1212,7 +1229,7 @@ def demote(strategy_id: str, *, actor: str, reason: str, triggers: list[dict] | 
         _save(strategy_id, state=rules.STATE_DEMOTING, size_pct=100.0, entered_at=None, entered_by=None)
     _save(strategy_id, state=rules.STATE_DEMOTING, status_reason=reason,
           history_event={"event": "demotion_started", "actor": actor, "reason": reason,
-                         "triggers": [t.get("key") for t in triggers or []]})
+                         "triggers": [t.get("key") for t in triggers or []], "strike": bool(strike)})
     _db().log_activity("warning", "probation", f"{strategy_id} demotion to paper started ({actor}): {reason}",
                        {"strategy_id": strategy_id, "triggers": triggers or []})
     _notify(strategy_id, f"Demoting to paper: {_label(strategy_id)}",
@@ -1238,12 +1255,16 @@ def _finish_demotion(strategy_id: str, cfg: dict | None = None) -> bool:
         if str(moved.get("to") or "") != "paper":
             log.warning("Probation demotion of %s blocked: %s", strategy_id, moved.get("blocked_reason"))
             return False
-    count = int(rec.get("demotion_count") or 0) + 1
-    _save(strategy_id, state=rules.STATE_DEMOTED, demotion_count=count, last_demoted_at=_iso(),
-          history_event={"event": "demoted", "reason": rec.get("status_reason"), "demotion_count": count})
+    started = next((h for h in reversed(rec.get("history") or []) if h.get("event") == "demotion_started"), {})
+    strike = started.get("strike", True) is not False
+    count = int(rec.get("demotion_count") or 0) + (1 if strike else 0)
+    _save(strategy_id, state=rules.STATE_DEMOTED, demotion_count=count,
+          last_demoted_at=_iso() if strike else rec.get("last_demoted_at"),
+          history_event={"event": "demoted", "reason": rec.get("status_reason"), "demotion_count": count,
+                         "strike": strike})
     k = knobs(cfg)
     limit = int(k["archive_after_demotions"])
-    if limit and count >= limit:
+    if strike and limit and count >= limit:
         try:
             _mod("forven.brain").transition_stage(
                 strategy_id, "archived", reason=f"Demoted from probation {count} times", actor=ACTOR, force=True,
@@ -1254,7 +1275,7 @@ def _finish_demotion(strategy_id: str, cfg: dict | None = None) -> bool:
             log.warning("Archiving %s after %d probation demotions failed: %s", strategy_id, count, exc)
     _notify(strategy_id, f"Back in paper: {_label(strategy_id)}",
             f"Demoted from probation: {rec.get('status_reason') or 'demoted'}."
-            + (f" Archived after {count} demotions." if limit and count >= limit else ""),
+            + (f" Archived after {count} demotions." if strike and limit and count >= limit else ""),
             severity="warn", kind="demoted")
     return True
 
