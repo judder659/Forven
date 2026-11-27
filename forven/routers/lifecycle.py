@@ -82,7 +82,7 @@ def read_gauntlet_status(strategy_id: str):
 
 
 @router.get("/api/lifecycle/pipeline/explain")
-def read_pipeline_explain(stage: str | None = None, limit: int = 200) -> dict[str, Any]:
+def read_pipeline_explain(stage: str | None = None, limit: int = 200, fresh: bool = False) -> dict[str, Any]:
     """Fleet-wide pipeline explanation.
 
     For every strategy in an active stage: why it is stuck (gate + readiness
@@ -90,10 +90,13 @@ def read_pipeline_explain(stage: str | None = None, limit: int = 200) -> dict[st
     and how old what exists is, the specific unblocking action, and the expected
     next transition. Read-only: gates are evaluated in dry_run mode and never
     record rejections, queue dethrones, or mutate state.
-    """
-    from forven.pipeline_explain import explain_pipeline
 
-    return explain_pipeline(stage=stage, limit=limit)
+    Served from a short stale-while-revalidate cache (forven.pipeline_explain_cache)
+    so the Forge never waits on a full rebuild; ``fresh=true`` rebuilds now.
+    """
+    from forven.pipeline_explain_cache import cached_explain_pipeline
+
+    return cached_explain_pipeline(stage=stage, limit=limit, fresh=fresh)
 
 
 @router.get("/api/lifecycle/strategies/{strategy_id}/explain")
