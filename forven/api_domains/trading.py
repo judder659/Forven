@@ -640,6 +640,15 @@ def read_open_trades(verify_exchange: bool | None = None, stale_grace_seconds: i
         if str(pos.get("asset_key") or "")
     }
 
+    # NETTING-1: with the shared-coins engine on, the exchange holds ONE net
+    # position per coin for every strategy trading it. A long and a short on the
+    # same coin net to nothing, and a trade against the net side never shows up,
+    # so a per-trade (coin, direction) check would wrongly "close" real trades and
+    # cancel the coin's reduce-only disaster stop. The engine compares books with
+    # the exchange by net per coin itself (pausing the coin on a mismatch), so
+    # live trades are left to it here.
+    netting_on = _live_netting_active()
+
     now_utc = datetime.now(timezone.utc)
     grace_window = timedelta(seconds=max(int(stale_grace_seconds), 0))
     pending_execution_ids = _pending_execution_trade_ids()
@@ -669,6 +678,10 @@ def read_open_trades(verify_exchange: bool | None = None, stale_grace_seconds: i
             verified_open_trades.append(trade)
             continue
 
+        if netting_on:
+            verified_open_trades.append(trade)
+            continue
+
         if used_fallback_network:
             verified_open_trades.append(trade)
             continue
@@ -691,7 +704,24 @@ def read_open_trades(verify_exchange: bool | None = None, stale_grace_seconds: i
             price_map=price_map,
         )
 
+    if netting_on:
+        # A coin's net position belongs to the trades already open on it; only a
+        # coin with no open trade at all is shown as exchange-only.
+        held_assets = {_normalize_asset_key(trade.get("asset")) for trade in verified_open_trades}
+        exchange_positions = [
+            pos for pos in exchange_positions
+            if _normalize_asset_key(pos.get("asset_key") or pos.get("asset")) not in held_assets
+        ]
     return _append_exchange_only_positions(verified_open_trades, exchange_positions, testnet=testnet)
+
+
+def _live_netting_active() -> bool:
+    try:
+        from forven import live_netting
+
+        return bool(live_netting.active_for(None))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def read_recent_trades(limit: int = 20):
