@@ -453,3 +453,45 @@ def test_force_close_route_raises_on_failure(forven_db, monkeypatch):
         trading_router.force_close_trade("T0001", SimpleNamespace(reason="x"))
     assert excinfo.value.status_code == 502
     assert "exchange unreachable" in str(excinfo.value.detail)
+
+
+def test_read_open_trades_with_shared_coins_keeps_trades_that_net_to_nothing(forven_db, monkeypatch):
+    # NETTING-1: a long and a short on the same coin net to no exchange position.
+    # Both are real trades and must not be closed as "missing on exchange".
+    long_trade = {**_sample_trade(), "id": "TL", "asset": "ADA", "direction": "long"}
+    short_trade = {**_sample_trade(), "id": "TS", "asset": "ADA", "direction": "short"}
+    against_net = {**_sample_trade(), "id": "TB", "asset": "BTC", "direction": "long"}
+    btc_net_short = {**_sample_exchange_position(), "direction": "short"}
+    closed: list = []
+
+    monkeypatch.setattr(trading_domain, "get_execution_mode", lambda: "live")
+    monkeypatch.setattr(trading_domain, "get_open_trades", lambda: [long_trade, short_trade, against_net])
+    monkeypatch.setattr(trading_domain, "_resolve_exchange_testnet", lambda: False)
+    monkeypatch.setattr(trading_domain, "_extract_all_book_exchange_positions", lambda testnet=False: [btc_net_short])
+    monkeypatch.setattr(trading_domain, "_pending_execution_trade_ids", lambda: set())
+    monkeypatch.setattr(trading_domain, "_live_netting_active", lambda: True)
+    monkeypatch.setattr(trading_domain, "_close_stale_open_trades", lambda ids, *a, **k: closed.extend(ids))
+
+    result = trading_domain.read_open_trades(verify_exchange=True)
+
+    assert closed == []
+    assert [row["id"] for row in result] == ["TL", "TS", "TB"]
+
+
+def test_read_open_trades_without_shared_coins_still_closes_missing(forven_db, monkeypatch):
+    trade = {**_sample_trade(), "asset": "ADA"}
+    closed: list = []
+
+    monkeypatch.setattr(trading_domain, "get_execution_mode", lambda: "live")
+    monkeypatch.setattr(trading_domain, "get_open_trades", lambda: [trade])
+    monkeypatch.setattr(trading_domain, "_resolve_exchange_testnet", lambda: False)
+    monkeypatch.setattr(
+        trading_domain, "_extract_all_book_exchange_positions", lambda testnet=False: [_sample_exchange_position()]
+    )
+    monkeypatch.setattr(trading_domain, "_pending_execution_trade_ids", lambda: set())
+    monkeypatch.setattr(trading_domain, "_live_netting_active", lambda: False)
+    monkeypatch.setattr(trading_domain, "_close_stale_open_trades", lambda ids, *a, **k: closed.extend(ids))
+
+    trading_domain.read_open_trades(verify_exchange=True)
+
+    assert closed == ["T0001"]
